@@ -1,0 +1,56 @@
+{% extends "repo/base.html" %}
+{% block title %}References{% endblock %}
+{% block content %}
+<h1 class="page-title">References</h1>
+
+<form method="get" action="{% url 'repo:references' %}" class="search">
+  <div class="search__row">
+    <div class="search__field">
+      <label for="q">Label, DOI, patent number or title</label>
+      <input id="q" name="q" value="{{ query }}" placeholder="Mandle 2017, 10.1039, EP3260450A1" autocomplete="off">
+    </div>
+    <div class="search__field search__field--narrow">
+      <label for="kind">Kind</label>
+      <select id="kind" name="kind">
+        <option value="">Any kind</option>
+        {% for value, label in kinds %}<option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
+    <button type="submit">Search</button>
+    {% if query or kind %}<a href="{% url 'repo:references' %}">Show all</a>{% endif %}
+  </div>
+</form>
+
+{% with total=page.paginator.count %}
+<h2 class="result-count">{{ total }} {% if kind %}{{ kind_label|lower }} {% endif %}reference{{ total|pluralize }}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}</h2>
+{% endwith %}
+
+{% if page.object_list %}
+<table class="data-table">
+  <thead>
+    <tr><th scope="col">Reference</th><th scope="col">Kind</th><th scope="col">Materials</th></tr>
+  </thead>
+  <tbody>
+    {% for reference in page %}
+    <tr>
+      <td class="data-table__reference"><a href="{% url 'repo:reference' reference.pk %}">{{ reference.label }}</a></td>
+      <td>{{ reference.get_kind_display }}</td>
+      <td>{{ reference.n_materials }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if page.has_other_pages %}
+<nav class="pagination" aria-label="Pages">
+  {% if page.has_previous %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% elif query or kind %}
+<p>No references match. <a href="{% url 'repo:references' %}">Show all references</a>.</p>
+{% else %}
+<p>No references yet.</p>
+{% endif %}
+{% endblock %}

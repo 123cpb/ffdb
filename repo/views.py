@@ -1,12 +1,12 @@
 from urllib.parse import urlencode
 
 from django.core.paginator import Paginator
-from django.db.models import Q
+from django.db.models import Count, F, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 from . import chem
-from .models import Material, pk_from_accession
+from .models import DOI_PREFIX, Material, Reference, pk_from_accession
 
 
 def find_materials(text, substructure=""):
@@ -49,7 +49,14 @@ def materials(request):
     # The search as it goes in an address, so the page links keep it. urlencode() turns
     # characters such as # into %23: a bare # would end the address there.
     search = urlencode({key: value for key, value in [("q", query), ("sub", substructure)] if value})
-    context = {"query": query, "substructure": substructure, "error": error, "page": page, "search": search}
+    context = {
+        "nav": "materials",  # which link base.html marks as the current section
+        "query": query,
+        "substructure": substructure,
+        "error": error,
+        "page": page,
+        "search": search,
+    }
     return render(request, "repo/materials.html", context)
 
 
@@ -58,6 +65,7 @@ def material_detail(request, pk):
     material = get_object_or_404(Material, pk=pk)
     formula, mass = chem.formula_and_mass(material.canonical_smiles)
     context = {
+        "nav": "materials",
         "material": material,
         "formula": formula,
         "mass": mass,
@@ -67,6 +75,77 @@ def material_detail(request, pk):
         "lc_phases": material.liquid_crystal_phases(),
     }
     return render(request, "repo/material_detail.html", context)
+
+
+def references_with_counts():
+    """Every reference, each with n_materials: how many materials it gives sequences for.
+    The database counts them. distinct=True counts a material once, however many of its
+    sequences come from the reference."""
+    return Reference.objects.annotate(n_materials=Count("phase_sequences__material", distinct=True))
+
+
+def find_references(text, kind=""):
+    """The references a search finds, newest year first. A blank search finds them all.
+
+    The label is worked out in Python, so the database can't search it. Instead, each word
+    of the text must be part of the identifier (a DOI or patent number), first author,
+    venue or title, ignoring case, or be the year. So "Mandle 2017" finds the reference
+    labelled "Mandle 2017, Chem. Eur. J.". A pasted https://doi.org/ or doi: is removed
+    first. kind, if given, is one of Reference.Kind and keeps only that kind.
+    """
+    references = references_with_counts().order_by(
+        F("year").desc(nulls_last=True), "first_author", "identifier"
+    )
+    # Commas count as spaces, so a whole copied label works.
+    for word in DOI_PREFIX.sub("", text.strip()).replace(",", " ").split():
+        found = (
+            Q(identifier__icontains=word)
+            | Q(first_author__icontains=word)
+            | Q(venue__icontains=word)
+            | Q(title__icontains=word)
+        )
+        if word.isdigit():
+            found |= Q(year=int(word))
+        # Each filter() narrows the last, so every word has to match.
+        references = references.filter(found)
+    if kind:
+        references = references.filter(kind=kind)
+    return references
+
+
+def references(request):
+    """The References page: every reference, or those that ?q= and ?kind= find, 25 to a
+    page. A ?kind= that isn't one of the kinds is ignored."""
+    query = request.GET.get("q", "").strip()
+    kind = request.GET.get("kind", "")
+    if kind not in Reference.Kind.values:
+        kind = ""
+    page = Paginator(find_references(query, kind), 25).get_page(request.GET.get("page"))
+    search = urlencode({key: value for key, value in [("q", query), ("kind", kind)] if value})
+    context = {
+        "nav": "references",
+        "query": query,
+        "kind": kind,
+        "kind_label": Reference.Kind(kind).label if kind else "",
+        "kinds": Reference.Kind.choices,
+        "page": page,
+        "search": search,
+    }
+    return render(request, "repo/references.html", context)
+
+
+def reference_detail(request, pk):
+    """One reference's public page: its details and link, and the materials it gives
+    sequences for, with those sequences. A number with no reference gives a 404."""
+    reference = get_object_or_404(references_with_counts(), pk=pk)
+    context = {
+        "nav": "references",
+        "reference": reference,
+        # In LCR ID order, as on the Materials page. select_related() fetches each row's
+        # material in the same query.
+        "sequences": reference.phase_sequences.select_related("material").order_by("material_id", "id"),
+    }
+    return render(request, "repo/reference_detail.html", context)
 
 
 def structure(request, pk):

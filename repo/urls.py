@@ -10,4 +10,6 @@ urlpatterns = [
     path("materials/", views.materials, name="materials"),
     path("material/<int:pk>/", views.material_detail, name="material"),
     path("material/<int:pk>/structure.svg", views.structure, name="structure"),
+    path("references/", views.references, name="references"),
+    path("reference/<int:pk>/", views.reference_detail, name="reference"),
 ]

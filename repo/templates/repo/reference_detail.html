@@ -1,0 +1,51 @@
+{% extends "repo/base.html" %}
+{% block title %}{{ reference.label }}{% endblock %}
+{% block content %}
+<p class="reference-kind">{{ reference.get_kind_display }}</p>
+<h1 class="page-title reference-label">{{ reference.label }}</h1>
+
+<dl class="facts">
+  <dt>{% if reference.has_doi %}DOI{% elif reference.kind == "patent" %}Patent number{% else %}Identifier{% endif %}</dt>
+  <dd>{% if reference.link %}<a href="{{ reference.link }}">{{ reference.identifier }}</a>{% else %}{{ reference.identifier }}{% endif %}</dd>
+  {% if reference.title %}<dt>Title</dt><dd>{{ reference.title }}</dd>{% endif %}
+  {% if reference.first_author %}<dt>First author</dt><dd>{{ reference.first_author }}</dd>{% endif %}
+  {% if reference.year %}<dt>Year</dt><dd>{{ reference.year }}</dd>{% endif %}
+  {% if reference.venue %}
+  <dt>{% if reference.kind == "patent" %}Patent office{% elif reference.kind == "thesis" %}University{% elif reference.kind == "preprint" %}Server{% else %}Journal{% endif %}</dt>
+  <dd>{{ reference.venue }}</dd>
+  {% endif %}
+  {% if reference.notes %}<dt>Notes</dt><dd>{{ reference.notes|linebreaksbr }}</dd>{% endif %}
+</dl>
+
+<section class="phases">
+  <h2>Phase sequences</h2>
+  {% if sequences %}
+  <p>{{ reference.n_materials }} material{{ reference.n_materials|pluralize }}, {{ sequences|length }} sequence{{ sequences|length|pluralize }}.</p>
+  <table class="data-table">
+    <thead>
+      <tr><th scope="col">Material</th><th scope="col">Sequence (°C)</th></tr>
+    </thead>
+    <tbody>
+      {% for sequence in sequences %}
+      <tr>
+        <td>
+          <a href="{% url 'repo:material' sequence.material.pk %}">{{ sequence.material.accession }}</a>
+          {% if sequence.material.name %}<span class="result__name">{{ sequence.material.name }}</span>{% endif %}
+        </td>
+        <td>
+          {{ sequence.standard_sequence }}
+          {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No phase sequences from this reference.</p>
+  {% endif %}
+</section>
+
+{% if user.is_staff %}
+<p><a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a></p>
+{% endif %}
+{% endblock %}

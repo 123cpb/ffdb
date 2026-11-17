@@ -154,8 +154,11 @@ class MaterialPageTests(SequenceTestCase):
 
         self.assertContains(response, "Cr 139.8 NF 132.7 N 187.9 Iso")
         self.assertContains(response, "Cr 140 N 188 Iso")
-        self.assertContains(response, f'<a href="{self.reference.link}">Mandle 2017</a>', html=True)
-        self.assertContains(response, f'<a href="{patent.link}">EP3260450A1</a>', html=True)
+        # Each reference links to its page on FFDB, which links on to doi.org or Espacenet.
+        mandle_page = reverse("repo:reference", args=[self.reference.pk])
+        patent_page = reverse("repo:reference", args=[patent.pk])
+        self.assertContains(response, f'<a href="{mandle_page}">Mandle 2017</a>', html=True)
+        self.assertContains(response, f'<a href="{patent_page}">EP3260450A1</a>', html=True)
 
     def test_a_renamed_phase_shows_the_sequence_as_reported(self):
         self.add("K 100 NX 120 N 150 I")

@@ -8,7 +8,14 @@
 </head>
 <body>
   <header class="site-header">
-    <div class="wrap"><a class="site-name" href="{% url 'repo:home' %}">FFDB</a></div>
+    <div class="wrap site-header__row">
+      <a class="site-name" href="{% url 'repo:home' %}">FFDB</a>
+      {# Each view sets nav, so the link to the section you are in is marked for screen readers and styled. #}
+      <nav class="site-nav" aria-label="Main">
+        <a href="{% url 'repo:materials' %}"{% if nav == "materials" %} aria-current="page"{% endif %}>Materials</a>
+        <a href="{% url 'repo:references' %}"{% if nav == "references" %} aria-current="page"{% endif %}>References</a>
+      </nav>
+    </div>
   </header>
   <main class="wrap">
     {% block content %}{% endblock %}
