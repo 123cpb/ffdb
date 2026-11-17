@@ -51,3 +51,25 @@ def formula_and_mass(smiles):
     """Return (molecular formula, molar mass in g/mol), e.g. ("C22H17NO8", 423.377)."""
     mol = Chem.MolFromSmiles(smiles)
     return rdMolDescriptors.CalcMolFormula(mol), Descriptors.MolWt(mol)
+
+
+def substructure_pattern(text):
+    """Read a substructure search, SMILES or SMARTS, as a pattern for has_substructure().
+
+    It is always read as SMARTS, which RDKit also accepts every SMILES as. Read as SMILES,
+    a fragment like [N+](=O)[O-] or [#6]#[#7] parses but matches nothing. The catch: a ring
+    with alternating double bonds, C1=CC=CC=C1, means just that in SMARTS, so it doesn't
+    match benzene. Write aromatic rings in lower case: c1ccccc1.
+    """
+    pattern = Chem.MolFromSmarts(text.strip())
+    # An empty string gives a pattern with no atoms, so check for that too.
+    if pattern is None or pattern.GetNumAtoms() == 0:
+        raise StructureError(f"RDKit could not read “{text}” as SMILES or SMARTS. Check it for typing errors.")
+    return pattern
+
+
+def has_substructure(smiles, pattern):
+    """Whether the structure contains the pattern. Stereochemistry is ignored, so a pattern
+    with a stereocentre matches either hand. A SMILES RDKit can't read never matches."""
+    mol = Chem.MolFromSmiles(smiles)
+    return mol is not None and mol.HasSubstructMatch(pattern)

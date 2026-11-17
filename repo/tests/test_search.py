@@ -6,6 +6,7 @@ from repo.models import Material, pk_from_accession
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
+SIX_CB = "CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
 
 
 class PublicIdReadingTests(SimpleTestCase):
@@ -73,6 +74,43 @@ class SearchTests(TestCase):
         self.assertContains(response, '<span class="result__name">5CB</span>')
 
 
+class SubstructureSearchTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)  # nitro, no cyano
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)  # cyano
+        cls.six_cb = Material.objects.create(name="6CB", smiles=SIX_CB)  # cyano
+
+    def search(self, **params):
+        return self.client.get(reverse("repo:materials"), params)
+
+    def found(self, **params):
+        return list(self.search(**params).context["page"].object_list)
+
+    def test_cyano_query_finds_the_cyano_compounds_and_not_the_others(self):
+        self.assertEqual(self.found(sub="C#N"), [self.five_cb, self.six_cb])
+
+    def test_smarts_query(self):
+        # Read as SMILES, this nitro fragment would match nothing (chem.substructure_pattern).
+        self.assertEqual(self.found(sub="[N+](=O)[O-]"), [self.rm734])
+
+    def test_substructure_combines_with_the_name_search(self):
+        self.assertEqual(self.found(q="5CB", sub="C#N"), [self.five_cb])
+        self.assertEqual(self.found(q="RM734", sub="C#N"), [])
+
+    def test_heading_says_what_was_searched(self):
+        response = self.search(q="CB", sub="C#N")
+
+        self.assertContains(response, "2 materials match “CB” and contain <code>C#N</code>")
+
+    def test_unreadable_query_gives_a_message_not_an_error_page(self):
+        response = self.search(sub="(((not smiles")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "RDKit could not read “(((not smiles” as SMILES or SMARTS.")
+        self.assertEqual(list(response.context["page"].object_list), [])
+
+
 class PagingTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -91,3 +129,8 @@ class PagingTests(TestCase):
         response = self.client.get(reverse("repo:materials"), {"q": "C"})
 
         self.assertContains(response, 'href="?q=C&amp;page=2"')
+
+    def test_page_links_keep_the_substructure_with_its_hash_encoded(self):
+        response = self.client.get(reverse("repo:materials"), {"sub": "[#6]"})  # any carbon
+
+        self.assertContains(response, 'href="?sub=%5B%236%5D&amp;page=2"')
