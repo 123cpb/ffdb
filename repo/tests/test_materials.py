@@ -23,3 +23,36 @@ class MaterialAdminTests(TestCase):
 
         self.assertContains(response, material.accession)
         self.assertContains(response, "RM734")
+
+
+class MaterialPageTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.material = Material.objects.create(
+            name="RM734",
+            aliases="RM-734",
+            smiles="COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1",
+        )
+        cls.url = reverse("repo:material", args=[cls.material.pk])
+
+    def test_page_shows_id_name_aliases_and_smiles(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.material.accession)
+        self.assertContains(response, "RM734")
+        self.assertContains(response, "Also called RM-734")
+        self.assertContains(response, self.material.smiles)
+
+    def test_unknown_number_is_not_found(self):
+        response = self.client.get(reverse("repo:material", args=[9999]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_edit_in_admin_link_is_for_staff_only(self):
+        edit_url = reverse("admin:repo_material_change", args=[self.material.pk])
+
+        self.assertNotContains(self.client.get(self.url), edit_url)
+
+        self.client.force_login(User.objects.create_user("curator", is_staff=True))
+        self.assertContains(self.client.get(self.url), edit_url)

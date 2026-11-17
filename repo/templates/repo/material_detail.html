@@ -1,0 +1,16 @@
+{% extends "repo/base.html" %}
+{% block title %}{{ material.accession }} {{ material.name }}{% endblock %}
+{% block content %}
+<h1 class="material-id">{{ material.accession }}</h1>
+<p class="material-name">{{ material.name }}</p>
+{% if material.aliases %}<p class="aliases">Also called {{ material.aliases }}</p>{% endif %}
+
+<dl class="facts">
+  <dt>SMILES</dt>
+  <dd><code>{{ material.smiles }}</code></dd>
+</dl>
+
+{% if user.is_staff %}
+<p><a href="{% url 'admin:repo_material_change' material.pk %}">Edit in admin</a></p>
+{% endif %}
+{% endblock %}
