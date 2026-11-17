@@ -35,14 +35,15 @@ class MaterialPageTests(TestCase):
         )
         cls.url = reverse("repo:material", args=[cls.material.pk])
 
-    def test_page_shows_id_name_aliases_and_smiles(self):
+    def test_page_shows_id_name_aliases_and_identifiers(self):
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, self.material.accession)
         self.assertContains(response, "RM734")
         self.assertContains(response, "Also called RM-734")
-        self.assertContains(response, self.material.smiles)
+        self.assertContains(response, self.material.canonical_smiles)
+        self.assertContains(response, self.material.inchikey)
 
     def test_unknown_number_is_not_found(self):
         response = self.client.get(reverse("repo:material", args=[9999]))

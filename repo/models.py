@@ -1,4 +1,7 @@
+from django.core.exceptions import ValidationError
 from django.db import models
+
+from . import chem
 
 
 def accession(pk):
@@ -18,6 +21,10 @@ class Material(models.Model):
         help_text="Other names or codes, comma-separated.",
     )
     smiles = models.TextField("SMILES", help_text="Stored as typed.")
+    # Worked out from the SMILES on every save (see save()), never typed in.
+    canonical_smiles = models.TextField("canonical SMILES", blank=True, editable=False)
+    # The full InChIKey identifies a compound, so the database allows each one once.
+    inchikey = models.CharField("InChIKey", max_length=27, unique=True, blank=True, editable=False)
     notes = models.TextField(blank=True)
     created = models.DateTimeField(auto_now_add=True)
 
@@ -31,3 +38,29 @@ class Material(models.Model):
     def accession(self):
         """Permanent public ID, made from the primary key. Before the first save there is none."""
         return accession(self.pk) if self.pk else "LCR-new"
+
+    def clean(self):
+        """Refuse an unreadable SMILES, and a structure that is already in FFDB."""
+        if not self.smiles.strip():
+            return  # the form's "This field is required" already covers a blank SMILES
+        try:
+            _, key = chem.standardise(self.smiles)
+        except chem.StructureError as exc:
+            raise ValidationError({"smiles": str(exc)})
+        clash = Material.objects.filter(inchikey=key).exclude(pk=self.pk).first()
+        if clash:
+            raise ValidationError(
+                {"smiles": f"This structure is already in FFDB as {clash.accession} ({clash.name})."}
+            )
+
+    def save(self, *args, **kwargs):
+        self.canonical_smiles, self.inchikey = chem.standardise(self.smiles)
+        super().save(*args, **kwargs)
+
+    def possible_stereo_variants(self):
+        """Other materials with the same connectivity: the same skeleton with different or
+        missing stereochemistry. They are kept as separate materials."""
+        if not self.inchikey:
+            return Material.objects.none()
+        skeleton = chem.skeleton_key(self.inchikey)
+        return Material.objects.filter(inchikey__startswith=skeleton + "-").exclude(pk=self.pk)

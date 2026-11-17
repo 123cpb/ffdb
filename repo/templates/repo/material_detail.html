@@ -6,8 +6,10 @@
 {% if material.aliases %}<p class="aliases">Also called {{ material.aliases }}</p>{% endif %}
 
 <dl class="facts">
-  <dt>SMILES</dt>
-  <dd><code>{{ material.smiles }}</code></dd>
+  <dt>Canonical SMILES</dt>
+  <dd><code>{{ material.canonical_smiles }}</code></dd>
+  <dt>InChIKey</dt>
+  <dd><code>{{ material.inchikey }}</code></dd>
 </dl>
 
 {% if user.is_staff %}
