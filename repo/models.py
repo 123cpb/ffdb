@@ -1,5 +1,6 @@
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.urls import reverse
 
 from . import chem
 
@@ -38,6 +39,12 @@ class Material(models.Model):
     def accession(self):
         """Permanent public ID, made from the primary key. Before the first save there is none."""
         return accession(self.pk) if self.pk else "LCR-new"
+
+    @property
+    def structure_url(self):
+        """The address of the drawing. The view ignores ?v=, but it makes the address change
+        when the structure does, so browsers can keep a copy without showing an old drawing."""
+        return f"{reverse('repo:structure', args=[self.pk])}?v={self.inchikey}"
 
     def clean(self):
         """Refuse an unreadable SMILES, and a structure that is already in FFDB."""

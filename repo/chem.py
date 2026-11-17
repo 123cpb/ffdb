@@ -1,6 +1,8 @@
 """Structure handling with RDKit."""
 
 from rdkit import Chem, RDLogger
+from rdkit.Chem import Descriptors, rdMolDescriptors
+from rdkit.Chem.Draw import rdMolDraw2D
 
 # RDKit prints its own parse errors to the console. StructureError reports them instead.
 RDLogger.DisableLog("rdApp.*")
@@ -30,3 +32,22 @@ def skeleton_key(inchikey):
     with the same skeleton key may differ in any of those.
     """
     return inchikey.split("-")[0]
+
+
+def structure_svg(smiles):
+    """Draw a structure as an SVG image, 360 by 220 pixels.
+
+    RDKit's default options give black bonds on a white background, so the drawing
+    reads the same on the public page and in the admin's dark theme.
+    """
+    mol = Chem.MolFromSmiles(smiles)
+    drawer = rdMolDraw2D.MolDraw2DSVG(360, 220)
+    rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol)  # works out 2D positions, then draws
+    drawer.FinishDrawing()
+    return drawer.GetDrawingText()
+
+
+def formula_and_mass(smiles):
+    """Return (molecular formula, molar mass in g/mol), e.g. ("C22H17NO8", 423.377)."""
+    mol = Chem.MolFromSmiles(smiles)
+    return rdMolDescriptors.CalcMolFormula(mol), Descriptors.MolWt(mol)

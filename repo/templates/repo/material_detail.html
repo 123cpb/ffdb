@@ -1,11 +1,20 @@
 {% extends "repo/base.html" %}
+{% load repo_tags %}
 {% block title %}{{ material.accession }} {{ material.name }}{% endblock %}
 {% block content %}
 <h1 class="material-id">{{ material.accession }}</h1>
 <p class="material-name">{{ material.name }}</p>
 {% if material.aliases %}<p class="aliases">Also called {{ material.aliases }}</p>{% endif %}
 
+<figure class="structure">
+  <img src="{{ material.structure_url }}" alt="Structure of {{ material.name }}" width="360" height="220">
+</figure>
+
 <dl class="facts">
+  <dt>Formula</dt>
+  <dd>{{ formula|formula }}</dd>
+  <dt>Molar mass</dt>
+  <dd>{{ mass|floatformat:1 }} g/mol</dd>
   <dt>Canonical SMILES</dt>
   <dd><code>{{ material.canonical_smiles }}</code></dd>
   <dt>InChIKey</dt>
