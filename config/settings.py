@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 import os
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 from dotenv import load_dotenv
 
@@ -74,11 +75,19 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
+# DATABASE_URL looks like postgres://user:password@host:port/name.
+# urlsplit leaves the user and password percent-encoded, so unquote them.
+
+db_url = urlsplit(os.environ["DATABASE_URL"])
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': db_url.path.removeprefix('/'),
+        'USER': unquote(db_url.username or ''),
+        'PASSWORD': unquote(db_url.password or ''),
+        'HOST': db_url.hostname or '',
+        'PORT': db_url.port or '',
     }
 }
 
