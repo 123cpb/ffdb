@@ -5,6 +5,7 @@ from django.db import models
 from django.urls import reverse
 
 from . import chem
+from .phases import normalise_label
 
 
 def accession(pk):
@@ -118,3 +119,66 @@ class Material(models.Model):
             "and say in the name or notes whether a structure without stereochemistry "
             "is racemic or simply not stated."
         )
+
+
+class Phase(models.Model):
+    """One phase in the vocabulary, e.g. NF. Sequences are stored under the codes, and the
+    synonyms are the other labels papers use, converted to the code when a sequence is read."""
+
+    code = models.CharField(max_length=20, unique=True, help_text="The standard label, e.g. NF.")
+    name = models.CharField(max_length=100)
+    polar = models.BooleanField(
+        default=False, help_text="Phase with polar (ferro- or antiferroelectric) order."
+    )
+    synonyms = models.CharField(
+        max_length=300,
+        blank=True,
+        help_text="Other labels for this phase, comma-separated, e.g. 'NX, M2'. They are converted "
+        "to the code. Case, spaces and underscores are ignored, so N_X and nx count as NX.",
+    )
+    sort_order = models.PositiveSmallIntegerField(
+        default=100, help_text="Lists show phases from the lowest number up."
+    )
+
+    class Meta:
+        ordering = ["sort_order", "code"]
+
+    def __str__(self):
+        return f"{self.code} ({self.name})"
+
+    def synonym_list(self):
+        """The synonyms as a list: "N_X, M2" -> ["N_X", "M2"]."""
+        return [synonym.strip() for synonym in self.synonyms.split(",") if synonym.strip()]
+
+    def labels(self):
+        """Every label for this phase: its code, then its synonyms."""
+        return [self.code] + self.synonym_list()
+
+    @classmethod
+    def synonym_map(cls):
+        """Every label of every phase, normalised, to its phase's code:
+        {"ns": "NS", "nx": "NS", "k": "Cr", ...}. Look a label up with normalise_label(label)."""
+        return {
+            normalise_label(label): phase.code for phase in cls.objects.all() for label in phase.labels()
+        }
+
+    def clean(self):
+        """Refuse a code or synonym that another phase already has, compared the way
+        synonym_map() compares labels. Otherwise synonym_map() would quietly keep only one."""
+        taken = {
+            normalise_label(label): phase.code
+            for phase in Phase.objects.exclude(pk=self.pk)
+            for label in phase.labels()
+        }
+        errors = {}
+        if normalise_label(self.code) in taken:
+            errors["code"] = f"Phase {taken[normalise_label(self.code)]} already has this label."
+        clashes = [
+            f"{label} ({taken[normalise_label(label)]})"
+            for label in self.synonym_list()
+            if normalise_label(label) in taken
+        ]
+        if clashes:
+            errors["synonyms"] = f"Other phases already have these labels: {', '.join(clashes)}."
+        if errors:
+            raise ValidationError(errors)

@@ -1,7 +1,7 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
 
-from .models import Material
+from .models import Material, Phase
 
 
 @admin.register(Material)
@@ -30,3 +30,8 @@ class MaterialAdmin(admin.ModelAdmin):
         warning = obj.stereo_warning()
         if warning:
             self.message_user(request, warning, messages.WARNING)
+
+
+@admin.register(Phase)
+class PhaseAdmin(admin.ModelAdmin):
+    list_display = ["code", "name", "polar", "synonyms", "sort_order"]
