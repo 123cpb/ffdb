@@ -1,0 +1,44 @@
+# Run the tests against PostgreSQL on every push, to any branch.
+name: Tests
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # A PostgreSQL server in its own container, started before the steps and thrown
+    # away when the job ends. The health check makes the steps wait until it is ready.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: ffdb
+          POSTGRES_PASSWORD: ffdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ffdb"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    # Stand-ins for .env, which is never on GitHub. Throwaway values used nowhere else.
+    env:
+      SECRET_KEY: not-a-real-key-only-for-github-tests
+      DATABASE_URL: postgres://ffdb:ffdb@localhost:5432/ffdb
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v7
+
+      - name: Install Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+
+      - name: Install requirements
+        run: pip install -r requirements.txt
+
+      - name: Run the tests
+        run: python manage.py test
