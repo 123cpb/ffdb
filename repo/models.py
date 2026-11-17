@@ -1,3 +1,5 @@
+import re
+
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.urls import reverse
@@ -10,10 +12,16 @@ def accession(pk):
     return f"LCR-{pk:05d}"
 
 
+def name_key(text):
+    """A name as names are compared: lower-case letters and digits only, so RM-734 and rm734 are one name."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
 class Material(models.Model):
     name = models.CharField(
         max_length=200,
-        help_text="As papers name it, e.g. RM734. Names can repeat: "
+        blank=True,
+        help_text="As papers name it, e.g. RM734. Optional, and names can repeat: "
         "the LCR ID is what identifies a material.",
     )
     aliases = models.CharField(
@@ -46,6 +54,15 @@ class Material(models.Model):
         when the structure does, so browsers can keep a copy without showing an old drawing."""
         return f"{reverse('repo:structure', args=[self.pk])}?v={self.inchikey}"
 
+    def alias_list(self):
+        """The aliases as a list: "RM-734, DIO-1" -> ["RM-734", "DIO-1"]."""
+        return [alias.strip() for alias in self.aliases.split(",") if alias.strip()]
+
+    def has_name(self, name):
+        """Whether name is this material's name or one of its aliases, compared by name_key()."""
+        key = name_key(name)
+        return key == name_key(self.name) or key in {name_key(alias) for alias in self.alias_list()}
+
     def clean(self):
         """Refuse an unreadable SMILES, and a structure that is already in FFDB."""
         if not self.smiles.strip():
@@ -71,3 +88,17 @@ class Material(models.Model):
             return Material.objects.none()
         skeleton = chem.skeleton_key(self.inchikey)
         return Material.objects.filter(inchikey__startswith=skeleton + "-").exclude(pk=self.pk)
+
+    def stereo_warning(self):
+        """The warning shown when possible_stereo_variants() finds any, or "" when it finds none.
+        The admin and the import both show it."""
+        variants = self.possible_stereo_variants()
+        if not variants:
+            return ""
+        others = ", ".join(f"{v.accession} ({v.name})" for v in variants)
+        return (
+            f"{self.accession} has the same connectivity as {others} but different "
+            "stereochemistry. Both are kept as separate materials: check that is right, "
+            "and say in the name or notes whether a structure without stereochemistry "
+            "is racemic or simply not stated."
+        )

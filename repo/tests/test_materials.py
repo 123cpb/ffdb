@@ -24,6 +24,14 @@ class MaterialAdminTests(TestCase):
         self.assertContains(response, material.accession)
         self.assertContains(response, "RM734")
 
+    def test_admin_saves_a_material_with_no_name(self):
+        self.client.force_login(User.objects.create_superuser("admin", password="pw"))
+        data = {"name": "", "aliases": "", "smiles": "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1", "notes": ""}
+
+        self.client.post(reverse("admin:repo_material_add"), data)
+
+        self.assertEqual(Material.objects.get().name, "")
+
 
 class MaterialPageTests(TestCase):
     @classmethod

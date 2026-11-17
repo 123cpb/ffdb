@@ -3,7 +3,7 @@
 {% block title %}{{ material.accession }} {{ material.name }}{% endblock %}
 {% block content %}
 <h1 class="material-id">{{ material.accession }}</h1>
-<p class="material-name">{{ material.name }}</p>
+{% if material.name %}<p class="material-name">{{ material.name }}</p>{% endif %}
 {% if material.aliases %}<p class="aliases">Also called {{ material.aliases }}</p>{% endif %}
 
 <figure class="structure">

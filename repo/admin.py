@@ -27,14 +27,6 @@ class MaterialAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         """Save, then warn if another material has the same connectivity."""
         super().save_model(request, obj, form, change)
-        variants = obj.possible_stereo_variants()
-        if variants:
-            others = ", ".join(f"{v.accession} ({v.name})" for v in variants)
-            self.message_user(
-                request,
-                f"{obj.accession} has the same connectivity as {others} but different "
-                "stereochemistry. Both are kept as separate materials: check that is right, "
-                "and say in the name or notes whether a structure without stereochemistry "
-                "is racemic or simply not stated.",
-                messages.WARNING,
-            )
+        warning = obj.stereo_warning()
+        if warning:
+            self.message_user(request, warning, messages.WARNING)
