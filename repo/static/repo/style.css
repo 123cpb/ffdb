@@ -30,7 +30,25 @@ code { font-family: var(--mono); font-size: 0.86em; }
 main.wrap { padding-top: 28px; padding-bottom: 56px; }
 
 .site-header { background: var(--surface); border-bottom: 1px solid var(--hairline); }
-.site-name { display: inline-block; padding: 18px 0; font: 600 21px/1 var(--serif); }
+.site-name { display: inline-block; padding: 18px 0; font: 600 21px/1 var(--serif); color: var(--ink); text-decoration: none; }
+
+.page-title { font: 600 32px/1.1 var(--serif); margin: 0 0 16px; }
+
+.search { margin-bottom: 20px; }
+.search label { display: block; font-weight: 600; font-size: 13.5px; margin-bottom: 4px; }
+.search__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.search input { flex: 1 1 260px; max-width: 420px; padding: 7px 10px; font: inherit; border: 1px solid var(--hairline); border-radius: 6px; }
+.search button { padding: 7px 16px; font: inherit; color: #fff; background: var(--link); border: 0; border-radius: 6px; cursor: pointer; }
+
+.result-count { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
+.result-list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; }
+.result { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 18px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--hairline); }
+.result:first-child { border-top: 0; }
+.result__thumb img { display: block; max-width: 100%; height: auto; }
+.result__id { font: 600 19px/1.25 var(--serif); margin-right: 10px; }
+.result__name { color: var(--ink-2); }
+
+.pagination { display: flex; gap: 14px; justify-content: center; margin-top: 18px; color: var(--ink-2); }
 
 .material-id { font: 600 44px/1.05 var(--serif); margin: 0 0 6px; }
 .material-name { margin: 0; color: var(--ink-2); font-size: 18px; }
@@ -50,4 +68,5 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 @media (max-width: 720px) {
   .wrap { padding: 0 16px; }
   .material-id { font-size: 34px; }
+  .result { grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
 }

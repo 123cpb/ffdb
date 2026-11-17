@@ -34,6 +34,12 @@ class StructureDrawingTests(TestCase):
         self.assertIn(b"<svg", response.content)
         self.assertEqual(response["Cache-Control"], "max-age=86400")
 
+    def test_thumbnail_is_drawn_200_by_128(self):
+        response = self.client.get(self.material.thumbnail_url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"width='200px' height='128px'", response.content)
+
     def test_unknown_number_has_no_structure(self):
         response = self.client.get(reverse("repo:structure", args=[9999]))
 

@@ -1,0 +1,47 @@
+{% extends "repo/base.html" %}
+{% block title %}Materials{% endblock %}
+{% block content %}
+<h1 class="page-title">Materials</h1>
+
+<form method="get" action="{% url 'repo:materials' %}" class="search">
+  <label for="q">Name, alias, LCR ID or InChIKey</label>
+  <div class="search__row">
+    <input id="q" name="q" value="{{ query }}" placeholder="RM734, LCR-00069" autocomplete="off">
+    <button type="submit">Search</button>
+    {% if query %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
+  </div>
+</form>
+
+{% with total=page.paginator.count %}
+<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}</h2>
+{% endwith %}
+
+{% if page.object_list %}
+<ol class="result-list">
+  {% for material in page %}
+  <li class="result">
+    {# The drawing repeats the ID link, so screen readers and the Tab key skip it. #}
+    <a class="result__thumb" href="{% url 'repo:material' material.pk %}" tabindex="-1" aria-hidden="true">
+      <img src="{{ material.thumbnail_url }}" alt="" width="200" height="128" loading="lazy">
+    </a>
+    <div>
+      <a class="result__id" href="{% url 'repo:material' material.pk %}">{{ material.accession }}</a>
+      {% if material.name %}<span class="result__name">{{ material.name }}</span>{% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ol>
+
+{% if page.has_other_pages %}
+<nav class="pagination" aria-label="Pages">
+  {% if page.has_previous %}<a href="?{% if query %}q={{ query|urlencode }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?{% if query %}q={{ query|urlencode }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% elif query %}
+<p>No materials match. <a href="{% url 'repo:materials' %}">Show all materials</a>.</p>
+{% else %}
+<p>No materials yet.</p>
+{% endif %}
+{% endblock %}

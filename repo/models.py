@@ -12,6 +12,17 @@ def accession(pk):
     return f"LCR-{pk:05d}"
 
 
+# A public ID as someone might type it: LCR-00012, lcr12 or LCR12.
+ACCESSION = re.compile(r"LCR-?(\d+)", re.IGNORECASE)
+
+
+def pk_from_accession(text):
+    """The primary key in a public ID, the reverse of accession(): "LCR-00012" -> 12.
+    Returns None when the text isn't a public ID."""
+    match = ACCESSION.fullmatch(text.strip())
+    return int(match.group(1)) if match else None
+
+
 def name_key(text):
     """A name as names are compared: lower-case letters and digits only, so RM-734 and rm734 are one name."""
     return re.sub(r"[^a-z0-9]", "", text.lower())
@@ -53,6 +64,11 @@ class Material(models.Model):
         """The address of the drawing. The view ignores ?v=, but it makes the address change
         when the structure does, so browsers can keep a copy without showing an old drawing."""
         return f"{reverse('repo:structure', args=[self.pk])}?v={self.inchikey}"
+
+    @property
+    def thumbnail_url(self):
+        """The address of the small drawing that lists use, 200 by 128 pixels."""
+        return f"{reverse('repo:structure', args=[self.pk])}?size=thumb&v={self.inchikey}"
 
     def alias_list(self):
         """The aliases as a list: "RM-734, DIO-1" -> ["RM-734", "DIO-1"]."""

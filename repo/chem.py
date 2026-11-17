@@ -34,14 +34,14 @@ def skeleton_key(inchikey):
     return inchikey.split("-")[0]
 
 
-def structure_svg(smiles):
-    """Draw a structure as an SVG image, 360 by 220 pixels.
+def structure_svg(smiles, width=360, height=220):
+    """Draw a structure as an SVG image, 360 by 220 pixels unless another size is given.
 
     RDKit's default options give black bonds on a white background, so the drawing
     reads the same on the public page and in the admin's dark theme.
     """
     mol = Chem.MolFromSmiles(smiles)
-    drawer = rdMolDraw2D.MolDraw2DSVG(360, 220)
+    drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
     rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol)  # works out 2D positions, then draws
     drawer.FinishDrawing()
     return drawer.GetDrawingText()
