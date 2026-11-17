@@ -1,7 +1,7 @@
 from django.contrib import admin, messages
 from django.utils.html import format_html
 
-from .models import Material, Phase
+from .models import Material, Phase, Reference
 
 
 @admin.register(Material)
@@ -35,3 +35,8 @@ class MaterialAdmin(admin.ModelAdmin):
 @admin.register(Phase)
 class PhaseAdmin(admin.ModelAdmin):
     list_display = ["code", "name", "polar", "synonyms", "sort_order"]
+
+
+@admin.register(Reference)
+class ReferenceAdmin(admin.ModelAdmin):
+    list_display = ["label", "kind", "identifier"]

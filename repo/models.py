@@ -1,4 +1,5 @@
 import re
+from urllib.parse import quote, urlencode
 
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -27,6 +28,16 @@ def pk_from_accession(text):
 def name_key(text):
     """A name as names are compared: lower-case letters and digits only, so RM-734 and rm734 are one name."""
     return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+# What people paste in front of a DOI: https://doi.org/, http://dx.doi.org/, doi: or DOI:.
+DOI_PREFIX = re.compile(r"^(https?://(dx\.)?doi\.org/|doi:)\s*", re.IGNORECASE)
+
+
+def clean_doi(text):
+    """A DOI as it is stored, without a prefix and in lower case, because DOIs ignore case:
+    "https://doi.org/10.1002/CHEM.201702742" -> "10.1002/chem.201702742"."""
+    return DOI_PREFIX.sub("", text.strip()).strip().lower()
 
 
 class Material(models.Model):
@@ -182,3 +193,73 @@ class Phase(models.Model):
             errors["synonyms"] = f"Other phases already have these labels: {', '.join(clashes)}."
         if errors:
             raise ValidationError(errors)
+
+
+class Reference(models.Model):
+    """Where data comes from: a journal article, preprint, patent or thesis."""
+
+    class Kind(models.TextChoices):
+        ARTICLE = "article", "Journal article"
+        PREPRINT = "preprint", "Preprint"
+        PATENT = "patent", "Patent"
+        THESIS = "thesis", "Thesis"
+
+    # No default, so the admin makes you choose: a default of article would quietly save
+    # an arXiv DOI as an article.
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    # Unique on its own, so a DOI can't be entered once as an article and again as a preprint.
+    identifier = models.CharField(
+        max_length=500,
+        unique=True,
+        help_text="The DOI for an article or preprint, e.g. 10.1002/chem.201702742; the number "
+        "for a patent, e.g. EP3260450A1; for a thesis, its author, year and title.",
+    )
+    first_author = models.CharField(max_length=100, blank=True, help_text="Surname only, e.g. Mandle.")
+    year = models.PositiveSmallIntegerField(null=True, blank=True)
+    title = models.CharField(max_length=500, blank=True)
+    venue = models.CharField(
+        "journal, office or university",
+        max_length=200,
+        blank=True,
+        help_text="As the label shows it: the journal, abbreviated (e.g. Chem. Eur. J.), or the "
+        "preprint server; the patent office; or the university.",
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["kind", "identifier"]
+
+    def __str__(self):
+        return self.label
+
+    @property
+    def label(self):
+        """How the reference is cited: "Mandle 2017, Chem. Eur. J.", or "Mandle 2017" without
+        a venue. Without a first author and a year, the identifier."""
+        if not (self.first_author and self.year):
+            return self.identifier
+        label = f"{self.first_author} {self.year}"
+        return f"{label}, {self.venue}" if self.venue else label
+
+    def has_doi(self):
+        return self.kind in (self.Kind.ARTICLE, self.Kind.PREPRINT)
+
+    @property
+    def link(self):
+        """Where to read it: doi.org for a DOI, an Espacenet search for a patent number,
+        and "" for a thesis, which has no standard address."""
+        if self.has_doi():
+            # quote() turns characters that mean something in an address, such as # and ?,
+            # into %23 and %3F, so they reach doi.org as part of the DOI.
+            return f"https://doi.org/{quote(self.identifier, safe='/')}"
+        if self.kind == self.Kind.PATENT:
+            return "https://worldwide.espacenet.com/patent/search?" + urlencode(
+                {"q": f"pn={self.identifier}"}
+            )
+        return ""
+
+    def clean(self):
+        """Clean up a DOI before Django checks it is unique, so a DOI pasted as
+        https://doi.org/10.1002/CHEM.201702742 matches 10.1002/chem.201702742."""
+        if self.has_doi():
+            self.identifier = clean_doi(self.identifier)
