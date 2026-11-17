@@ -31,6 +31,10 @@ DEBUG = os.environ.get("DEBUG", "False") == "True"
 
 ALLOWED_HOSTS = [h for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h]
 
+# The contact address that fetch_reference_details sends to Crossref, which asks for one.
+# Optional here, because only that command needs it.
+CROSSREF_MAILTO = os.environ.get("CROSSREF_MAILTO", "")
+
 
 # Application definition
 
