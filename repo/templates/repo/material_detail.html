@@ -21,6 +21,33 @@
   <dd><code>{{ material.inchikey }}</code></dd>
 </dl>
 
+<section class="phases">
+  <h2>Phase sequences</h2>
+  {% if sequences %}
+  <p>Liquid-crystal phases: {% for phase in lc_phases %}{{ phase.code }}{% if not forloop.last %}, {% endif %}{% empty %}none reported{% endfor %}</p>
+  <table class="sequences">
+    <thead>
+      <tr><th scope="col">Sequence (°C)</th><th scope="col">Reference</th></tr>
+    </thead>
+    <tbody>
+      {% for sequence in sequences %}
+      <tr>
+        <td>
+          {{ sequence.standard_sequence }}
+          {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
+        </td>
+        <td class="sequences__reference">
+          {% if sequence.reference.link %}<a href="{{ sequence.reference.link }}">{{ sequence.reference.label }}</a>{% else %}{{ sequence.reference.label }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No phase sequences yet.</p>
+  {% endif %}
+</section>
+
 {% if user.is_staff %}
 <p><a href="{% url 'admin:repo_material_change' material.pk %}">Edit in admin</a></p>
 {% endif %}

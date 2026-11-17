@@ -2,7 +2,7 @@ from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
 
 from repo.models import Phase
-from repo.phases import PhaseSequenceError, normalise_label, parse_summary, tokenise
+from repo.phases import PhaseSequenceError, normalise_label, parse_summary, phase_labels, tokenise
 
 # The test database is built by running the migrations, so the 26 phases from
 # 0005_seed_phases are already in it.
@@ -94,3 +94,7 @@ class SummaryTests(SimpleTestCase):
     def test_minus_signs_are_kept_and_pasted_separators_are_not(self):
         self.assertEqual(self.transitions(self.read("K -14.9 I")), [("Iso", "Cr", -14.9)])
         self.assertEqual(tokenise("Cr–61.4 °C–I"), ["Cr", "61.4", "I"])
+
+    def test_phase_labels_leave_out_temperatures_question_marks_and_separators(self):
+        self.assertEqual(phase_labels("K 61.4 °C → I"), ["K", "I"])
+        self.assertEqual(phase_labels("Cr ? N 24 Iso"), ["Cr", "N", "Iso"])

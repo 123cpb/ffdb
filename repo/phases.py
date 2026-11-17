@@ -15,6 +15,8 @@ from dataclasses import dataclass
 CRYSTAL = "Cr"
 SOLIDS = (CRYSTAL, "g")
 ISOTROPIC = "Iso"
+# Every other phase in the vocabulary is a liquid crystal.
+NOT_LIQUID_CRYSTAL = SOLIDS + (ISOTROPIC,)
 
 
 class PhaseSequenceError(ValueError):
@@ -74,6 +76,12 @@ def _is_number(token):
 def is_unknown_temperature(token):
     """'?', '??' and so on: a temperature the paper didn't give."""
     return token.strip("?") == ""
+
+
+def phase_labels(text):
+    """The phase labels in a sequence, in order, without its temperatures:
+    "K 61.4 °C → I" -> ["K", "I"], and "Cr ? N 24 Iso" -> ["Cr", "N", "Iso"]."""
+    return [token for token in tokenise(text) if not (_is_number(token) or is_unknown_temperature(token))]
 
 
 def _read(tokens):

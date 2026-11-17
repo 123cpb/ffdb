@@ -6,7 +6,15 @@ from django.db import models
 from django.urls import reverse
 
 from . import chem
-from .phases import CRYSTAL, ISOTROPIC, PhaseSequenceError, normalise_label, parse_summary
+from .phases import (
+    CRYSTAL,
+    ISOTROPIC,
+    NOT_LIQUID_CRYSTAL,
+    PhaseSequenceError,
+    normalise_label,
+    parse_summary,
+    phase_labels,
+)
 
 
 def accession(pk):
@@ -129,6 +137,16 @@ class Material(models.Model):
             "stereochemistry. Both are kept as separate materials: check that is right, "
             "and say in the name or notes whether a structure without stereochemistry "
             "is racemic or simply not stated."
+        )
+
+    def liquid_crystal_phases(self):
+        """The liquid-crystal phases in any of this material's sequences, each once, in the
+        vocabulary's order. The database does the work: it follows the links from Phase to
+        this material's sequences, and distinct() drops a phase that two sequences share."""
+        return (
+            Phase.objects.filter(phase_sequences__material=self)
+            .exclude(code__in=NOT_LIQUID_CRYSTAL)
+            .distinct()
         )
 
 
@@ -300,6 +318,17 @@ class PhaseSequence(models.Model):
         """The sequence read by the parser, under the vocabulary's codes. Raises
         PhaseSequenceError, with the reason, when it can't be read."""
         return parse_summary(self.sequence, Phase.synonym_map())
+
+    def phase_was_renamed(self):
+        """Whether reading the sequence gave a liquid-crystal phase a different name, e.g. NX
+        read as NS, so the material page shows the sequence as reported too. Labels are
+        compared as the vocabulary compares them, so Nf for NF doesn't count. Nor do the
+        solids and the isotropic liquid: nearly every paper writes them K and I."""
+        pairs = zip(phase_labels(self.sequence), phase_labels(self.standard_sequence))
+        return any(
+            code not in NOT_LIQUID_CRYSTAL and normalise_label(label) != normalise_label(code)
+            for label, code in pairs
+        )
 
     def clean(self):
         """Refuse a sequence the parser can't read, with the parser's message."""

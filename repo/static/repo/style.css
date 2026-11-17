@@ -71,6 +71,14 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .facts dd { margin: 2px 0 12px; }
 .facts code { word-break: break-all; color: var(--ink-2); }
 
+.phases h2 { font: 600 22px/1.2 var(--serif); margin: 28px 0 8px; }
+.sequences { width: 100%; max-width: 900px; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); }
+.sequences th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.sequences th, .sequences td { padding: 8px 12px; border-top: 1px solid var(--hairline); vertical-align: top; }
+.reported { display: block; font-size: 13px; color: var(--muted); }
+/* A DOI has no spaces, so without this a long one would push the table wider than a phone. */
+.sequences__reference { overflow-wrap: anywhere; }
+
 @media (max-width: 720px) {
   .wrap { padding: 0 16px; }
   .material-id { font-size: 34px; }

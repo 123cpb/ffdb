@@ -2,7 +2,7 @@ from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from repo.models import Material, PhaseSequence, Reference
@@ -124,3 +124,66 @@ class AdminTests(SequenceTestCase):
         ):
             with self.subTest(url):
                 self.assertContains(self.client.get(url), "Cr 139.8 NF 132.7 N 187.9 Iso")
+
+
+class RenamedPhaseTests(SimpleTestCase):
+    """phase_was_renamed() reads only the two stored texts, so these sequences are never saved."""
+
+    def renamed(self, reported, standard):
+        return PhaseSequence(sequence=reported, standard_sequence=standard).phase_was_renamed()
+
+    def test_nx_read_as_ns_and_hcnf_read_as_ntbf_are_renamed(self):
+        self.assertTrue(self.renamed("K 100 NX 120 N 150 I", "Cr 100 NS 120 N 150 Iso"))
+        self.assertTrue(self.renamed("K 90 HCNF 110 I", "Cr 90 NTBF 110 Iso"))
+
+    def test_k_and_i_and_a_change_of_case_are_not(self):
+        self.assertFalse(self.renamed(RM734_SUMMARY, "Cr 139.8 NF 132.7 N 187.9 Iso"))
+        self.assertFalse(self.renamed("K 139.8 Nf 132.7 N 187.9 I", "Cr 139.8 NF 132.7 N 187.9 Iso"))
+
+
+class MaterialPageTests(SequenceTestCase):
+    def page(self):
+        return self.client.get(reverse("repo:material", args=[self.material.pk]))
+
+    def test_each_sequence_is_listed_with_its_reference(self):
+        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
+        self.add(RM734_SUMMARY)
+        PhaseSequence.objects.create(material=self.material, reference=patent, sequence="K 140 N 188 I")
+
+        response = self.page()
+
+        self.assertContains(response, "Cr 139.8 NF 132.7 N 187.9 Iso")
+        self.assertContains(response, "Cr 140 N 188 Iso")
+        self.assertContains(response, f'<a href="{self.reference.link}">Mandle 2017</a>', html=True)
+        self.assertContains(response, f'<a href="{patent.link}">EP3260450A1</a>', html=True)
+
+    def test_a_renamed_phase_shows_the_sequence_as_reported(self):
+        self.add("K 100 NX 120 N 150 I")
+
+        response = self.page()
+
+        self.assertContains(response, "Cr 100 NS 120 N 150 Iso")
+        self.assertContains(response, "Reported as K 100 NX 120 N 150 I")
+
+    def test_k_and_i_alone_do_not_show_the_sequence_as_reported(self):
+        self.add(RM734_SUMMARY)
+
+        self.assertNotContains(self.page(), "Reported as")
+
+    def test_a_material_without_sequences_says_so(self):
+        response = self.page()
+
+        self.assertContains(response, "No phase sequences yet.")
+        self.assertNotContains(response, "Liquid-crystal phases")
+
+    def test_liquid_crystal_phases_are_listed_once_in_vocabulary_order(self):
+        self.add(RM734_SUMMARY)
+        self.add("K 140 N 188 I")  # N again, from a second sequence
+
+        self.assertEqual([phase.code for phase in self.material.liquid_crystal_phases()], ["N", "NF"])
+        self.assertContains(self.page(), "Liquid-crystal phases: N, NF")
+
+    def test_a_material_with_no_liquid_crystal_phase_says_none_reported(self):
+        self.add("K 61.4 I")
+
+        self.assertContains(self.page(), "Liquid-crystal phases: none reported")

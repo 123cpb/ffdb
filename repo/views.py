@@ -57,7 +57,15 @@ def material_detail(request, pk):
     """One material's public page. A number with no material gives a 404."""
     material = get_object_or_404(Material, pk=pk)
     formula, mass = chem.formula_and_mass(material.canonical_smiles)
-    context = {"material": material, "formula": formula, "mass": mass}
+    context = {
+        "material": material,
+        "formula": formula,
+        "mass": mass,
+        # select_related() fetches each sequence's reference in the same query, instead of
+        # one more query for every row the template shows.
+        "sequences": material.phase_sequences.select_related("reference"),
+        "lc_phases": material.liquid_crystal_phases(),
+    }
     return render(request, "repo/material_detail.html", context)
 
 
