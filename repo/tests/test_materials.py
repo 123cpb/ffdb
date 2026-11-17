@@ -26,7 +26,10 @@ class MaterialAdminTests(TestCase):
 
     def test_admin_saves_a_material_with_no_name(self):
         self.client.force_login(User.objects.create_superuser("admin", password="pw"))
-        data = {"name": "", "aliases": "", "smiles": "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1", "notes": ""}
+        data = {
+            "name": "", "aliases": "", "smiles": "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1", "notes": "",
+            "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
+        }
 
         self.client.post(reverse("admin:repo_material_add"), data)
 

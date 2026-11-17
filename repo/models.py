@@ -6,7 +6,7 @@ from django.db import models
 from django.urls import reverse
 
 from . import chem
-from .phases import normalise_label
+from .phases import CRYSTAL, ISOTROPIC, PhaseSequenceError, normalise_label, parse_summary
 
 
 def accession(pk):
@@ -263,3 +263,62 @@ class Reference(models.Model):
         https://doi.org/10.1002/CHEM.201702742 matches 10.1002/chem.201702742."""
         if self.has_doi():
             self.identifier = clean_doi(self.identifier)
+
+
+class PhaseSequence(models.Model):
+    """One material's phase sequence as one reference reports it. For now every sequence is
+    a literature summary, from the solid up: "K 139.8 NF 132.7 N 187.9 I"."""
+
+    # Deleting a material deletes its sequences. A reference that has sequences can't be
+    # deleted: they would be left without one, and every value needs its reference.
+    material = models.ForeignKey(Material, on_delete=models.CASCADE, related_name="phase_sequences")
+    reference = models.ForeignKey(Reference, on_delete=models.PROTECT, related_name="phase_sequences")
+    sequence = models.CharField(
+        max_length=300,
+        help_text='As the reference gives it, from the solid up, with the transition temperatures '
+        '(°C) between phases, e.g. "K 139.8 NF 132.7 N 187.9 I". Labels such as K, I or N_X are '
+        "converted to the vocabulary's codes.",
+    )
+    notes = models.CharField(max_length=300, blank=True)
+
+    # Worked out from the sequence on every save (see save()), never typed in.
+    standard_sequence = models.CharField(max_length=300, blank=True, editable=False)
+    phases = models.ManyToManyField(
+        Phase, blank=True, editable=False, related_name="phase_sequences",
+        help_text="The phases in the sequence, so materials can be found by phase.",
+    )
+    t_clearing_c = models.FloatField("clearing point (°C)", null=True, blank=True, editable=False)
+    t_melting_c = models.FloatField("melting point (°C)", null=True, blank=True, editable=False)
+
+    class Meta:
+        ordering = ["material__name", "reference__identifier", "id"]
+
+    def __str__(self):
+        return f"{self.material}: {self.sequence}"
+
+    def parsed(self):
+        """The sequence read by the parser, under the vocabulary's codes. Raises
+        PhaseSequenceError, with the reason, when it can't be read."""
+        return parse_summary(self.sequence, Phase.synonym_map())
+
+    def clean(self):
+        """Refuse a sequence the parser can't read, with the parser's message."""
+        if not self.sequence.strip():
+            return  # the form's "This field is required" already covers a blank sequence
+        try:
+            self.parsed()
+        except PhaseSequenceError as exc:
+            raise ValidationError({"sequence": str(exc)})
+
+    def save(self, *args, **kwargs):
+        parsed = self.parsed()  # an unreadable sequence stops the save here
+        self.standard_sequence = parsed.standard_text()
+        clearing = [t.temperature_c for t in parsed.transitions if t.upper == ISOTROPIC]
+        self.t_clearing_c = max(clearing) if clearing else None
+        # The melting point is the temperature written after the crystal. It is kept even
+        # when a monotropic phase lies below it, so it isn't always one of the transitions.
+        self.t_melting_c = parsed.temperatures[0] if parsed.phases[0] == CRYSTAL else None
+        super().save(*args, **kwargs)
+        # Links to phases need the sequence's primary key, so they come after the save.
+        # set() adds the missing links and removes the others.
+        self.phases.set(Phase.objects.filter(code__in=parsed.phases))

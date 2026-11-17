@@ -45,8 +45,11 @@ class AdminStructureTests(TestCase):
         self.client.force_login(User.objects.create_superuser("admin", password="pw"))
 
     def add(self, name, smiles):
-        """Fill in the admin's Add material form and press Save."""
-        data = {"name": name, "aliases": "", "smiles": smiles, "notes": ""}
+        """Fill in the admin's Add material form and press Save, with no phase sequence rows."""
+        data = {
+            "name": name, "aliases": "", "smiles": smiles, "notes": "",
+            "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
+        }
         return self.client.post(self.add_url, data, follow=True)
 
     def warnings(self, response):

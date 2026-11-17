@@ -12,7 +12,8 @@ import re
 from dataclasses import dataclass
 
 # The summary rules depend on these codes, so they must stay in the phase vocabulary.
-SOLIDS = ("Cr", "g")
+CRYSTAL = "Cr"
+SOLIDS = (CRYSTAL, "g")
 ISOTROPIC = "Iso"
 
 
