@@ -1,0 +1,58 @@
+{% extends "repo/base.html" %}
+{% load repo_tags %}
+{% block title %}Add a value from {{ reference.label }}{% endblock %}
+{% block content %}
+<p class="reference-kind">{{ reference.get_kind_display }}</p>
+<h1 class="page-title">Add a value from {{ reference.label }}</h1>
+<p><a href="{% url 'repo:add_from_reference' reference.pk %}">Back to its Add data page</a></p>
+
+<section>
+  <h2>What is the value of?</h2>
+  {% include "repo/_value_choice.html" %}
+</section>
+
+{# views.add_value gives the second form, ValueForm, once the first is valid. #}
+{% if form %}
+<section>
+  <h2>The value</h2>
+  {% if form.required %}<p>{{ form.kind|capfirst }} {{ form.prop.symbol }} values must state: {{ form.required|condition_names }}.</p>{% endif %}
+  {# No action: it posts to this page's address, so the choices above come with it. #}
+  <form method="post" class="entry-form entry-form--wide">
+    {% csrf_token %}
+    {# Errors that belong to no one box, such as a required condition left out. #}
+    {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+    <fieldset>
+      <legend>Value</legend>
+      <div class="entry-form__row">
+        {% include "repo/_entry_field.html" with field=form.qualifier %}
+        {% include "repo/_entry_field.html" with field=form.value %}
+        {% include "repo/_entry_field.html" with field=form.uncertainty %}
+        {% if form.has_temperature %}{% include "repo/_entry_field.html" with field=form.temperature_c %}{% endif %}
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>Method and conditions</legend>
+      <div class="entry-form__row">
+        {% include "repo/_entry_field.html" with field=form.method %}
+        {% for field in form.condition_fields %}{% include "repo/_entry_field.html" %}{% endfor %}
+      </div>
+      {% include "repo/_entry_field.html" with field=form.other_conditions %}
+    </fieldset>
+    <fieldset>
+      <legend>Where in the reference</legend>
+      <div class="entry-form__row">
+        {% include "repo/_entry_field.html" with field=form.taken_from %}
+        {% include "repo/_entry_field.html" with field=form.location %}
+      </div>
+    </fieldset>
+    {# The method box's suggestions (its list attribute names this id). #}
+    {% if form.prop.methods %}
+    <datalist id="method-suggestions">
+      {% for method in form.prop.methods %}<option value="{{ method }}">{% endfor %}
+    </datalist>
+    {% endif %}
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

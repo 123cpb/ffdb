@@ -10,8 +10,8 @@
   {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
 </p>
 
-<p>Add this reference's compounds and their phase sequences here. For now, add property values
-and curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
+<p>Add this reference's compounds, their phase sequences and single property values here. For now,
+add curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
 
 <section>
   <h2>Add compounds</h2>
@@ -21,15 +21,7 @@ and curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
     <p class="entry-form__help">For every sequence in the table: whether they are summaries or runs, and how they were observed.</p>
     {# Every field but the table: direction, rate and method, side by side. #}
     <div class="entry-form__row">
-      {% for field in form %}{% if field.name != "table" %}
-      <div class="entry-form__field">
-        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
-        {{ field }}
-        {# The id is the one Django points the box at (aria-describedby), as on the Add data page. #}
-        {% if field.help_text %}<span class="entry-form__help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</span>{% endif %}
-        {% if field.errors %}<p class="form-error">{{ field.errors|join:" " }}</p>{% endif %}
-      </div>
-      {% endif %}{% endfor %}
+      {% for field in form %}{% if field.name != "table" %}{% include "repo/_entry_field.html" %}{% endif %}{% endfor %}
     </div>
     <label for="{{ form.table.id_for_label }}">{{ form.table.label }}</label>
     {% if form.table.errors %}<p class="form-error">{{ form.table.errors|join:" " }}</p>{% endif %}
@@ -89,6 +81,12 @@ and curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
     </table>
   </div>
   {% endif %}
+</section>
+
+<section>
+  <h2>Add a single value</h2>
+  <p>Say what the value is of. The next page asks for the value and what its property needs for that kind.</p>
+  {% include "repo/_value_choice.html" %}
 </section>
 
 <section>

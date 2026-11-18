@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 
 from . import charts, chem, crossref, exports
-from .forms import CompoundTableForm, FindReferenceForm
+from .forms import CompoundTableForm, FindReferenceForm, ValueChoiceForm, ValueForm
 from .models import (
     DOI_PREFIX,
     Material,
@@ -486,13 +486,6 @@ def add_from_reference(request, pk):
         return redirect("repo:add_from_reference", reference.pk)
     # The lines Check read, or none: an unbound form, or one refused as a whole.
     lines = form.cleaned_data["table"] if form.is_valid() else []
-    # Each | joins the two ways a material links to a reference, so a material with both a
-    # sequence and a value from it comes back more than once: distinct() keeps one.
-    materials = (
-        Material.objects.filter(Q(phase_sequences__reference=reference) | Q(series__reference=reference))
-        .distinct()
-        .order_by("pk")
-    )
     context = {
         "nav": "add",
         "reference": reference,
@@ -501,7 +494,35 @@ def add_from_reference(request, pk):
         # How many lines have each status, for the line above the table: {"new": 2, ...}.
         # A Counter gives 0 for a status no line has.
         "status_counts": Counter(line.status for line in lines),
-        "materials": materials,
+        "materials": reference.materials(),
+        # The first form for adding a single value. It is sent to add_value.
+        "choice": ValueChoiceForm(reference=reference),
         **reference_tables(reference),
     }
     return render(request, "repo/add_from_reference.html", context)
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+def add_value(request, pk):
+    """Adding a single value from a reference, in two forms. The first, ValueChoiceForm, is
+    sent with GET, so this page's address holds its choices, e.g. ?material=12&property=ps&
+    kind=measured&temperature=yes. Once they are valid the page also shows the second,
+    ValueForm, which asks for what that property needs for that kind. It posts to this same
+    address, so the choices come with it. Saving sends the curator back to the reference's
+    Add data page with a redirect, so reloading can't save twice. A number with no reference
+    gives a 404."""
+    reference = get_object_or_404(Reference, pk=pk)
+    # A visit with no choices has an empty request.GET, which counts as false, so the first
+    # form is shown empty, without errors.
+    choice = ValueChoiceForm(request.GET or None, reference=reference)
+    form = None
+    if choice.is_valid():
+        data = request.POST if request.method == "POST" else None
+        form = ValueForm(data, reference=reference, choice=choice.cleaned_data)
+        if form.is_valid():
+            series = form.save(request.user)
+            messages.success(request, f"Saved a {series.property.symbol} value for {series.material.accession}.")
+            return redirect("repo:add_from_reference", reference.pk)
+    context = {"nav": "add", "reference": reference, "choice": choice, "form": form}
+    return render(request, "repo/add_value.html", context)

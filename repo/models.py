@@ -4,6 +4,7 @@ from urllib.parse import quote, urlencode
 from django.conf import settings
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.db import models
+from django.db.models import Q
 from django.urls import reverse
 from django.utils import timezone
 
@@ -362,6 +363,16 @@ class Reference(Entered):
         elif self.kind == self.Kind.PATENT:
             self.identifier = clean_patent_number(self.identifier)
 
+    def materials(self):
+        """The materials this reference gives sequences or values for, in LCR ID order. Each |
+        joins the two ways a material links to a reference, so a material with both a sequence
+        and a value from it comes back more than once: distinct() keeps one."""
+        return (
+            Material.objects.filter(Q(phase_sequences__reference=self) | Q(series__reference=self))
+            .distinct()
+            .order_by("pk")
+        )
+
 
 class PhaseSequence(Entered):
     """One material's phase sequence as one reference reports it: a literature summary, from
@@ -551,6 +562,12 @@ class Property(models.Model):
         "a computed d33 names no reference crystal. Kinds not given here use the required conditions above.",
     )
     description = models.TextField(blank=True)
+    methods = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='The usual methods, as a list, e.g. ["current reversal", "P–E hysteresis loop"]. Add data '
+        "offers them as suggestions, so one method is written one way.",
+    )
     sort_order = models.PositiveSmallIntegerField(
         default=100, help_text="Lists show properties from the lowest number up."
     )
@@ -570,16 +587,21 @@ class Property(models.Model):
         return list(by_kind.get(kind, self.required_conditions or []))
 
     def clean(self):
-        """Refuse required conditions in the wrong shape. A JSON field takes any JSON, and
-        conditions_for() would read "temperature" as the letters t, e, m, ... without saying so."""
-        # An emptied box in the admin arrives as None: it means no conditions.
+        """Refuse required conditions or methods in the wrong shape. A JSON field takes any
+        JSON, and conditions_for() would read "temperature" as the letters t, e, m, ... without
+        saying so."""
+        # An emptied box in the admin arrives as None: it means no conditions, or no methods.
         if self.required_conditions is None:
             self.required_conditions = []
         if self.required_conditions_by_kind is None:
             self.required_conditions_by_kind = {}
+        if self.methods is None:
+            self.methods = []
         errors = {}
         if not is_name_list(self.required_conditions):
             errors["required_conditions"] = 'Give a list of names, e.g. ["temperature", "method"].'
+        if not is_name_list(self.methods):
+            errors["methods"] = 'Give a list of names, e.g. ["current reversal", "P–E hysteresis loop"].'
         by_kind = self.required_conditions_by_kind
         if not (isinstance(by_kind, dict) and all(is_name_list(names) for names in by_kind.values())):
             errors["required_conditions_by_kind"] = (

@@ -1,0 +1,12 @@
+{% comment %}
+One field of an entry form: its label, its box, its help and its errors. In an
+entry-form__row it sits side by side with the others. Include it with field=form.name.
+{% endcomment %}
+<div class="entry-form__field">
+  <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+  {{ field }}
+  {# The id is the one Django points the box at (aria-describedby), so screen readers read the help too. #}
+  {% if field.help_text %}<span class="entry-form__help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</span>{% endif %}
+  {# Django points the box at the errors too, by this id. #}
+  {% if field.errors %}<p class="form-error" id="{{ field.auto_id }}_error">{{ field.errors|join:" " }}</p>{% endif %}
+</div>
