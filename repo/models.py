@@ -40,6 +40,16 @@ def name_key(text):
     return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
+# Labels that mean something only inside one paper: 3, 10a, 4B, (12), compound 3, cpd122.
+# Not 5CB, M5 or 12-0-1: those can't be told apart from codes used across papers.
+COMPOUND_NUMBER = re.compile(r"(?:(?:compound|cpd)\s*)?\(?\d+[a-z]?\)?", re.IGNORECASE)
+
+
+def is_compound_number(name):
+    """Whether name is a bare compound number, such as 10a, which says nothing outside its paper."""
+    return bool(COMPOUND_NUMBER.fullmatch(name.strip()))
+
+
 # What people paste in front of a DOI: https://doi.org/, http://dx.doi.org/, doi: or DOI:.
 DOI_PREFIX = re.compile(r"^(https?://(dx\.)?doi\.org/|doi:)\s*", re.IGNORECASE)
 
@@ -112,6 +122,21 @@ class Material(models.Model):
         key = name_key(name)
         return key == name_key(self.name) or key in {name_key(alias) for alias in self.alias_list()}
 
+    def alias_problem(self, name):
+        """Why name, as a paper prints it, can't be kept as one of this material's aliases,
+        or "" when it can."""
+        if self.has_name(name):
+            return "it is already one of its names"
+        if is_compound_number(name):
+            return "a bare compound number means something only inside one paper"
+        if "," in name:
+            return "aliases are kept separated by commas, so one can't contain a comma"
+        if not name_key(name):
+            return "it has no letters or digits to compare with other names"
+        if len(", ".join(self.alias_list() + [name])) > self._meta.get_field("aliases").max_length:
+            return "its aliases are full: tidy them in the admin"
+        return ""
+
     def clean(self):
         """Refuse an unreadable SMILES, and a structure that is already in FFDB."""
         if not self.smiles.strip():
@@ -140,13 +165,15 @@ class Material(models.Model):
 
     def stereo_warning(self):
         """The warning shown when possible_stereo_variants() finds any, or "" when it finds none.
-        The admin and the import both show it."""
+        The admin, the import and the compound table show it; the table also asks it of a
+        material not saved yet, which is called "This structure"."""
         variants = self.possible_stereo_variants()
         if not variants:
             return ""
         others = ", ".join(f"{v.accession} ({v.name})" for v in variants)
+        subject = self.accession if self.pk else "This structure"
         return (
-            f"{self.accession} has the same connectivity as {others} but different "
+            f"{subject} has the same connectivity as {others} but different "
             "stereochemistry. Both are kept as separate materials: check that is right, "
             "and say in the name or notes whether a structure without stereochemistry "
             "is racemic or simply not stated."

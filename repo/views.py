@@ -1,4 +1,5 @@
 import math
+from collections import Counter
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 
@@ -9,9 +10,10 @@ from django.core.paginator import Paginator
 from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.defaultfilters import pluralize
 
 from . import charts, chem, crossref, exports
-from .forms import FindReferenceForm
+from .forms import CompoundTableForm, FindReferenceForm
 from .models import (
     DOI_PREFIX,
     Material,
@@ -455,10 +457,33 @@ def fill_from_crossref(reference):
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_from_reference(request, pk):
-    """A reference's Add data page: what FFDB already has from it, which the next blocks
-    add to. Its materials are those it gives sequences or values for. A number with no
-    reference gives a 404."""
+    """A reference's Add data page: a box for a table of its compounds, and what FFDB already
+    has from it. Its materials are those it gives sequences or values for. A number with no
+    reference gives a 404.
+
+    Check reads the table and shows each line, saving nothing. Save (a POST with save in
+    it) reads the table again and saves the lines without a problem. Then it sends the
+    curator back here with a redirect, so reloading the page can't save twice. The messages
+    say what was saved and list the lines that weren't, with their text, to fix and paste
+    again."""
     reference = get_object_or_404(references_with_counts(), pk=pk)
+    form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference)
+    if form.is_valid() and "save" in request.POST:
+        counts, warnings = form.save(request.user)
+        compounds, sequences, aliases = counts["compounds"], counts["sequences"], counts["aliases"]
+        messages.success(
+            request,
+            f"Saved from the table: {compounds} new compound{pluralize(compounds)}, "
+            f"{sequences} sequence{pluralize(sequences)}, {aliases} alias{pluralize(aliases, 'es')}.",
+        )
+        for warning in warnings:
+            messages.warning(request, warning)
+        for line in form.cleaned_data["table"]:
+            if line.problem:
+                messages.error(request, f"Line {line.number} not saved: {line.problem} The line: {line.text}")
+        return redirect("repo:add_from_reference", reference.pk)
+    # The lines Check read, or none: an unbound form, or one refused as a whole.
+    lines = form.cleaned_data["table"] if form.is_valid() else []
     # Each | joins the two ways a material links to a reference, so a material with both a
     # sequence and a value from it comes back more than once: distinct() keeps one.
     materials = (
@@ -466,5 +491,15 @@ def add_from_reference(request, pk):
         .distinct()
         .order_by("pk")
     )
-    context = {"nav": "add", "reference": reference, "materials": materials, **reference_tables(reference)}
+    context = {
+        "nav": "add",
+        "reference": reference,
+        "form": form,
+        "lines": lines,
+        # How many lines have each status, for the line above the table: {"new": 2, ...}.
+        # A Counter gives 0 for a status no line has.
+        "status_counts": Counter(line.status for line in lines),
+        "materials": materials,
+        **reference_tables(reference),
+    }
     return render(request, "repo/add_from_reference.html", context)

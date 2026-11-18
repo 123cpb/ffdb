@@ -10,8 +10,73 @@
   {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
 </p>
 
-<p>Coming next: adding this reference's compounds, phase sequences, values and curves here.
-Until then, add them in the <a href="{% url 'admin:index' %}">admin</a>.</p>
+<p>Add this reference's compounds and their phase sequences here. For now, add property values
+and curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
+
+<section>
+  <h2>Add compounds</h2>
+  {# views.add_from_reference gives the form, CompoundTableForm. No action: it posts to this page. #}
+  <form method="post" class="entry-form entry-form--wide">
+    {% csrf_token %}
+    <label for="{{ form.table.id_for_label }}">{{ form.table.label }}</label>
+    {% if form.table.errors %}<p class="form-error">{{ form.table.errors|join:" " }}</p>{% endif %}
+    {{ form.table }}
+    <p class="entry-form__help" id="{{ form.table.auto_id }}_helptext">{{ form.table.help_text }}</p>
+    {# The button's name is sent with the form, so the view can tell Save from Check. #}
+    <div class="entry-form__buttons">
+      <button type="submit" name="check">Check</button>
+      <button type="submit" name="save">Save</button>
+    </div>
+  </form>
+
+  {% if lines %}
+  {% if form.header %}<p class="table-note">Line {{ form.header }} has no digits, so it was read as a header.</p>{% endif %}
+  <p>{{ lines|length }} line{{ lines|length|pluralize }}: {{ status_counts.new }} new, {{ status_counts.in_ffdb }} in FFDB,
+  {{ status_counts.problem }} with a problem. Nothing has been saved. Save adds what this table shows, leaving out the
+  lines with a problem.</p>
+  <div class="table-scroll">
+    <table class="data-table compound-table">
+      <thead>
+        <tr>
+          <th scope="col">Line</th><th scope="col">Structure</th><th scope="col">Label</th>
+          <th scope="col">Status</th><th scope="col">Sequence (°C)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in lines %}
+        <tr>
+          <td>{{ line.number }}</td>
+          <td class="compound-table__drawing">
+            {% if line.canonical_smiles %}<div role="img" aria-label="Structure of {{ line.label }}">{{ line.drawing }}</div>{% endif %}
+          </td>
+          <td>{{ line.label }}</td>
+          <td>
+            {% if line.status == "problem" %}
+            <span class="problem">Not saved: {{ line.problem }}</span>
+            <span class="cell-note">{{ line.text }}</span>
+            {% elif line.status == "in_ffdb" %}
+            In FFDB as <a href="{% url 'repo:material' line.match.pk %}">{{ line.match.accession }}</a>
+            {% if line.match.name %}<span class="result__name">{{ line.match.name }}</span>{% endif %}
+            <span class="cell-note">
+              {% if line.alias_problem %}{{ line.label }} won't be kept as an alias: {{ line.alias_problem }}.
+              {% else %}{{ line.label }} will be kept as an alias.{% endif %}
+            </span>
+            {% else %}
+            New
+            {% if line.stereo_warning %}<span class="cell-note stereo-warning">{{ line.stereo_warning }}</span>{% endif %}
+            {% endif %}
+          </td>
+          <td>
+            {{ line.standard_sequence }}
+            {% if line.sequence_already_there %}<span class="cell-note">Already in FFDB from this reference: not added again.</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
 
 <section>
   <h2>Materials</h2>

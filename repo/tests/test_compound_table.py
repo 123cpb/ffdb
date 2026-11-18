@@ -1,0 +1,218 @@
+"""A reference's Add data page reads a pasted table of compounds: Check shows what each line
+would add and saves nothing; Save adds the lines without a problem and lists the others."""
+
+from django.test import SimpleTestCase
+from django.urls import reverse
+
+from repo.forms import table_cells, table_rows
+from repo.models import Material, PhaseSequence, is_compound_number
+from repo.tests.test_add_data import FIVE_CB, LOGIN, AddDataTestCase
+from repo.tests.test_values import DIO, RM734
+
+SEQUENCE = "K 139.8 NF 132.7 N 187.9 I"
+# 5CB new, RM734 already in FFDB under another label, and DIO with a typo in its sequence.
+THREE_LINES = f"Label\tSMILES\tPhases\n5CB\t{FIVE_CB}\tK 24 N 35.3 I\nMB-1\t{RM734}\t{SEQUENCE}\n10b\t{DIO}\tK 80 NFF 120 I"
+
+
+class TableRuleTests(SimpleTestCase):
+    def test_cells_are_split_on_tabs_or_else_commas_or_else_spaces(self):
+        cases = {
+            "5CB\tCCC\tK 24 N 35 I": ["5CB", "CCC", "K 24 N 35 I"],
+            "compound 3\tCCC": ["compound 3", "CCC"],
+            # The sequence keeps its own commas and spaces.
+            "5CB, CCC, K 24, N 35, I": ["5CB", "CCC", "K 24, N 35, I"],
+            "5CB   CCC  K 24 N 35 I": ["5CB", "CCC", "K 24 N 35 I"],
+            "5CB\tCCC\t\t": ["5CB", "CCC"],  # empty cells at the end are dropped
+        }
+        for line, cells in cases.items():
+            with self.subTest(line):
+                self.assertEqual(table_cells(line), cells)
+
+    def test_only_a_first_line_without_digits_is_a_header(self):
+        header, rows = table_rows("Label\tSMILES\n\n5CB\tC1CC1\nDIO only\n")
+
+        self.assertEqual(header, 1)
+        # Line numbers are the pasted text's, blank lines counted.
+        self.assertEqual([(number, cells) for number, _, cells in rows], [(3, ["5CB", "C1CC1"]), (4, ["DIO", "only"])])
+        self.assertEqual(table_rows("5CB\tC1CC1")[0], None)
+
+
+class AliasRuleTests(SimpleTestCase):
+    def test_bare_compound_numbers(self):
+        for name in ["3", "10a", "4B", " 12 ", "(3)", "(10a)", "compound 3", "Compound 10a", "cpd122", "cpd 151"]:
+            with self.subTest(name):
+                self.assertTrue(is_compound_number(name))
+        for name in ["5CB", "M5", "12-0-1", "RM734", "SCUT10a", "II-4", "compound"]:
+            with self.subTest(name):
+                self.assertFalse(is_compound_number(name))
+
+    def test_which_names_can_be_kept_as_aliases(self):
+        material = Material(name="RM734", aliases="MB-1")  # not saved: the rule needs no database
+
+        self.assertEqual(material.alias_problem("NT3A-5"), "")
+        for name, problem in [
+            ("rm-734", "already one of its names"),
+            ("MB1", "already one of its names"),
+            ("10a", "a bare compound number"),
+            ("A, B", "can't contain a comma"),
+            ("—", "no letters or digits"),
+            ("X" * 500, "its aliases are full"),
+        ]:
+            with self.subTest(name):
+                self.assertIn(problem, material.alias_problem(name))
+
+
+class CompoundTableTestCase(AddDataTestCase):
+    """RM734 is in FFDB, with nothing yet from the article."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+
+    def send(self, table, button="check", follow=False):
+        """Post the table with the Check or Save button."""
+        return self.client.post(self.add_page(self.article), {"table": table, button: ""}, follow=follow)
+
+    def line(self, table):
+        """The last line Check read."""
+        return self.send(table).context["lines"][-1]
+
+
+class CheckTests(CompoundTableTestCase):
+    def test_a_new_structure_is_new_with_its_drawing_and_standard_sequence(self):
+        response = self.send(f"5CB\t{FIVE_CB}\tK 24 N 35.3 I")
+
+        [line] = response.context["lines"]
+        self.assertEqual((line.status, line.standard_sequence, line.stereo_warning), ("new", "Cr 24 N 35.3 Iso", ""))
+        self.assertContains(response, '<div role="img" aria-label="Structure of 5CB"><svg')
+
+    def test_a_structure_in_ffdb_is_shown_as_that_material_with_what_happens_to_its_label(self):
+        response = self.send(f"MB-1\t{RM734}")
+
+        self.assertEqual(response.context["lines"][0].match, self.rm734)
+        link = reverse("repo:material", args=[self.rm734.pk])
+        self.assertContains(response, f'<a href="{link}">{self.rm734.accession}</a>', html=True)
+        self.assertContains(response, "MB-1 will be kept as an alias.")
+
+        line = self.line(f"10a\t{RM734}")
+        self.assertIn("a bare compound number", line.alias_problem)
+
+    def test_each_kind_of_problem_line_says_why(self):
+        for bad, problem in [
+            ("5CB", "Expected a label, a SMILES and, optionally, a phase sequence, but found 1 cell."),
+            ("5CB\tC1CC1\tK 24 N 35 I\tmore", "but found 4 cells."),
+            ("\tC1CC1", "Give the compound's label as the paper prints it."),
+            ("X" * 201 + "\tC1CC1", "longer than the 200 characters a name can have"),
+            ("9z\tC1CC1x", "RDKit could not read “C1CC1x” as a SMILES"),
+            (f"9z\t{FIVE_CB}", "Same structure as line 1: give each compound once."),
+            ("10b\tC1CC1\tK 80 NFF 120 I", "Phase sequence: Unknown phase label: NFF."),
+            ("10b\tC1CC1\tK 50 NF 120 N 80 I", "Phase sequence: In a summary, transition temperatures must rise"),
+        ]:
+            with self.subTest(bad):
+                # A first line, so the bad one is never read as a header.
+                line = self.line(f"5CB\t{FIVE_CB}\n{bad}")
+
+                self.assertEqual(line.status, "problem")
+                self.assertIn(problem, line.problem)
+
+    def test_a_new_structure_with_the_connectivity_of_one_in_ffdb_is_warned_about(self):
+        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
+
+        line = self.line("rac-2-octanol\tCC(O)CCCCCC")
+
+        self.assertEqual(line.status, "new")
+        self.assertTrue(line.stereo_warning.startswith(f"This structure has the same connectivity as {s_octanol.accession}"))
+
+    def test_a_sequence_already_there_from_this_reference_is_marked(self):
+        PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence=SEQUENCE)
+
+        response = self.send(f"RM734\t{RM734}\tK 139.8 Nf 132.7 N 187.9 I")  # Nf is NF
+
+        self.assertTrue(response.context["lines"][0].sequence_already_there)
+        self.assertContains(response, "Already in FFDB from this reference: not added again.")
+        self.assertContains(response, "RM734 won't be kept as an alias: it is already one of its names.")
+
+    def test_a_table_with_no_lines_or_too_many_is_refused_whole(self):
+        for table, error in [
+            ("", "Paste at least one line"),
+            ("Label\tSMILES\n\n", "Paste at least one line"),
+            (f"5CB\t{FIVE_CB}\n" * 101, "A table can have at most 100 lines, and this one has 101: split it."),
+        ]:
+            with self.subTest(table[:20]):
+                response = self.send(table)
+
+                self.assertContains(response, error)
+                self.assertEqual(response.context["lines"], [])
+
+    def test_check_saves_nothing(self):
+        response = self.send(THREE_LINES)
+
+        statuses = [line.status for line in response.context["lines"]]
+        self.assertEqual(statuses, ["new", "in_ffdb", "problem"])
+        self.assertContains(response, "Line 1 has no digits, so it was read as a header.")
+        self.assertEqual(Material.objects.count(), 1)
+        self.assertFalse(PhaseSequence.objects.exists())
+        self.rm734.refresh_from_db()
+        self.assertEqual(self.rm734.aliases, "")
+
+
+class SaveTests(CompoundTableTestCase):
+    def test_save_adds_the_lines_without_a_problem_and_lists_the_others(self):
+        response = self.send(THREE_LINES, "save", follow=True)
+
+        self.assertRedirects(response, self.add_page(self.article))
+        five_cb = Material.objects.get(name="5CB")
+        self.assertFalse(Material.objects.filter(name="10b").exists())
+        self.rm734.refresh_from_db()
+        self.assertEqual(self.rm734.aliases, "MB-1")
+        sequences = PhaseSequence.objects.order_by("material_id")
+        self.assertEqual(
+            [(s.material, s.reference, s.standard_sequence, s.entered_by) for s in sequences],
+            [
+                (self.rm734, self.article, "Cr 139.8 NF 132.7 N 187.9 Iso", self.curator),
+                (five_cb, self.article, "Cr 24 N 35.3 Iso", self.curator),
+            ],
+        )
+        self.assertEqual(self.messages(response), [
+            "Saved from the table: 1 new compound, 2 sequences, 1 alias.",
+            f"Line 4 not saved: Phase sequence: Unknown phase label: NFF. Use a label from the phase "
+            f"vocabulary, or add it there first. The line: 10b\t{DIO}\tK 80 NFF 120 I",
+        ])
+
+    def test_saving_the_same_table_again_adds_nothing(self):
+        self.send(THREE_LINES, "save")
+
+        response = self.send(THREE_LINES, "save", follow=True)
+
+        self.assertEqual(Material.objects.count(), 2)
+        self.assertEqual(PhaseSequence.objects.count(), 2)
+        self.rm734.refresh_from_db()
+        self.assertEqual(self.rm734.aliases, "MB-1")
+        self.assertIn("Saved from the table: 0 new compounds, 0 sequences, 0 aliases.", self.messages(response))
+
+    def test_a_bare_compound_number_names_a_new_compound_but_isnt_kept_as_an_alias(self):
+        self.send(f"10a\t{FIVE_CB}\n10b\t{RM734}", "save")
+
+        self.assertTrue(Material.objects.filter(name="10a", smiles=FIVE_CB).exists())
+        self.rm734.refresh_from_db()
+        self.assertEqual(self.rm734.aliases, "")
+
+    def test_the_stereochemistry_warning_names_the_new_material_once_saved(self):
+        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
+
+        response = self.send("rac-2-octanol\tCC(O)CCCCCC", "save", follow=True)
+
+        new = Material.objects.get(name="rac-2-octanol")
+        self.assertTrue(self.messages(response)[1].startswith(
+            f"{new.accession} has the same connectivity as {s_octanol.accession}"
+        ))
+
+    def test_a_logged_out_visitor_cant_save(self):
+        self.client.logout()
+
+        response = self.send(THREE_LINES, "save")
+
+        self.assertRedirects(response, f"{LOGIN}?next={self.add_page(self.article)}")
+        self.assertEqual(Material.objects.count(), 1)
+        self.assertFalse(PhaseSequence.objects.exists())

@@ -54,10 +54,23 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .entry-form input[type="text"] { padding: 7px 10px; font: inherit; background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; }
 .entry-form__help { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
 .entry-form button { justify-self: start; padding: 7px 16px; font: inherit; color: #fff; background: var(--link); border: 0; border-radius: 6px; cursor: pointer; }
+/* The compound table's box: wide enough for SMILES, in a font where tabs and spaces line up. */
+.entry-form--wide { max-width: 900px; }
+.entry-form textarea { width: 100%; padding: 7px 10px; font: 13.5px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; resize: vertical; }
+.entry-form__buttons { display: flex; gap: 8px; }
 
 .messages { list-style: none; margin: 0 0 20px; padding: 0; }
 .message { padding: 10px 14px; background: #eef4fa; border: 1px solid #c6d9ec; border-radius: 6px; }
+.message + .message { margin-top: 6px; }
 .message--success { background: #eef7f0; border-color: #c4e2cb; }
+.message--warning { background: #fdf6e7; border-color: #ecd9a8; }
+.message--error { color: #8a1c1c; background: #fdf0f0; border-color: #f0c4c4; }
+
+/* The lines a compound table was read as, each with its drawing (forms.TableLine.drawing()). */
+.compound-table__drawing { width: 216px; }
+.compound-table__drawing svg { display: block; max-width: 100%; height: auto; }
+.problem { color: #8a1c1c; }
+.cell-note.stereo-warning { color: #7a5a00; }
 
 .page-title { font: 600 32px/1.1 var(--serif); margin: 0 0 16px; }
 
