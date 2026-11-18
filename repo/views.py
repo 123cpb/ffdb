@@ -1,13 +1,17 @@
 import math
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 
+from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.paginator import Paginator
 from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404, render
+from django.shortcuts import get_object_or_404, redirect, render
 
-from . import charts, chem, exports
+from . import charts, chem, crossref, exports
+from .forms import FindReferenceForm
 from .models import (
     DOI_PREFIX,
     Material,
@@ -254,25 +258,29 @@ def references(request):
     return render(request, "repo/references.html", context)
 
 
-def reference_detail(request, pk):
-    """One reference's public page: its details and link, the materials it gives
-    sequences for, with those sequences, and the property values it gives. A number with
-    no reference gives a 404."""
-    reference = get_object_or_404(references_with_counts(), pk=pk)
+def reference_tables(reference):
+    """What a reference's public page and its Add data page both show: its sequences and its
+    property values, as {"sequences": ..., "value_sections": ...} for the template."""
     # As on the material page, with each row's material in place of its reference.
     series = (
         reference.series.select_related("material", "property__group", "variable")
         .prefetch_related("points")
         .order_by("material_id", "id")
     )
-    context = {
-        "nav": "references",
-        "reference": reference,
+    return {
         # In LCR ID order, as on the Materials page. select_related() fetches each row's
         # material in the same query.
         "sequences": reference.phase_sequences.select_related("material").order_by("material_id", "id"),
         "value_sections": value_sections(series),
     }
+
+
+def reference_detail(request, pk):
+    """One reference's public page: its details and link, the materials it gives
+    sequences for, with those sequences, and the property values it gives. A number with
+    no reference gives a 404."""
+    reference = get_object_or_404(references_with_counts(), pk=pk)
+    context = {"nav": "references", "reference": reference, **reference_tables(reference)}
     return render(request, "repo/reference_detail.html", context)
 
 
@@ -393,5 +401,70 @@ def structure(request, pk):
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_data(request):
-    """The Add data page. For now it only says what is coming."""
-    return render(request, "repo/add.html", {"nav": "add"})
+    """The Add data page: which reference is the data from? A reference already in FFDB goes
+    straight on to its Add data page. A new one is added first, recorded as entered by this
+    curator, with its details from Crossref for a DOI. Either way the curator is sent on with
+    a redirect, so reloading the next page doesn't send the form again. The message says
+    what happened, and the next page shows it (base.html)."""
+    form = FindReferenceForm(request.POST if request.method == "POST" else None)
+    if form.is_valid():
+        kind, identifier = form.cleaned_data["kind"], form.cleaned_data["identifier"]
+        # iexact, so a thesis typed in other capitals is found. DOIs and patent numbers are
+        # already stored in one case.
+        reference = Reference.objects.filter(identifier__iexact=identifier).first()
+        # The label comes last in each message, because it can end in a full stop (Chem. Eur. J.).
+        if reference:
+            messages.info(request, f"Already in FFDB: {reference.label}")
+        else:
+            reference = Reference(kind=kind, identifier=identifier)
+            reference.mark_entered(request.user)
+            found = fill_from_crossref(reference) if reference.has_doi() else ""
+            reference.save()
+            messages.success(request, f"Added to FFDB: {reference.label}")
+            if found:
+                messages.info(request, found)
+        return redirect("repo:add_from_reference", reference.pk)
+    return render(request, "repo/add.html", {"nav": "add", "form": form})
+
+
+def fill_from_crossref(reference):
+    """Fill in a new reference's details and abstract from Crossref, before it is saved.
+    Returns what happened, for the curator. If Crossref can't help, the reference is added
+    without details, which fetch_reference_details can fill in later."""
+    later = "Add its details in the admin, or run fetch_reference_details later."
+    if not settings.CROSSREF_MAILTO:
+        return f"Crossref wasn't asked, because CROSSREF_MAILTO isn't set. {later}"
+    try:
+        message = crossref.look_up(reference.identifier, settings.CROSSREF_MAILTO)
+    except HTTPError as exc:  # before URLError, because it is a kind of URLError
+        if exc.code == 404:
+            return f"Crossref doesn't know this DOI, so it has no details. {later}"
+        return f"Crossref answered with an error (HTTP {exc.code}), so it has no details. {later}"
+    except (URLError, TimeoutError):
+        return f"Crossref couldn't be reached, so it has no details. {later}"
+    except (ValueError, KeyError):  # the answer wasn't JSON, or had no record in it
+        return f"Crossref's answer couldn't be read, so it has no details. {later}"
+    for field, value in crossref.details(message).items():
+        setattr(reference, field, value)
+    reference.abstract = crossref.abstract_text(message)
+    return "Its details are from Crossref" + (
+        ", with its abstract." if reference.abstract else ", which has no abstract for it."
+    )
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+def add_from_reference(request, pk):
+    """A reference's Add data page: what FFDB already has from it, which the next blocks
+    add to. Its materials are those it gives sequences or values for. A number with no
+    reference gives a 404."""
+    reference = get_object_or_404(references_with_counts(), pk=pk)
+    # Each | joins the two ways a material links to a reference, so a material with both a
+    # sequence and a value from it comes back more than once: distinct() keeps one.
+    materials = (
+        Material.objects.filter(Q(phase_sequences__reference=reference) | Q(series__reference=reference))
+        .distinct()
+        .order_by("pk")
+    )
+    context = {"nav": "add", "reference": reference, "materials": materials, **reference_tables(reference)}
+    return render(request, "repo/add_from_reference.html", context)

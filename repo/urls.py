@@ -22,4 +22,5 @@ urlpatterns = [
     path("property/<slug:code>/values.csv", views.property_values_csv, name="property_values_csv"),
     # Curators only.
     path("add/", views.add_data, name="add"),
+    path("add/reference/<int:pk>/", views.add_from_reference, name="add_from_reference"),
 ]

@@ -1,7 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
 
-from repo.models import Reference, clean_doi
+from repo.models import Reference, clean_doi, clean_patent_number
 
 DOI = "10.1002/chem.201702742"
 
@@ -58,6 +58,24 @@ class CleanDoiTests(SimpleTestCase):
         self.assertEqual(clean_doi("10.1103/PhysRevLett.133.038101"), "10.1103/physrevlett.133.038101")
 
 
+class CleanPatentNumberTests(SimpleTestCase):
+    def test_spaces_are_removed_and_letters_capitalised(self):
+        self.assertEqual(clean_patent_number(" ep 3260450 a1 "), "EP3260450A1")
+
+
+class KindForDoiTests(SimpleTestCase):
+    def test_preprint_servers_dois_are_preprints(self):
+        for doi in (
+            "10.26434/chemrxiv.15004113/v1",
+            "10.48550/arXiv.2505.03009",  # as arXiv writes it
+            "https://doi.org/10.48550/arxiv.2505.03009",
+        ):
+            self.assertEqual(Reference.kind_for_doi(doi), Reference.Kind.PREPRINT, doi)
+
+    def test_other_dois_are_articles(self):
+        self.assertEqual(Reference.kind_for_doi(DOI), Reference.Kind.ARTICLE)
+
+
 class UniquenessTests(TestCase):
     def setUp(self):
         Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier=DOI)
@@ -69,6 +87,11 @@ class UniquenessTests(TestCase):
 
     def test_a_patent_number_is_left_alone(self):
         ref = Reference(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
+        ref.full_clean()
+        self.assertEqual(ref.identifier, "EP3260450A1")
+
+    def test_full_clean_tidies_a_patent_number(self):
+        ref = Reference(kind=Reference.Kind.PATENT, identifier="ep 3260450 a1")
         ref.full_clean()
         self.assertEqual(ref.identifier, "EP3260450A1")
 

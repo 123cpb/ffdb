@@ -25,6 +25,13 @@
     </div>
   </header>
   <main class="wrap">
+    {# Messages a view left for the next page, e.g. "Added Mandle 2017, ..." after Add data redirects. #}
+    {# messages comes from the messages context processor; showing a message removes it. #}
+    {% if messages %}
+    <ul class="messages">
+      {% for message in messages %}<li class="message message--{{ message.tags }}">{{ message }}</li>{% endfor %}
+    </ul>
+    {% endif %}
     {% block content %}{% endblock %}
   </main>
 </body>

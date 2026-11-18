@@ -17,36 +17,14 @@
   {% if reference.notes %}<dt>Notes</dt><dd>{{ reference.notes|linebreaksbr }}</dd>{% endif %}
 </dl>
 
-<section class="phases">
-  <h2>Phase sequences</h2>
-  {% if sequences %}
-  <p>{{ reference.n_materials }} material{{ reference.n_materials|pluralize }}, {{ sequences|length }} sequence{{ sequences|length|pluralize }}.</p>
-  <table class="data-table">
-    <thead>
-      <tr><th scope="col">Material</th><th scope="col">Sequence (°C)</th></tr>
-    </thead>
-    <tbody>
-      {% for sequence in sequences %}
-      <tr>
-        <td>
-          <a href="{% url 'repo:material' sequence.material.pk %}">{{ sequence.material.accession }}</a>
-          {% if sequence.material.name %}<span class="result__name">{{ sequence.material.name }}</span>{% endif %}
-        </td>
-        <td>
-          {{ sequence.standard_sequence }}
-          {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>No phase sequences from this reference.</p>
-  {% endif %}
-</section>
+{% include "repo/_reference_sequences.html" %}
 
 {% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
 
+{# The same permission as the Add data pages themselves. #}
+{% if perms.repo.add_reference %}
+<p><a href="{% url 'repo:add_from_reference' reference.pk %}">Add data from this reference</a></p>
+{% endif %}
 {% if user.is_staff %}
 <p><a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a></p>
 {% endif %}

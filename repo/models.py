@@ -50,6 +50,17 @@ def clean_doi(text):
     return DOI_PREFIX.sub("", text.strip()).strip().lower()
 
 
+def clean_patent_number(text):
+    """A patent number as it is stored, without spaces and in capitals, because patent
+    offices ignore both: "ep 3260450 a1" -> "EP3260450A1"."""
+    return "".join(text.split()).upper()
+
+
+# The start of the DOIs that preprint servers give: arXiv's and ChemRxiv's, as clean_doi()
+# leaves them.
+PREPRINT_DOIS = ("10.48550/arxiv.", "10.26434/chemrxiv")
+
+
 class Material(models.Model):
     name = models.CharField(
         max_length=200,
@@ -269,6 +280,11 @@ class Reference(Entered):
         help_text="As the label shows it: the journal, abbreviated (e.g. Chem. Eur. J.), or the "
         "preprint server; the patent office; or the university.",
     )
+    abstract = models.TextField(
+        blank=True,
+        help_text="As published. Filled in from Crossref when a DOI is added on the Add data page. "
+        "Shown only here in the admin until it is decided whether abstracts can be shown publicly.",
+    )
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -289,6 +305,12 @@ class Reference(Entered):
     def has_doi(self):
         return self.kind in (self.Kind.ARTICLE, self.Kind.PREPRINT)
 
+    @classmethod
+    def kind_for_doi(cls, doi):
+        """Preprint for a DOI that a preprint server gave, otherwise journal article. The DOI
+        is cleaned first, so 10.48550/arXiv.2505.03009, as arXiv writes it, is a preprint."""
+        return cls.Kind.PREPRINT if clean_doi(doi).startswith(PREPRINT_DOIS) else cls.Kind.ARTICLE
+
     @property
     def link(self):
         """Where to read it: doi.org for a DOI, an Espacenet search for a patent number,
@@ -304,10 +326,13 @@ class Reference(Entered):
         return ""
 
     def clean(self):
-        """Clean up a DOI before Django checks it is unique, so a DOI pasted as
-        https://doi.org/10.1002/CHEM.201702742 matches 10.1002/chem.201702742."""
+        """Clean up a DOI or patent number before Django checks it is unique, so a DOI pasted
+        as https://doi.org/10.1002/CHEM.201702742 matches 10.1002/chem.201702742, and
+        EP 3260450 A1 matches EP3260450A1."""
         if self.has_doi():
             self.identifier = clean_doi(self.identifier)
+        elif self.kind == self.Kind.PATENT:
+            self.identifier = clean_patent_number(self.identifier)
 
 
 class PhaseSequence(Entered):

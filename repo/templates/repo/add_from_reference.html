@@ -1,0 +1,35 @@
+{% extends "repo/base.html" %}
+{% block title %}Add data from {{ reference.label }}{% endblock %}
+{% block content %}
+<p class="reference-kind">{{ reference.get_kind_display }}</p>
+<h1 class="page-title">Add data from {{ reference.label }}</h1>
+
+<p>
+  {% if reference.link %}<a href="{{ reference.link }}">{{ reference.identifier }}</a>{% else %}{{ reference.identifier }}{% endif %}
+  · <a href="{% url 'repo:reference' reference.pk %}">Public page</a>
+  {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
+</p>
+
+<p>Coming next: adding this reference's compounds, phase sequences, values and curves here.
+Until then, add them in the <a href="{% url 'admin:index' %}">admin</a>.</p>
+
+<section>
+  <h2>Materials</h2>
+  {% if materials %}
+  <ul>
+    {% for material in materials %}
+    <li>
+      <a href="{% url 'repo:material' material.pk %}">{{ material.accession }}</a>
+      {% if material.name %}<span class="result__name">{{ material.name }}</span>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No materials from this reference yet.</p>
+  {% endif %}
+</section>
+
+{% include "repo/_reference_sequences.html" %}
+
+{% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
+{% endblock %}

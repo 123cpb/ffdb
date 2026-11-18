@@ -2,7 +2,28 @@
 {% block title %}Add data{% endblock %}
 {% block content %}
 <h1 class="page-title">Add data</h1>
-<p>Data is added by reference. Coming next: give a DOI, a patent number, or a thesis's author,
-year and title, and add that reference's materials, phase sequences and values.</p>
-<p>Until then, add and correct data in the <a href="{% url 'admin:index' %}">admin</a>.</p>
+<p>Data is added by reference. Say which reference the data is from: if FFDB has it, you go
+on to its Add data page; if not, it is added first, with its details from Crossref for a DOI.</p>
+
+{# views.add_data gives the form, FindReferenceForm. Each field's errors show above it. #}
+<form method="post" action="{% url 'repo:add' %}" class="entry-form">
+  {% csrf_token %}
+  <fieldset>
+    <legend>{{ form.kind.label }}</legend>
+    {% if form.kind.errors %}<p class="form-error">{{ form.kind.errors|join:" " }}</p>{% endif %}
+    {# One radio button per choice, each inside its label, so clicking the words chooses it. #}
+    {% for radio in form.kind %}
+    <label class="entry-form__choice">{{ radio.tag }} {{ radio.choice_label }}</label>
+    {% endfor %}
+  </fieldset>
+  <label for="{{ form.identifier.id_for_label }}">{{ form.identifier.label }}</label>
+  {% if form.identifier.errors %}<p class="form-error">{{ form.identifier.errors|join:" " }}</p>{% endif %}
+  {{ form.identifier }}
+  {# Django points the box at this paragraph (aria-describedby), so screen readers read it too. #}
+  <p class="entry-form__help" id="{{ form.identifier.auto_id }}_helptext">{{ form.identifier.help_text }}</p>
+  <button type="submit">Go on</button>
+</form>
+
+<p>Looking for a reference by its author or title? Search the <a href="{% url 'repo:references' %}">References</a>:
+each reference's page links to its Add data page.</p>
 {% endblock %}

@@ -31,8 +31,9 @@ DEBUG = os.environ.get("DEBUG", "False") == "True"
 
 ALLOWED_HOSTS = [h for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h]
 
-# The contact address that fetch_reference_details sends to Crossref, which asks for one.
-# Optional here, because only that command needs it.
+# The contact address sent to Crossref, which asks for one, by fetch_reference_details and by
+# the Add data page when a DOI is added. Optional: without it, the page adds a DOI without
+# its details and says why.
 CROSSREF_MAILTO = os.environ.get("CROSSREF_MAILTO", "")
 
 

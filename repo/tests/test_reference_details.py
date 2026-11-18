@@ -8,16 +8,12 @@ from urllib.parse import unquote
 from django.core.management import CommandError, call_command
 from django.test import SimpleTestCase, TestCase, override_settings
 
-from repo.management.commands.fetch_reference_details import (
-    API,
-    clean_text,
-    first_author,
-    journal,
-    publication_year,
-)
+from repo.crossref import API, abstract_text, clean_text, first_author, journal, publication_year
 from repo.models import Reference
 
 COMMAND = "repo.management.commands.fetch_reference_details"
+# Where look_up() finds urlopen, so a test that replaces it there replaces every request.
+URLOPEN = "repo.crossref.urlopen"
 
 PCCP = "10.1039/c7cp00456g"
 BCSJ = "10.1246/bcsj.56.3571"
@@ -28,9 +24,14 @@ UNKNOWN = "10.1000/unknown"
 
 # Saved Crossref answers, cut down from the real records to the fields the command reads.
 RESPONSES = {
-    # A short journal title.
+    # A short journal title, and an abstract in JATS, as Crossref gives it.
     PCCP: {
         "type": "journal-article",
+        "abstract": (
+            "<jats:title>Abstract</jats:title><jats:p>A rod-like liquid crystal with two nematic "
+            "phases.</jats:p>\n<jats:p>The lower one is ferroelectric, with P<jats:sub>s</jats:sub> "
+            "near 6 µC cm<jats:sup>−2</jats:sup>.</jats:p>"
+        ),
         "title": ["A nematic to nematic transformation exhibited by a rod-like liquid crystal"],
         "author": [{"given": "Richard J.", "family": "Mandle", "sequence": "first"}],
         "container-title": ["Physical Chemistry Chemical Physics"],
@@ -116,7 +117,7 @@ class FetchReferenceDetailsTests(TestCase):
         Reference.objects.create(kind=Reference.Kind.THESIS, identifier="Mandle 2015, PhD thesis")
 
         self.crossref = FakeCrossref()
-        for patcher in (mock.patch(f"{COMMAND}.urlopen", self.crossref), mock.patch(f"{COMMAND}.PAUSE", 0)):
+        for patcher in (mock.patch(URLOPEN, self.crossref), mock.patch(f"{COMMAND}.PAUSE", 0)):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -224,6 +225,21 @@ class CleanTextTests(SimpleTestCase):
 
     def test_nothing_gives_an_empty_string(self):
         self.assertEqual(clean_text(None), "")
+
+
+class AbstractTextTests(SimpleTestCase):
+    def test_the_heading_is_dropped_and_paragraphs_kept(self):
+        self.assertEqual(
+            abstract_text(RESPONSES[PCCP]),
+            "A rod-like liquid crystal with two nematic phases.\n\n"
+            "The lower one is ferroelectric, with Ps near 6 µC cm⁻².",
+        )
+
+    def test_an_abstract_without_paragraph_tags_is_one_paragraph(self):
+        self.assertEqual(abstract_text({"abstract": "  A plain   abstract. "}), "A plain abstract.")
+
+    def test_no_abstract_gives_an_empty_string(self):
+        self.assertEqual(abstract_text(RESPONSES[BCSJ]), "")
 
 
 class FirstAuthorTests(SimpleTestCase):

@@ -1,0 +1,32 @@
+{% comment %}
+A reference's phase sequences, with the material each is for: on its public page and its Add
+data page. sequences comes from views.reference_tables(), and reference from
+views.references_with_counts(), which gives n_materials.
+{% endcomment %}
+<section class="phases">
+  <h2>Phase sequences</h2>
+  {% if sequences %}
+  <p>{{ reference.n_materials }} material{{ reference.n_materials|pluralize }}, {{ sequences|length }} sequence{{ sequences|length|pluralize }}.</p>
+  <table class="data-table">
+    <thead>
+      <tr><th scope="col">Material</th><th scope="col">Sequence (°C)</th></tr>
+    </thead>
+    <tbody>
+      {% for sequence in sequences %}
+      <tr>
+        <td>
+          <a href="{% url 'repo:material' sequence.material.pk %}">{{ sequence.material.accession }}</a>
+          {% if sequence.material.name %}<span class="result__name">{{ sequence.material.name }}</span>{% endif %}
+        </td>
+        <td>
+          {{ sequence.standard_sequence }}
+          {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No phase sequences from this reference.</p>
+  {% endif %}
+</section>

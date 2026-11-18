@@ -15,16 +15,12 @@ from repo.phases import PhaseSequenceError, parse_summary
 # (alt_reference and values) are for later stages.
 COLUMNS = ["origin", "line", "name", "smiles", "sequence", "reference", "reference_kind"]
 
-# DOIs that preprint servers give: arXiv's and ChemRxiv's.
-PREPRINT_DOIS = ("10.48550/arxiv.", "10.26434/chemrxiv")
-
-
 def reference_kind(kind, identifier):
     """The Reference kind for the merged list's reference_kind, or None for a kind FFDB
     doesn't take, such as a manuscript number. A DOI is an article unless a preprint
-    server gave it."""
+    server gave it (Reference.kind_for_doi(), which the Add data page uses too)."""
     if kind == "doi":
-        return Reference.Kind.PREPRINT if identifier.startswith(PREPRINT_DOIS) else Reference.Kind.ARTICLE
+        return Reference.kind_for_doi(identifier)
     return {"patent": Reference.Kind.PATENT, "thesis": Reference.Kind.THESIS}.get(kind)
 
 
