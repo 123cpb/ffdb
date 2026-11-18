@@ -1,0 +1,14 @@
+{% load repo_tags %}
+{% comment %}
+The cells every values table shows for one series: its value (with how many points a curve
+has), what it was measured at, its conditions, kind and method. Each table adds its own
+material or reference cells around them. The material, reference and property pages use it.
+{% endcomment %}
+<td>
+  {{ series|value_text }}
+  {% with n=series.points.all|length %}{% if n != 1 %}<span class="cell-note">{{ n }} points</span>{% endif %}{% endwith %}
+</td>
+<td>{{ series|at_text }}</td>
+<td>{{ series.conditions|conditions_text|default:"–" }}</td>
+<td>{{ series.kind|capfirst }}</td>
+<td>{{ series.method|default:"–" }}</td>

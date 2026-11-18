@@ -127,6 +127,13 @@ def conditions_text(conditions):
 
 
 @register.filter
+def condition_names(keys):
+    """A list of required conditions in words, in the order given: ["temperature",
+    "frequency_Hz", "cell_gap_um"] -> "temperature, frequency, cell gap". "" for none."""
+    return ", ".join(CONDITION_NAMES.get(key, key) for key in keys or [])
+
+
+@register.filter
 def where_text(series):
     """Where in its reference a series is: its location, or else what it was taken from,
     with "digitised" if it was read off a figure: "Fig. 5(b), digitised", "Table".

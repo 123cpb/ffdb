@@ -1,0 +1,61 @@
+{% extends "repo/base.html" %}
+{% load repo_tags %}
+{% block title %}{{ property.name }}{% endblock %}
+{% block content %}
+<h1 class="page-title">{{ property.name }}</h1>
+<p class="property-symbol">{{ property.symbol }}, {{ property.unit }}</p>
+{% if property.description %}<p class="property-description">{{ property.description }}</p>{% endif %}
+
+<dl class="facts">
+  <dt>Every value must state</dt>
+  <dd>{{ property.required_conditions|condition_names|default:"–" }}</dd>
+  {% for kind, keys in by_kind %}
+  <dt>{{ kind|capfirst }} values must state instead</dt>
+  <dd>{{ keys|condition_names|default:"–" }}</dd>
+  {% endfor %}
+</dl>
+
+<section class="values">
+  <h2>Values</h2>
+  {% if series_list %}
+  <p>{{ property.n_materials }} material{{ property.n_materials|pluralize }} from {{ property.n_references }} reference{{ property.n_references|pluralize }}. Each row is one value or one curve, as its reference gives it.</p>
+  <p class="table-note">Select the Material or Value heading to sort by it. By value, the smallest comes first, and a curve sits where its lowest value would.</p>
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          {# The heading of the current sort is marked, and the other links to its sort. #}
+          {% if sort == "material" %}<th scope="col" aria-sort="ascending">Material</th>
+          {% else %}<th scope="col"><a href="{% url 'repo:property' property.code %}">Material</a></th>{% endif %}
+          {% if sort == "value" %}<th scope="col" aria-sort="ascending">Value</th>
+          {% else %}<th scope="col"><a href="?sort=value">Value</a></th>{% endif %}
+          <th scope="col">At</th><th scope="col">Conditions</th>
+          <th scope="col">Kind</th><th scope="col">Method</th><th scope="col">Reference</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for series in series_list %}
+        <tr>
+          <td>
+            <a href="{% url 'repo:material' series.material.pk %}">{{ series.material.accession }}</a>
+            {% if series.material.name %}<span class="result__name">{{ series.material.name }}</span>{% endif %}
+          </td>
+          {% include "repo/_value_cells.html" %}
+          <td class="data-table__reference">
+            <a href="{% url 'repo:reference' series.reference.pk %}">{{ series.reference.label }}</a>
+            {% with where=series|where_text %}{% if where %}<span class="cell-note">{{ where }}</span>{% endif %}{% endwith %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p>No {{ property.symbol }} values yet.</p>
+  {% endif %}
+</section>
+
+{% if user.is_staff %}
+<p><a href="{% url 'admin:repo_property_change' property.pk %}">Edit in admin</a></p>
+{% endif %}
+{% endblock %}

@@ -95,6 +95,15 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 /* A DOI has no spaces, so without this a long one would push the table wider than a phone. */
 .data-table__reference { overflow-wrap: anywhere; }
 
+/* The Properties list: a group's name heads its block, and its members are set in under it. */
+.property-group th[scope="rowgroup"] { font-size: 15px; color: var(--ink); }
+.property-group td:first-child { padding-left: 28px; }
+/* A property page: the heading the table is sorted by. */
+.data-table th[aria-sort] { color: var(--ink); }
+.property-symbol { margin: -8px 0 0; color: var(--ink-2); font-size: 18px; }
+.property-description { max-width: 720px; }
+.table-note { font-size: 13.5px; color: var(--muted); }
+
 .reference-kind { margin: 0 0 4px; font-size: 13.5px; color: var(--muted); }
 .reference-label { overflow-wrap: anywhere; }
 

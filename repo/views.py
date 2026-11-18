@@ -2,12 +2,22 @@ import math
 from urllib.parse import urlencode
 
 from django.core.paginator import Paginator
-from django.db.models import Count, F, Q
+from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 from . import chem
-from .models import DOI_PREFIX, Material, Phase, PhaseTransition, Reference, group_properties, pk_from_accession
+from .models import (
+    DOI_PREFIX,
+    Material,
+    Phase,
+    PhaseTransition,
+    Property,
+    Reference,
+    Series,
+    group_properties,
+    pk_from_accession,
+)
 
 
 def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
@@ -245,6 +255,66 @@ def reference_detail(request, pk):
         "value_sections": value_sections(series),
     }
     return render(request, "repo/reference_detail.html", context)
+
+
+def properties_with_counts():
+    """Every property, each with n_materials and n_references: how many materials and how
+    many references give values for it. As in references_with_counts(), distinct=True
+    counts each once, however many series it has. select_related() fetches each group in
+    the same query, for group_properties()."""
+    return Property.objects.select_related("group").annotate(
+        n_materials=Count("series__material", distinct=True),
+        n_references=Count("series__reference", distinct=True),
+    )
+
+
+def properties(request):
+    """The Properties page: every property in the vocabulary's order, with its counts, and a
+    group's members together under its name."""
+    context = {"nav": "properties", "entries": group_properties(properties_with_counts())}
+    return render(request, "repo/properties.html", context)
+
+
+# How ?sort= orders a property page's series. By value, a series counts as its lowest
+# point (lowest_value, worked out in property_detail()): a single value is its value, and a
+# curve sits where its range starts. A series with no points has no lowest value, so it
+# goes last. Ties, and the material order itself, go by LCR ID, then reference.
+PROPERTY_SORTS = {
+    "material": ["material_id", "reference__identifier", "id"],
+    "value": [F("lowest_value").asc(nulls_last=True), "material_id", "reference__identifier", "id"],
+}
+
+
+def property_detail(request, code):
+    """One property's public page: what its values must state, and every value of it across
+    materials, by material or, with ?sort=value, by value. Any other ?sort= is ignored. A
+    code with no property gives a 404."""
+    prop = get_object_or_404(properties_with_counts(), code=code)
+    sort = request.GET.get("sort", "")
+    if sort not in PROPERTY_SORTS:
+        sort = "material"
+    # Min() has the database find each series' lowest point, so it can sort by it. The
+    # rest is as on the material page: one query for the series and one for their points.
+    series = (
+        prop.series.select_related("material", "reference", "property", "variable")
+        .prefetch_related("points")
+        .annotate(lowest_value=Min("points__value"))
+        .order_by(*PROPERTY_SORTS[sort])
+    )
+    context = {
+        "nav": "properties",
+        "property": prop,
+        # The kinds with conditions of their own, in the order the kinds are listed:
+        # [("computed", ["method", ...])]. A kind name that isn't one of the kinds is left out.
+        "by_kind": [
+            (kind, prop.conditions_for(kind))
+            for kind in Series.Kind.values
+            if kind in (prop.required_conditions_by_kind or {})
+        ],
+        "series_list": series,
+        "sort": sort,
+    }
+    return render(request, "repo/property_detail.html", context)
 
 
 def structure(request, pk):

@@ -1,0 +1,35 @@
+{% extends "repo/base.html" %}
+{% block title %}Properties{% endblock %}
+{% block content %}
+<h1 class="page-title">Properties</h1>
+<p>Choose a property to see every value of it, as each reference gives it.</p>
+
+{% comment %}
+entries comes from group_properties(): (group, [its members]) with group None for a property
+in no group. Each entry is a <tbody>, so a group's heading row and its members are one block.
+{% endcomment %}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th scope="col">Property</th><th scope="col">Symbol</th><th scope="col">Unit</th>
+      <th scope="col">Materials</th><th scope="col">References</th>
+    </tr>
+  </thead>
+  {% for group, members in entries %}
+  <tbody{% if group %} class="property-group"{% endif %}>
+    {% if group %}<tr><th colspan="5" scope="rowgroup">{{ group.name }}</th></tr>{% endif %}
+    {% for prop in members %}
+    <tr>
+      <td><a href="{% url 'repo:property' prop.code %}">{{ prop.name }}</a></td>
+      <td>{{ prop.symbol }}</td>
+      <td>{{ prop.unit }}</td>
+      <td>{{ prop.n_materials }}</td>
+      <td>{{ prop.n_references }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% empty %}
+  <tbody><tr><td colspan="5">No properties yet.</td></tr></tbody>
+  {% endfor %}
+</table>
+{% endblock %}

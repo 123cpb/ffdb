@@ -14,6 +14,7 @@
       <nav class="site-nav" aria-label="Main">
         <a href="{% url 'repo:materials' %}"{% if nav == "materials" %} aria-current="page"{% endif %}>Materials</a>
         <a href="{% url 'repo:references' %}"{% if nav == "references" %} aria-current="page"{% endif %}>References</a>
+        <a href="{% url 'repo:properties' %}"{% if nav == "properties" %} aria-current="page"{% endif %}>Properties</a>
       </nav>
     </div>
   </header>
