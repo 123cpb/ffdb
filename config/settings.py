@@ -100,6 +100,10 @@ DATABASES = {
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
 
+LOGIN_URL = 'login'  # where a curators' page sends someone who isn't logged in
+LOGIN_REDIRECT_URL = 'repo:add'  # after logging in, when no page asked for the login
+LOGOUT_REDIRECT_URL = 'repo:home'  # after logging out
+
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',

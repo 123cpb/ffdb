@@ -20,4 +20,6 @@ urlpatterns = [
     # A property's code, e.g. ps: <slug:...> takes only letters, digits, - and _.
     path("property/<slug:code>/", views.property_detail, name="property"),
     path("property/<slug:code>/values.csv", views.property_values_csv, name="property_values_csv"),
+    # Curators only.
+    path("add/", views.add_data, name="add"),
 ]

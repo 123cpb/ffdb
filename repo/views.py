@@ -1,6 +1,7 @@
 import math
 from urllib.parse import urlencode
 
+from django.contrib.auth.decorators import login_required, permission_required
 from django.core.paginator import Paginator
 from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
@@ -379,3 +380,18 @@ def structure(request, pk):
     # Material.structure_url, which changes when the structure does.
     response["Cache-Control"] = "max-age=86400"
     return response
+
+
+# Curators' pages. login_required sends someone who isn't logged in to the login page.
+# permission_required refuses (403) anyone logged in without the permission; without
+# raise_exception it would send them back to the login page instead. Adding a reference is
+# what makes someone a curator here, because adding data starts from a reference. Superusers
+# have every permission, so admins count as curators. base.html shows the Add data link on
+# the same permission.
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+def add_data(request):
+    """The Add data page. For now it only says what is coming."""
+    return render(request, "repo/add.html", {"nav": "add"})

@@ -1,0 +1,20 @@
+{% extends "repo/base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<h1 class="page-title">Log in</h1>
+<p>For curators. Admins create curators' accounts.</p>
+
+{# Django's LoginView gives the form. A wrong username or password is a form-wide error. #}
+{% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+
+<form method="post" action="{% url 'login' %}" class="login-form">
+  {% csrf_token %}
+  <label for="{{ form.username.id_for_label }}">Username</label>
+  {{ form.username }}
+  <label for="{{ form.password.id_for_label }}">Password</label>
+  {{ form.password }}
+  {# The page that sent them here, e.g. /add/, to go back to once they are logged in. #}
+  <input type="hidden" name="next" value="{{ next }}">
+  <button type="submit">Log in</button>
+</form>
+{% endblock %}

@@ -15,6 +15,12 @@
         <a href="{% url 'repo:materials' %}"{% if nav == "materials" %} aria-current="page"{% endif %}>Materials</a>
         <a href="{% url 'repo:references' %}"{% if nav == "references" %} aria-current="page"{% endif %}>References</a>
         <a href="{% url 'repo:properties' %}"{% if nav == "properties" %} aria-current="page"{% endif %}>Properties</a>
+        {# perms and user come from the auth context processor in settings. Add data needs the permission its view checks. #}
+        {% if perms.repo.add_reference %}<a href="{% url 'repo:add' %}"{% if nav == "add" %} aria-current="page"{% endif %}>Add data</a>{% endif %}
+        {# A form, because Django logs out only on a POST, which a link can't send. #}
+        {% if user.is_authenticated %}
+        <form method="post" action="{% url 'logout' %}" class="site-nav__logout">{% csrf_token %}<button type="submit">Log out</button></form>
+        {% endif %}
       </nav>
     </div>
   </header>
