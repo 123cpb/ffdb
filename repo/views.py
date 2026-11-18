@@ -6,16 +6,16 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 from . import chem
-from .models import DOI_PREFIX, Material, Reference, pk_from_accession
+from .models import DOI_PREFIX, Material, Phase, Reference, pk_from_accession
 
 
-def find_materials(text, substructure=""):
+def find_materials(text, substructure="", phase=""):
     """The materials a search finds, in LCR ID order. A blank search finds them all.
 
     A material is found when the text is part of its name or an alias (ignoring case),
-    is its InChIKey (ignoring case), or is its LCR ID, and when its structure contains
-    the substructure (SMILES or SMARTS). Raises chem.StructureError when RDKit can't
-    read the substructure.
+    is its InChIKey (ignoring case), or is its LCR ID; when at least one of its sequences
+    has the phase (a code, e.g. NF); and when its structure contains the substructure
+    (SMILES or SMARTS). Raises chem.StructureError when RDKit can't read the substructure.
     """
     materials = Material.objects.order_by("pk")
     text = text.strip()
@@ -25,6 +25,12 @@ def find_materials(text, substructure=""):
         if pk is not None:
             found |= Q(pk=pk)
         materials = materials.filter(found)
+    if phase:
+        # The database follows Material -> its sequences -> their phases. That gives one row
+        # per matching sequence, so a material with the phase in two sequences would come
+        # back twice: distinct() keeps one. This comes before the substructure, so RDKit
+        # checks fewer structures.
+        materials = materials.filter(phase_sequences__phases__code=phase).distinct()
     if substructure.strip():
         pattern = chem.substructure_pattern(substructure)
         # The database can't compare structures, so RDKit checks each material found so far.
@@ -34,25 +40,44 @@ def find_materials(text, substructure=""):
     return materials
 
 
+def phase_choices():
+    """The phase box's choices, in the vocabulary's order, as (code, label) pairs:
+    ("NF", "NF (Ferroelectric nematic)"), or the name alone when it starts with the
+    code, as "SmApx (as reported)" does."""
+    return [
+        (phase.code, phase.name if phase.name.startswith(phase.code) else f"{phase.code} ({phase.name})")
+        for phase in Phase.objects.all()
+    ]
+
+
 def materials(request):
-    """The Materials page, and for now the home page: every material, or those that ?q=
-    and ?sub= find, 25 to a page. get_page() turns a missing, bad or too-high ?page= into
-    a real page. A substructure RDKit can't read lists nothing and says why."""
+    """The Materials page, and for now the home page: every material, or those that ?q=,
+    ?sub= and ?phase= find, 25 to a page. get_page() turns a missing, bad or too-high
+    ?page= into a real page. A substructure RDKit can't read lists nothing and says why.
+    A ?phase= that isn't in the vocabulary is ignored."""
     query = request.GET.get("q", "").strip()
     substructure = request.GET.get("sub", "").strip()
+    choices = phase_choices()
+    phase = request.GET.get("phase", "")
+    if phase not in dict(choices):
+        phase = ""
     error = ""
     try:
-        found = find_materials(query, substructure)
+        found = find_materials(query, substructure, phase)
     except chem.StructureError as exc:
         found, error = Material.objects.none(), str(exc)
     page = Paginator(found, 25).get_page(request.GET.get("page"))
     # The search as it goes in an address, so the page links keep it. urlencode() turns
     # characters such as # into %23: a bare # would end the address there.
-    search = urlencode({key: value for key, value in [("q", query), ("sub", substructure)] if value})
+    search = urlencode(
+        {key: value for key, value in [("q", query), ("sub", substructure), ("phase", phase)] if value}
+    )
     context = {
         "nav": "materials",  # which link base.html marks as the current section
         "query": query,
         "substructure": substructure,
+        "phase": phase,
+        "phase_choices": choices,
         "error": error,
         "page": page,
         "search": search,

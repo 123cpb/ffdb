@@ -2,7 +2,7 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from django.utils.html import escape
 
-from repo.models import Material, pk_from_accession
+from repo.models import Material, PhaseSequence, Reference, pk_from_accession
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
@@ -111,6 +111,57 @@ class SubstructureSearchTests(TestCase):
         self.assertEqual(list(response.context["page"].object_list), [])
 
 
+def add_reference(identifier):
+    return Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier=identifier)
+
+
+class PhaseSearchTests(TestCase):
+    """The phases are already in the test database, from the 0005_seed_phases migration."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)  # nitro
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)  # cyano
+        cls.six_cb = Material.objects.create(name="6CB", smiles=SIX_CB)  # cyano
+        first, second = add_reference("10.1000/first"), add_reference("10.1000/second")
+        for material, reference, sequence in [
+            (cls.rm734, first, "K 139.8 NF 132.7 N 187.9 I"),
+            (cls.rm734, second, "K 140 NF 133 N 188 I"),  # NF again, in a second sequence
+            (cls.five_cb, first, "K 24 N 35 I"),  # no NF
+            (cls.six_cb, first, "K 14 NF 20 N 29 I"),  # made up for the test: 6CB has no NF
+        ]:
+            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence)
+
+    def search(self, **params):
+        return self.client.get(reverse("repo:materials"), params)
+
+    def found(self, **params):
+        return list(self.search(**params).context["page"].object_list)
+
+    def test_phase_lists_only_the_materials_with_it_in_a_sequence(self):
+        # RM734 has NF in two sequences but is listed once.
+        self.assertEqual(self.found(phase="NF"), [self.rm734, self.six_cb])
+
+    def test_substructure_narrows_the_phase_search(self):
+        self.assertEqual(self.found(phase="NF", sub="C#N"), [self.six_cb])
+
+    def test_phase_combines_with_the_name_search(self):
+        self.assertEqual(self.found(q="RM", phase="NF"), [self.rm734])
+        self.assertEqual(self.found(q="5CB", phase="NF"), [])
+
+    def test_a_phase_not_in_the_vocabulary_is_ignored(self):
+        response = self.search(phase="XYZ")
+
+        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.five_cb, self.six_cb])
+        self.assertEqual(response.context["phase"], "")
+
+    def test_heading_and_box_show_the_phase(self):
+        response = self.search(q="CB", sub="C#N", phase="NF")
+
+        self.assertContains(response, "1 material with NF matches “CB” and contains <code>C#N</code>")
+        self.assertContains(response, '<option value="NF" selected>NF (Ferroelectric nematic)</option>')
+
+
 class PagingTests(TestCase):
     @classmethod
     def setUpTestData(cls):
@@ -134,3 +185,12 @@ class PagingTests(TestCase):
         response = self.client.get(reverse("repo:materials"), {"sub": "[#6]"})  # any carbon
 
         self.assertContains(response, 'href="?sub=%5B%236%5D&amp;page=2"')
+
+    def test_page_links_keep_the_phase(self):
+        reference = add_reference("10.1000/test")
+        for material in self.materials:  # made up for the test: no alkane has NF
+            PhaseSequence.objects.create(material=material, reference=reference, sequence="K 10 NF 20 I")
+
+        response = self.client.get(reverse("repo:materials"), {"phase": "NF"})
+
+        self.assertContains(response, 'href="?phase=NF&amp;page=2"')

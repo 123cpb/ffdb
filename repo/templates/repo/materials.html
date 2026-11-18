@@ -13,8 +13,15 @@
       <label for="sub">Contains substructure</label>
       <input id="sub" name="sub" value="{{ substructure }}" class="mono" placeholder="SMILES or SMARTS" autocomplete="off" aria-describedby="sub-hint">
     </div>
+    <div class="search__field">
+      <label for="phase">Has phase</label>
+      <select id="phase" name="phase">
+        <option value="">Any phase</option>
+        {% for code, label in phase_choices %}<option value="{{ code }}"{% if code == phase %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </div>
     <button type="submit">Search</button>
-    {% if query or substructure %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
+    {% if query or substructure or phase %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
   </div>
   <p id="sub-hint" class="search__hint">Substructure: <code>C#N</code> finds cyano groups. Write aromatic rings in lower case, as in <code>c1ccccc1</code>.</p>
 </form>
@@ -23,7 +30,7 @@
 <p class="form-error" role="alert">{{ error }}</p>
 {% else %}
 {% with total=page.paginator.count %}
-<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}{% if query and substructure %} and{% endif %}{% if substructure %} contain{{ total|pluralize:"s," }} <code>{{ substructure }}</code>{% endif %}</h2>
+<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if phase %} with {{ phase }}{% endif %}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}{% if query and substructure %} and{% endif %}{% if substructure %} contain{{ total|pluralize:"s," }} <code>{{ substructure }}</code>{% endif %}</h2>
 {% endwith %}
 
 {% if page.object_list %}
@@ -49,7 +56,7 @@
   {% if page.has_next %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
 </nav>
 {% endif %}
-{% elif query or substructure %}
+{% elif query or substructure or phase %}
 <p>No materials match. <a href="{% url 'repo:materials' %}">Show all materials</a>.</p>
 {% else %}
 <p>No materials yet.</p>
