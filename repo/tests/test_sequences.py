@@ -13,6 +13,7 @@ from repo.phases import PhaseSequenceError
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 RM734_SUMMARY = "K 139.8 NF 132.7 N 187.9 I"
+RM734_COOLING = "Iso 187.9 N 132.7 NF 70 K"
 
 
 class SequenceTestCase(TestCase):
@@ -26,8 +27,14 @@ class SequenceTestCase(TestCase):
             kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
         )
 
-    def add(self, sequence):
-        return PhaseSequence.objects.create(material=self.material, reference=self.reference, sequence=sequence)
+    def add(self, sequence, **fields):
+        return PhaseSequence.objects.create(material=self.material, reference=self.reference, sequence=sequence, **fields)
+
+    def add_cooling_run(self):
+        return self.add(
+            RM734_COOLING, direction=PhaseSequence.Direction.COOLING, rate_k_per_min=5, method="DSC",
+            lowest_temperature_c=20,
+        )
 
 
 def codes(sequence):
@@ -58,6 +65,30 @@ class StoredFieldTests(SequenceTestCase):
         self.assertIsNone(sequence.t_melting_c)
         self.assertEqual(sequence.t_clearing_c, 24)
 
+    def test_a_sequence_saved_without_a_direction_is_a_summary(self):
+        # As the import saves them, and as the migration marked those already in FFDB.
+        sequence = self.add(RM734_SUMMARY)
+        sequence.refresh_from_db()
+
+        self.assertEqual(sequence.direction, PhaseSequence.Direction.SUMMARY)
+
+    def test_a_cooling_run_keeps_its_order_and_has_no_melting_point(self):
+        sequence = self.add_cooling_run()
+        sequence.refresh_from_db()
+
+        self.assertEqual(sequence.standard_sequence, "Iso 187.9 N 132.7 NF 70 Cr")
+        self.assertEqual(sequence.t_clearing_c, 187.9)
+        # 70 is where it crystallises on cooling, not where it melts.
+        self.assertIsNone(sequence.t_melting_c)
+
+    def test_a_heating_run_marked_as_cooling_is_refused(self):
+        sequence = PhaseSequence(
+            material=self.material, reference=self.reference, sequence="K 70 NF 132.7 N 187.9 I",
+            direction=PhaseSequence.Direction.COOLING,
+        )
+        with self.assertRaisesMessage(ValidationError, "Marked as cooling, but written from the coldest phase up."):
+            sequence.full_clean()
+
 
 def transitions(sequence):
     """The sequence's stored transitions as (upper, lower, temperature), highest first."""
@@ -82,6 +113,11 @@ class TransitionTests(SequenceTestCase):
         sequence.save()
 
         self.assertEqual(transitions(sequence), [("Iso", "N", 187.9), ("N", "Cr", 139.8)])
+
+    def test_a_cooling_run_stores_each_transition_between_its_neighbours(self):
+        sequence = self.add_cooling_run()
+
+        self.assertEqual(transitions(sequence), [("Iso", "N", 187.9), ("N", "NF", 132.7), ("NF", "Cr", 70)])
 
     def test_the_migration_fills_in_sequences_saved_before_the_table_existed(self):
         sequence = self.add(RM734_SUMMARY)
@@ -132,7 +168,7 @@ class AdminTests(SequenceTestCase):
     def setUp(self):
         self.client.force_login(User.objects.create_superuser("admin", password="pw"))
 
-    def save_on_material_page(self, sequence):
+    def save_on_material_page(self, sequence, direction="summary", rate="", method="", lowest=""):
         """Fill in the empty sequence row on RM734's admin page and press Save. The
         management form tells Django how many rows the page sent."""
         url = reverse("admin:repo_material_change", args=[self.material.pk])
@@ -140,7 +176,11 @@ class AdminTests(SequenceTestCase):
             "name": "RM734", "aliases": "", "smiles": RM734, "notes": "",
             "phase_sequences-TOTAL_FORMS": "1", "phase_sequences-INITIAL_FORMS": "0",
             "phase_sequences-0-reference": str(self.reference.pk),
+            "phase_sequences-0-direction": direction,
             "phase_sequences-0-sequence": sequence,
+            "phase_sequences-0-rate_k_per_min": rate,
+            "phase_sequences-0-method": method,
+            "phase_sequences-0-lowest_temperature_c": lowest,
             "phase_sequences-0-notes": "",
         }
         return self.client.post(url, data)
@@ -152,6 +192,13 @@ class AdminTests(SequenceTestCase):
         sequence = self.material.phase_sequences.get()
         self.assertEqual(codes(sequence), {"Cr", "NF", "N", "Iso"})
         self.assertEqual(sequence.t_clearing_c, 187.9)
+
+    def test_a_run_added_on_the_material_page_keeps_how_it_was_observed(self):
+        response = self.save_on_material_page(RM734_COOLING, "cooling", "5", "DSC", "20")
+
+        self.assertEqual(response.status_code, 302)
+        sequence = self.material.phase_sequences.get()
+        self.assertEqual(sequence.run_text(), "Cooling, 5 K/min, DSC, down to 20 °C")
 
     def test_an_unreadable_sequence_is_refused_with_the_parsers_message(self):
         response = self.save_on_material_page("K 100 Q 50 I")
@@ -210,6 +257,18 @@ class MaterialPageTests(SequenceTestCase):
 
         self.assertContains(response, "Cr 100 NS 120 N 150 Iso")
         self.assertContains(response, "Reported as K 100 NX 120 N 150 I")
+
+    def test_each_sequence_shows_how_it_was_observed(self):
+        self.add(RM734_SUMMARY)
+        self.add_cooling_run()
+
+        response = self.page()
+
+        self.assertContains(response, "<td>Summary</td>", html=True)
+        self.assertContains(response, "<td>Cooling, 5 K/min, DSC, down to 20 °C</td>", html=True)
+        # The reference page lists them the same way.
+        reference_page = self.client.get(reverse("repo:reference", args=[self.reference.pk]))
+        self.assertContains(reference_page, "<td>Cooling, 5 K/min, DSC, down to 20 °C</td>", html=True)
 
     def test_k_and_i_alone_do_not_show_the_sequence_as_reported(self):
         self.add(RM734_SUMMARY)

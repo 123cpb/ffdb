@@ -9,7 +9,7 @@ views.references_with_counts(), which gives n_materials.
   <p>{{ reference.n_materials }} material{{ reference.n_materials|pluralize }}, {{ sequences|length }} sequence{{ sequences|length|pluralize }}.</p>
   <table class="data-table">
     <thead>
-      <tr><th scope="col">Material</th><th scope="col">Sequence (°C)</th></tr>
+      <tr><th scope="col">Material</th><th scope="col">Sequence (°C)</th><th scope="col">Direction</th></tr>
     </thead>
     <tbody>
       {% for sequence in sequences %}
@@ -22,6 +22,7 @@ views.references_with_counts(), which gives n_materials.
           {{ sequence.standard_sequence }}
           {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
         </td>
+        <td>{{ sequence.run_text }}</td>
       </tr>
       {% endfor %}
     </tbody>

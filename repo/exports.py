@@ -82,14 +82,18 @@ def reference_cells(reference):
 
 
 SEQUENCE_COLUMNS = [
-    "material_id", "material", "sequence_reported", "sequence_standard",
-    "clearing_point_c", "melting_point_c", *REFERENCE_COLUMNS,
+    "material_id", "material", "sequence_reported", "sequence_standard", "direction",
+    "rate_k_per_min", "method", "lowest_temperature_c", "clearing_point_c", "melting_point_c",
+    *REFERENCE_COLUMNS,
 ]
 
 
 def sequence_rows(materials):
     """One row per phase sequence of the materials, by LCR ID, then as the material page
-    lists them. Every sequence is given, as reported and under the vocabulary's codes."""
+    lists them. Every sequence is given, as reported and under the vocabulary's codes. The
+    direction is its stored code: summary, cooling, heating or unspecified. A summary is
+    written from the solid up and a run in the order observed, so a cooling run reads from
+    the hottest phase down."""
     sequences = (
         PhaseSequence.objects.filter(material__in=materials)
         .select_related("material", "reference")
@@ -98,7 +102,8 @@ def sequence_rows(materials):
     for sequence in sequences:
         yield [
             sequence.material.accession, sequence.material.name, sequence.sequence,
-            sequence.standard_sequence, sequence.t_clearing_c, sequence.t_melting_c,
+            sequence.standard_sequence, sequence.direction, sequence.rate_k_per_min, sequence.method,
+            sequence.lowest_temperature_c, sequence.t_clearing_c, sequence.t_melting_c,
             *reference_cells(sequence.reference),
         ]
 

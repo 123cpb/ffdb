@@ -38,7 +38,9 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
 
     With t_min or t_max (°C; either can be None), the phase must form on cooling in that
     range, ends included: some sequence has a transition into it there. With no phase,
-    a transition into any phase counts.
+    a transition into any phase counts. The transitions are stored the same way whatever
+    the sequence's direction, so a heating run's counts too: NF giving way to N on heating
+    at 132.7 °C counts as NF forming at 132.7 °C.
     """
     materials = Material.objects.order_by("pk")
     text = text.strip()

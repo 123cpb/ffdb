@@ -11,7 +11,7 @@ from django.utils.safestring import mark_safe
 
 from . import chem
 from .models import Material, Phase, PhaseSequence, Reference, clean_doi, clean_patent_number
-from .phases import PhaseSequenceError, parse_summary
+from .phases import PhaseSequenceError
 
 # What every DOI looks like once cleaned: 10., a number of four or more digits, /, then the
 # rest, e.g. 10.1002/chem.201702742.
@@ -70,6 +70,7 @@ class FindReferenceForm(forms.Form):
 MAX_TABLE_LINES = 100
 NAME_LENGTH = Material._meta.get_field("name").max_length
 SEQUENCE_LENGTH = PhaseSequence._meta.get_field("sequence").max_length
+METHOD_LENGTH = PhaseSequence._meta.get_field("method").max_length
 
 
 def table_cells(line):
@@ -138,10 +139,11 @@ class TableLine:
         return mark_safe(svg[svg.index("<svg"):])
 
 
-def read_lines(rows, reference):
+def read_lines(rows, reference, direction):
     """Read each row from table_rows() as a TableLine: check its cells, structure and
-    sequence, and look its structure up in FFDB. Nothing is saved. A line gets one problem,
-    the first found, so each check can rely on those before it."""
+    sequence, and look its structure up in FFDB. Each sequence is read as direction says
+    (one of PhaseSequence.Direction). Nothing is saved. A line gets one problem, the first
+    found, so each check can rely on those before it."""
     synonyms = Phase.synonym_map()  # read once, for every line's sequence
     first_seen = {}  # InChIKey -> the number of the line it was first on
     lines = []
@@ -171,7 +173,9 @@ def read_lines(rows, reference):
         first_seen[inchikey] = number
         if line.sequence:
             try:
-                line.standard_sequence = parse_summary(line.sequence, synonyms).standard_text()
+                # An unsaved sequence, so it is read exactly as saving it would read it.
+                sequence = PhaseSequence(sequence=line.sequence, direction=direction)
+                line.standard_sequence = sequence.parsed(synonyms).standard_text()
             except PhaseSequenceError as exc:
                 line.problem = f"Phase sequence: {exc}"
                 continue
@@ -182,8 +186,9 @@ def read_lines(rows, reference):
         line.match = Material.objects.filter(inchikey=inchikey).first()
         if line.match:
             line.alias_problem = line.match.alias_problem(line.label)
+            # The direction too: a heating run and a summary can be written the same way.
             line.sequence_already_there = bool(line.sequence) and reference.phase_sequences.filter(
-                material=line.match, standard_sequence=line.standard_sequence
+                material=line.match, direction=direction, standard_sequence=line.standard_sequence
             ).exists()
         else:
             # A material not saved: the InChIKey is all stereo_warning() needs.
@@ -194,20 +199,31 @@ def read_lines(rows, reference):
 class CompoundTableForm(forms.Form):
     """A reference's compounds, pasted as a table into one box. A valid form's cleaned_data
     has table, the lines read as TableLine objects (read_lines()), and header is the number
-    of the line read as a header, or None. Pass the reference the compounds are from."""
+    of the line read as a header, or None. Every sequence in the table has the direction,
+    rate and method chosen once above it. Pass the reference the compounds are from."""
 
     EMPTY = "Paste at least one line: a label, a SMILES and, optionally, a phase sequence."
+    NO_DIRECTION = "This table has phase sequences: choose what they are, summaries or cooling or heating runs."
 
+    # These come before the table, so clean_table() can read them.
+    direction = forms.ChoiceField(
+        label="The sequences are",
+        # No default: a default of summary would quietly save a heating run as a summary.
+        choices=[("", "Choose…"), *PhaseSequence.Direction.choices],
+        required=False,  # clean_table() asks for it only when the table has sequences
+    )
+    rate = forms.FloatField(label="Rate (K/min)", required=False)
+    method = forms.CharField(label="Method", required=False, max_length=METHOD_LENGTH, help_text="e.g. DSC or POM")
     table = forms.CharField(
         label="Compounds from this reference",
         widget=forms.Textarea(attrs={"rows": 8, "spellcheck": "false"}),
         strip=False,  # keeps the tab at the start of a first line whose label is missing
         error_messages={"required": EMPTY},
         help_text="One compound per line: its label as the paper prints it, its SMILES and, if the "
-        "paper gives one, its phase sequence as a summary from the solid up, e.g. K 139.8 NF 132.7 N "
-        "187.9 I. Separate the cells with tabs (as pasted from a spreadsheet), commas or spaces; a label "
-        "with a space in it needs tabs or commas. A first line without digits is read as a header. At "
-        f"most {MAX_TABLE_LINES} lines.",
+        "paper gives one, its phase sequence. Write a summary from the solid up, e.g. K 139.8 NF 132.7 N "
+        "187.9 I, and a run in the order observed, e.g. Iso 187.9 N 132.7 NF 70 K on cooling. Separate "
+        "the cells with tabs (as pasted from a spreadsheet), commas or spaces; a label with a space in it "
+        f"needs tabs or commas. A first line without digits is read as a header. At most {MAX_TABLE_LINES} lines.",
     )
 
     def __init__(self, *args, reference, **kwargs):
@@ -223,15 +239,25 @@ class CompoundTableForm(forms.Form):
             raise ValidationError(self.EMPTY)
         if len(rows) > MAX_TABLE_LINES:
             raise ValidationError(f"A table can have at most {MAX_TABLE_LINES} lines, and this one has {len(rows)}: split it.")
-        return read_lines(rows, self.reference)
+        direction = self.cleaned_data.get("direction")
+        # cells[2:] is the sequence and anything after it: empty for a line of label and SMILES.
+        if not direction and any(cells[2:] for _, _, cells in rows):
+            raise ValidationError(self.NO_DIRECTION)
+        return read_lines(rows, self.reference, direction)
 
     def save(self, user):
         """Save the lines without a problem, in one transaction, so a failure partway keeps
         none of them. A new structure becomes a material named by its label. A material already
         in FFDB keeps the label as an alias, unless Material.alias_problem() says why not. Each
-        sequence is added under the reference, as entered by user, unless it is already there.
-        Returns (counts, the stereochemistry warnings for the new materials)."""
+        sequence is added under the reference, with the table's direction, rate and method, as
+        entered by user, unless it is already there. Returns (counts, the stereochemistry
+        warnings for the new materials)."""
         counts, warnings = Counter(), []
+        observed = {
+            "direction": self.cleaned_data["direction"],
+            "rate_k_per_min": self.cleaned_data["rate"],
+            "method": self.cleaned_data["method"],
+        }
         with transaction.atomic():
             for line in self.cleaned_data["table"]:
                 if line.problem:
@@ -250,7 +276,9 @@ class CompoundTableForm(forms.Form):
                     material.save()
                     counts["aliases"] += 1
                 if line.sequence and not line.sequence_already_there:
-                    sequence = PhaseSequence(material=material, reference=self.reference, sequence=line.sequence)
+                    sequence = PhaseSequence(
+                        material=material, reference=self.reference, sequence=line.sequence, **observed
+                    )
                     sequence.mark_entered(user)
                     sequence.save()
                     counts["sequences"] += 1

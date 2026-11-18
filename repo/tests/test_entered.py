@@ -64,9 +64,11 @@ class AdminTests(EnteredTestCase):
             "phase_sequences-0-id": str(self.imported.pk),
             "phase_sequences-0-material": str(self.material.pk),
             "phase_sequences-0-reference": str(self.reference.pk),
+            "phase_sequences-0-direction": "summary",
             "phase_sequences-0-sequence": RM734_SUMMARY,
             "phase_sequences-0-notes": "Checked against the paper.",
             "phase_sequences-1-reference": str(self.reference.pk),
+            "phase_sequences-1-direction": "summary",
             "phase_sequences-1-sequence": "K 140 NF 133 N 188 I",
             "phase_sequences-1-notes": "",
         }

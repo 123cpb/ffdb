@@ -111,8 +111,9 @@ class SequencesFileTests(ExportTestCase):
         header, rows = self.download(self.url)
 
         self.assertEqual(header, [
-            "material_id", "material", "sequence_reported", "sequence_standard",
-            "clearing_point_c", "melting_point_c", *REFERENCE_COLUMNS, "exported_at",
+            "material_id", "material", "sequence_reported", "sequence_standard", "direction",
+            "rate_k_per_min", "method", "lowest_temperature_c", "clearing_point_c", "melting_point_c",
+            *REFERENCE_COLUMNS, "exported_at",
         ])
         # By LCR ID, then by reference identifier: 10.1039/... comes before 10.1080/...
         self.assertEqual([row["material"] for row in rows], ["DIO", "DIO", "RM734", "5CB"])
@@ -123,6 +124,10 @@ class SequencesFileTests(ExportTestCase):
             "material": "DIO",
             "sequence_reported": "K 34.4 NF 68.8 NX 84.5 N 173.6 I",
             "sequence_standard": "Cr 34.4 NF 68.8 NS 84.5 N 173.6 Iso",
+            "direction": "summary",
+            "rate_k_per_min": "",
+            "method": "",
+            "lowest_temperature_c": "",
             "clearing_point_c": "173.6",
             "melting_point_c": "34.4",
             "reference": "Chen 2022, Liq. Cryst.",

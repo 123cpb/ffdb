@@ -70,13 +70,14 @@ class CompoundTableTestCase(AddDataTestCase):
         super().setUpTestData()
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
 
-    def send(self, table, button="check", follow=False):
-        """Post the table with the Check or Save button."""
-        return self.client.post(self.add_page(self.article), {"table": table, button: ""}, follow=follow)
+    def send(self, table, button="check", follow=False, direction="summary", rate="", method=""):
+        """Post the table with the Check or Save button, as summaries unless direction says otherwise."""
+        data = {"table": table, "direction": direction, "rate": rate, "method": method, button: ""}
+        return self.client.post(self.add_page(self.article), data, follow=follow)
 
-    def line(self, table):
+    def line(self, table, **fields):
         """The last line Check read."""
-        return self.send(table).context["lines"][-1]
+        return self.send(table, **fields).context["lines"][-1]
 
 
 class CheckTests(CompoundTableTestCase):
@@ -132,6 +133,28 @@ class CheckTests(CompoundTableTestCase):
         self.assertTrue(response.context["lines"][0].sequence_already_there)
         self.assertContains(response, "Already in FFDB from this reference: not added again.")
         self.assertContains(response, "RM734 won't be kept as an alias: it is already one of its names.")
+
+    def test_a_run_that_goes_up_and_down_is_a_problem_line(self):
+        line = self.line(f"RM734\t{RM734}\tIso 187.9 N 192 NF 70 K", direction="cooling")
+
+        self.assertEqual(line.status, "problem")
+        self.assertIn("Enter heating and cooling runs as separate sequences.", line.problem)
+
+    def test_a_table_with_sequences_needs_a_direction_and_one_without_doesnt(self):
+        response = self.send(f"5CB\t{FIVE_CB}\tK 24 N 35.3 I", direction="")
+
+        self.assertContains(response, "This table has phase sequences: choose what they are")
+        self.assertEqual(response.context["lines"], [])
+
+        line = self.line(f"5CB\t{FIVE_CB}", direction="")
+        self.assertEqual(line.status, "new")
+
+    def test_a_heating_run_written_as_a_summary_already_there_is_not_the_same_sequence(self):
+        PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence="K 70 NF 132.7 N 187.9 I")
+
+        line = self.line(f"RM734\t{RM734}\tK 70 NF 132.7 N 187.9 I", direction="heating")
+
+        self.assertFalse(line.sequence_already_there)
 
     def test_a_table_with_no_lines_or_too_many_is_refused_whole(self):
         for table, error in [
@@ -190,6 +213,19 @@ class SaveTests(CompoundTableTestCase):
         self.rm734.refresh_from_db()
         self.assertEqual(self.rm734.aliases, "MB-1")
         self.assertIn("Saved from the table: 0 new compounds, 0 sequences, 0 aliases.", self.messages(response))
+
+    def test_a_cooling_run_and_a_heating_run_are_saved_as_they_were_observed(self):
+        self.send(f"RM734\t{RM734}\tIso 187.9 N 132.7 NF 70 K", "save", direction="cooling", rate="5", method="DSC")
+        self.send(f"RM734\t{RM734}\tK 75 NF 133 N 188 I", "save", direction="heating", rate="10", method="DSC")
+
+        runs = self.rm734.phase_sequences.order_by("pk")
+        self.assertEqual(
+            [(run.direction, run.standard_sequence, run.rate_k_per_min, run.method) for run in runs],
+            [("cooling", "Iso 187.9 N 132.7 NF 70 Cr", 5, "DSC"), ("heating", "Cr 75 NF 133 N 188 Iso", 10, "DSC")],
+        )
+        page = self.client.get(reverse("repo:material", args=[self.rm734.pk]))
+        self.assertContains(page, "<td>Cooling, 5 K/min, DSC</td>", html=True)
+        self.assertContains(page, "<td>Heating, 10 K/min, DSC</td>", html=True)
 
     def test_a_bare_compound_number_names_a_new_compound_but_isnt_kept_as_an_alias(self):
         self.send(f"10a\t{FIVE_CB}\n10b\t{RM734}", "save")

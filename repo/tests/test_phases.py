@@ -2,7 +2,9 @@ from django.core.exceptions import ValidationError
 from django.test import SimpleTestCase, TestCase
 
 from repo.models import Phase
-from repo.phases import PhaseSequenceError, normalise_label, parse_summary, phase_labels, tokenise
+from repo.phases import (
+    COOLING, HEATING, PhaseSequenceError, normalise_label, parse_run, parse_summary, phase_labels, tokenise,
+)
 
 # The test database is built by running the migrations, so the 26 phases from
 # 0005_seed_phases are already in it.
@@ -98,3 +100,54 @@ class SummaryTests(SimpleTestCase):
     def test_phase_labels_leave_out_temperatures_question_marks_and_separators(self):
         self.assertEqual(phase_labels("K 61.4 °C → I"), ["K", "I"])
         self.assertEqual(phase_labels("Cr ? N 24 Iso"), ["Cr", "N", "Iso"])
+
+
+class RunTests(SimpleTestCase):
+    """One heating or cooling run, written in the order observed."""
+
+    def read(self, text, direction=None):
+        return parse_run(text, SYNONYMS, direction)
+
+    def transitions(self, parsed):
+        return [(t.upper, t.lower, t.temperature_c) for t in parsed.transitions]
+
+    def test_a_cooling_run_keeps_its_order_and_reads_each_temperature_between_its_neighbours(self):
+        parsed = self.read("I 187.9 N 132.7 NF 70 K", COOLING)
+
+        self.assertEqual(parsed.standard_text(), "Iso 187.9 N 132.7 NF 70 Cr")
+        self.assertEqual(self.transitions(parsed), [("Iso", "N", 187.9), ("N", "NF", 132.7), ("NF", "Cr", 70)])
+
+    def test_a_heating_run_gives_the_same_transitions_written_the_other_way(self):
+        parsed = self.read("K 70 NF 132.7 N 187.9 I", HEATING)
+
+        self.assertEqual(parsed.standard_text(), "Cr 70 NF 132.7 N 187.9 Iso")
+        self.assertEqual(self.transitions(parsed), [("Iso", "N", 187.9), ("N", "NF", 132.7), ("NF", "Cr", 70)])
+
+    def test_with_no_direction_stated_the_temperatures_show_it(self):
+        self.assertEqual(self.read("I 187.9 N 132.7 NF").transitions, self.read("NF 132.7 N 187.9 I").transitions)
+
+    def test_temperatures_that_go_up_and_down_are_refused(self):
+        for direction in (COOLING, HEATING, None):
+            with self.subTest(direction):
+                with self.assertRaisesMessage(
+                    PhaseSequenceError, "Enter heating and cooling runs as separate sequences."
+                ):
+                    self.read("I 187.9 N 192 NF 70 K", direction)
+
+    def test_a_stated_direction_must_agree_with_the_temperatures(self):
+        with self.assertRaisesMessage(PhaseSequenceError, "Marked as cooling, but written from the coldest phase up."):
+            self.read("K 70 NF 132.7 N 187.9 I", COOLING)
+        with self.assertRaisesMessage(PhaseSequenceError, "Marked as heating, but written from the hottest phase down."):
+            self.read("I 187.9 N", HEATING)  # one temperature: Iso first shows it is cooling
+
+    def test_the_isotropic_liquid_must_be_the_hottest_phase(self):
+        for text in ("N 187.9 I 132.7 NF", "NF 100 I 150 N", "I 187.9 N 150 I"):
+            with self.subTest(text):
+                with self.assertRaisesMessage(PhaseSequenceError, "must be the highest-temperature phase"):
+                    self.read(text)
+
+    def test_one_temperature_without_iso_needs_a_stated_direction(self):
+        self.assertEqual(self.transitions(self.read("N 132.7 NF", COOLING)), [("N", "NF", 132.7)])
+        self.assertEqual(self.transitions(self.read("NF 132.7 N", HEATING)), [("N", "NF", 132.7)])
+        with self.assertRaisesMessage(PhaseSequenceError, "choose the direction, or enter it as a summary"):
+            self.read("N 132.7 NF")

@@ -14,6 +14,7 @@ from .phases import (
     NOT_LIQUID_CRYSTAL,
     PhaseSequenceError,
     normalise_label,
+    parse_run,
     parse_summary,
     phase_labels,
 )
@@ -363,18 +364,40 @@ class Reference(Entered):
 
 
 class PhaseSequence(Entered):
-    """One material's phase sequence as one reference reports it. For now every sequence is
-    a literature summary, from the solid up: "K 139.8 NF 132.7 N 187.9 I"."""
+    """One material's phase sequence as one reference reports it: a literature summary, from
+    the solid up ("K 139.8 NF 132.7 N 187.9 I"), or one heating or cooling run, in the order
+    observed ("Iso 187.9 N 132.7 NF 70 Cr" on cooling)."""
+
+    # The stored values match Series.Direction's. Cooling and heating are also what
+    # phases.parse_run() takes (phases.COOLING and phases.HEATING).
+    class Direction(models.TextChoices):
+        SUMMARY = "summary", "Summary"
+        COOLING = "cooling", "Cooling"
+        HEATING = "heating", "Heating"
+        NOT_STATED = "unspecified", "Not stated"
 
     # Deleting a material deletes its sequences. A reference that has sequences can't be
     # deleted: they would be left without one, and every value needs its reference.
     material = models.ForeignKey(Material, on_delete=models.CASCADE, related_name="phase_sequences")
     reference = models.ForeignKey(Reference, on_delete=models.PROTECT, related_name="phase_sequences")
+    # Summary is the default because the sequences imported from the literature are summaries,
+    # and adding this field gave every sequence already in FFDB the default.
+    direction = models.CharField(
+        max_length=12, choices=Direction.choices, default=Direction.SUMMARY,
+        help_text="Summary: the reference's summary, heating and cooling together. Otherwise one run.",
+    )
     sequence = models.CharField(
         max_length=300,
-        help_text='As the reference gives it, from the solid up, with the transition temperatures '
-        '(°C) between phases, e.g. "K 139.8 NF 132.7 N 187.9 I". Labels such as K, I or N_X are '
-        "converted to the vocabulary's codes.",
+        help_text='As the reference gives it, with the transition temperatures (°C) between phases. A '
+        'summary goes from the solid up, e.g. "K 139.8 NF 132.7 N 187.9 I"; a run in the order observed, '
+        'e.g. "Iso 187.9 N 132.7 NF 70 Cr" on cooling. Labels such as K, I or N_X are converted to the '
+        "vocabulary's codes.",
+    )
+    rate_k_per_min = models.FloatField("rate (K/min)", null=True, blank=True)
+    method = models.CharField(max_length=100, blank=True, help_text="e.g. DSC or POM.")
+    lowest_temperature_c = models.FloatField(
+        "lowest temperature reached (°C)", null=True, blank=True,
+        help_text="Where the reference gives it, so readers know how far down a phase was looked for.",
     )
     notes = models.CharField(max_length=300, blank=True)
 
@@ -393,10 +416,28 @@ class PhaseSequence(Entered):
     def __str__(self):
         return f"{self.material}: {self.sequence}"
 
-    def parsed(self):
-        """The sequence read by the parser, under the vocabulary's codes. Raises
-        PhaseSequenceError, with the reason, when it can't be read."""
-        return parse_summary(self.sequence, Phase.synonym_map())
+    def parsed(self, synonyms=None):
+        """The sequence read by the parser for its direction, under the vocabulary's codes.
+        Raises PhaseSequenceError, with the reason, when it can't be read. Pass synonyms
+        (Phase.synonym_map()) when reading many, so the vocabulary is looked up once."""
+        if synonyms is None:
+            synonyms = Phase.synonym_map()
+        if self.direction == self.Direction.SUMMARY:
+            return parse_summary(self.sequence, synonyms)
+        stated = self.direction if self.direction in (self.Direction.COOLING, self.Direction.HEATING) else None
+        return parse_run(self.sequence, synonyms, stated)
+
+    def run_text(self):
+        """How the sequence was observed, as the pages show it: "Summary", or e.g.
+        "Cooling, 5 K/min, DSC, down to 20 °C", with whatever of those the reference gives."""
+        parts = [self.get_direction_display()]
+        if self.rate_k_per_min is not None:
+            parts.append(f"{self.rate_k_per_min:g} K/min")
+        if self.method:
+            parts.append(self.method)
+        if self.lowest_temperature_c is not None:
+            parts.append(f"down to {self.lowest_temperature_c:g} °C")
+        return ", ".join(parts)
 
     def phase_was_renamed(self):
         """Whether reading the sequence gave a liquid-crystal phase a different name, e.g. NX
@@ -423,9 +464,11 @@ class PhaseSequence(Entered):
         self.standard_sequence = parsed.standard_text()
         clearing = [t.temperature_c for t in parsed.transitions if t.upper == ISOTROPIC]
         self.t_clearing_c = max(clearing) if clearing else None
-        # The melting point is the temperature written after the crystal. It is kept even
-        # when a monotropic phase lies below it, so it isn't always one of the transitions.
-        self.t_melting_c = parsed.temperatures[0] if parsed.phases[0] == CRYSTAL else None
+        # The melting point is the temperature written after the crystal, when it comes first:
+        # in a summary or a heating run. In a summary it is kept even when a monotropic phase
+        # lies below it, so it isn't always one of the transitions. A cooling run ends with the
+        # crystal, and the temperature it crystallises at isn't a melting point.
+        self.t_melting_c = parsed.temperatures[0] if parsed.phases[0] == CRYSTAL and parsed.temperatures else None
         super().save(*args, **kwargs)
         # Links to phases and transitions need the sequence's primary key, so they come after
         # the save. set() adds the missing phase links and removes the others. The transitions
@@ -441,7 +484,9 @@ class PhaseSequence(Entered):
 
 class PhaseTransition(models.Model):
     """One transition in a sequence, worked out from it on save (see PhaseSequence.save()),
-    so materials can be found by the temperature at which a phase forms on cooling."""
+    so materials can be found by the temperature at which a phase forms from the phase above.
+    It is stored the same way whatever the sequence's direction: a heating run's NF to N at
+    132.7 °C is stored as N above NF below at 132.7 °C, as a cooling run's N to NF would be."""
 
     sequence = models.ForeignKey(PhaseSequence, on_delete=models.CASCADE, related_name="transitions")
     # PROTECT: deleting a phase would otherwise quietly delete these rows, and the

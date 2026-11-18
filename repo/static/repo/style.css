@@ -51,13 +51,18 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .entry-form fieldset { margin: 0 0 12px; padding: 0; border: 0; }
 .entry-form legend, .entry-form > label { padding: 0; font-weight: 600; font-size: 13.5px; }
 .entry-form__choice { display: block; margin-top: 4px; }
-.entry-form input[type="text"] { padding: 7px 10px; font: inherit; background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; }
+.entry-form input[type="text"], .entry-form input[type="number"], .entry-form select { padding: 7px 10px; font: inherit; background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; }
 .entry-form__help { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
 .entry-form button { justify-self: start; padding: 7px 16px; font: inherit; color: #fff; background: var(--link); border: 0; border-radius: 6px; cursor: pointer; }
 /* The compound table's box: wide enough for SMILES, in a font where tabs and spaces line up. */
 .entry-form--wide { max-width: 900px; }
 .entry-form textarea { width: 100%; padding: 7px 10px; font: 13.5px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; resize: vertical; }
 .entry-form__buttons { display: flex; gap: 8px; }
+/* Fields side by side, such as the compound table's direction, rate and method. They wrap on a phone. */
+.entry-form__row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+.entry-form__field { display: grid; gap: 4px; align-content: start; }
+.entry-form__field > label { font-weight: 600; font-size: 13.5px; }
+.entry-form__field .entry-form__help { margin: 0; }
 
 .messages { list-style: none; margin: 0 0 20px; padding: 0; }
 .message { padding: 10px 14px; background: #eef4fa; border: 1px solid #c6d9ec; border-radius: 6px; }

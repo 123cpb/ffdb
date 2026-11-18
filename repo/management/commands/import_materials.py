@@ -125,10 +125,12 @@ class Command(BaseCommand):
         reference, created = Reference.objects.get_or_create(identifier=identifier, defaults={"kind": kind})
         self.counts["reference added"] += created  # True counts as 1, False as 0
 
-        # The same structure and reference with a different sequence: both are kept.
-        if reference.phase_sequences.filter(material=material, standard_sequence=standard).exists():
+        # The same structure and reference with a different sequence: both are kept. The list
+        # holds summaries, so a run from the reference with the same text isn't this sequence.
+        summary = PhaseSequence.Direction.SUMMARY
+        if reference.phase_sequences.filter(material=material, direction=summary, standard_sequence=standard).exists():
             return "sequence already there"
-        PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence)
+        PhaseSequence.objects.create(material=material, reference=reference, direction=summary, sequence=sequence)
         return "sequence added"
 
     def skip(self, where, name, reason, what="skipped"):

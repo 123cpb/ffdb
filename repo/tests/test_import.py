@@ -141,6 +141,11 @@ class ImportTests(TestCase):
         )
         self.assertEqual(PhaseSequence.objects.count(), 6)
 
+    def test_imported_sequences_are_summaries(self):
+        self.run_import()
+
+        self.assertEqual(set(PhaseSequence.objects.values_list("direction", flat=True)), {"summary"})
+
     def test_skipped_sequences_are_printed_with_line_and_reason(self):
         output = self.run_import()
 

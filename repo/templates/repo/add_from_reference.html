@@ -18,6 +18,19 @@ and curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
   {# views.add_from_reference gives the form, CompoundTableForm. No action: it posts to this page. #}
   <form method="post" class="entry-form entry-form--wide">
     {% csrf_token %}
+    <p class="entry-form__help">For every sequence in the table: whether they are summaries or runs, and how they were observed.</p>
+    {# Every field but the table: direction, rate and method, side by side. #}
+    <div class="entry-form__row">
+      {% for field in form %}{% if field.name != "table" %}
+      <div class="entry-form__field">
+        <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+        {{ field }}
+        {# The id is the one Django points the box at (aria-describedby), as on the Add data page. #}
+        {% if field.help_text %}<span class="entry-form__help" id="{{ field.auto_id }}_helptext">{{ field.help_text }}</span>{% endif %}
+        {% if field.errors %}<p class="form-error">{{ field.errors|join:" " }}</p>{% endif %}
+      </div>
+      {% endif %}{% endfor %}
+    </div>
     <label for="{{ form.table.id_for_label }}">{{ form.table.label }}</label>
     {% if form.table.errors %}<p class="form-error">{{ form.table.errors|join:" " }}</p>{% endif %}
     {{ form.table }}

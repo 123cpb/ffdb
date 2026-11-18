@@ -50,6 +50,8 @@ class PhaseSequenceInline(admin.TabularInline):
     model = PhaseSequence
     extra = 1
     readonly_fields = ["standard_sequence", "phase_list", "t_clearing_c", "t_melting_c", *ENTERED]
+    # How the sequence was observed, after the sequence itself in each row.
+    observed = ["direction", "sequence", "rate_k_per_min", "method", "lowest_temperature_c", "notes"]
 
     @admin.display(description="phases")
     def phase_list(self, obj):
@@ -61,14 +63,14 @@ class PhaseSequenceInline(admin.TabularInline):
 class MaterialSequenceInline(PhaseSequenceInline):
     """On a material's page: each row names its reference."""
 
-    fields = ["reference", "sequence", "notes", *PhaseSequenceInline.readonly_fields]
+    fields = ["reference", *PhaseSequenceInline.observed, *PhaseSequenceInline.readonly_fields]
     autocomplete_fields = ["reference"]
 
 
 class ReferenceSequenceInline(PhaseSequenceInline):
     """On a reference's page: each row names its material."""
 
-    fields = ["material", "sequence", "notes", *PhaseSequenceInline.readonly_fields]
+    fields = ["material", *PhaseSequenceInline.observed, *PhaseSequenceInline.readonly_fields]
     autocomplete_fields = ["material"]
 
 
