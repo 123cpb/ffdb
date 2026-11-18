@@ -1,6 +1,7 @@
 from django.contrib import admin, messages
 from django.db import models
 from django.forms import Textarea
+from django.forms.models import BaseInlineFormSet
 from django.utils.html import format_html
 
 from .models import (
@@ -102,15 +103,30 @@ class VariableAdmin(admin.ModelAdmin):
     list_display = ["name", "code", "unit", "scale", "condition", "sort_order"]
 
 
+class PointFormSet(BaseInlineFormSet):
+    """The point rows on a series' page, with a plainer message than Django's "Please
+    submit at least 1 form." when a save would leave the series with no points."""
+
+    default_error_messages = {"too_few_forms": "A series needs at least one point."}
+
+
 class PointInline(admin.TabularInline):
     """A series' points, as rows on its page. Against temperature, each point gives its T;
-    against another variable, its x and the T it was measured at."""
+    against another variable, its x and the T it was measured at. Each row is checked by
+    Measurement.clean(), and its errors show on the row."""
 
     model = Measurement
+    formset = PointFormSet
     extra = 1
+    min_num = 1  # a series has at least one point
     fields = ["qualifier", "value", "uncertainty", "temperature_c", "x"]
     verbose_name = "point"
     verbose_name_plural = "points"
+
+    def get_formset(self, request, obj=None, **kwargs):
+        # validate_min makes min_num a rule. Without it the Add page still asks for its first
+        # row, but ticking Delete on every point of a saved series would save.
+        return super().get_formset(request, obj, validate_min=True, **kwargs)
 
 
 @admin.register(Series)

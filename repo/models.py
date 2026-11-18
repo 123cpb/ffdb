@@ -1,7 +1,7 @@
 import re
 from urllib.parse import quote, urlencode
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.db import models
 from django.urls import reverse
 
@@ -522,6 +522,36 @@ class Variable(models.Model):
         return f"{self.name} ({self.unit})" if self.unit else self.name
 
 
+# How messages name the conditions given in a series' Conditions box. A key not listed here
+# is shown as it is. Temperature and method have their own boxes, so they need no name.
+CONDITION_NAMES = {
+    "frequency_Hz": "frequency",
+    "cell_gap_um": "cell gap",
+    "wavelength_nm": "wavelength",
+    "reference_crystal": "reference crystal",
+    "electrode_coating": "electrode coating",
+    "conformer_protocol": "conformer protocol",
+    "solvent": "solvent or gas phase",
+    "local_field_model": "local-field model",
+    "order_parameter_P1": "⟨P1⟩ assumed",
+    "order_parameter_P3": "⟨P3⟩ assumed",
+    "density_kg_m3": "density assumed",
+}
+
+
+def must_state(prop, missing):
+    """The message refusing values of prop that leave out the required conditions in
+    missing, e.g. 'Ps values must state: frequency ("frequency_Hz" in Conditions). ...'"""
+    readable = ", ".join(
+        key if key in ("temperature", "method") else f'{CONDITION_NAMES.get(key, key)} ("{key}" in Conditions)'
+        for key in missing
+    )
+    return (
+        f"{prop.symbol} values must state: {readable}. "
+        "Without these, values from different references can't be compared."
+    )
+
+
 class Series(models.Model):
     """One curve as its reference reports it: values of one property of one material
     against one variable (temperature, frequency, ...), with everything its points share.
@@ -598,11 +628,51 @@ class Series(models.Model):
         """A value with nothing to plot it against, e.g. a gas-phase calculation."""
         return self.variable.code == Variable.NONE
 
+    def missing_conditions(self):
+        """The property's required conditions, for this kind of value, that the series
+        doesn't state. Two are left to the points: temperature, which Measurement.clean()
+        checks on each one, and the condition that is the series' variable, because a
+        frequency sweep gives its frequencies as the points' x."""
+        stated_by_points = {"temperature", self.variable.condition}
+        missing = []
+        for key in self.property.conditions_for(self.kind):
+            if key in stated_by_points:
+                continue
+            value = self.method.strip() if key == "method" else self.conditions.get(key)
+            if value in (None, ""):
+                missing.append(key)
+        return missing
+
     def clean(self):
+        """Refuse a series that breaks a rule for values, saying what is wrong or missing.
+        Every problem is reported at once, each on the field to fix where there is one."""
         # An emptied Conditions box in the admin arrives as None, which the database
-        # refuses: it means no conditions. The rules for values are in block 4.3.
+        # refuses: it means no conditions.
         if self.conditions is None:
             self.conditions = {}
+        if not isinstance(self.conditions, dict):
+            # The other checks read the conditions as key: value pairs, so stop here.
+            raise ValidationError(
+                {"conditions": 'Give the conditions as key: value pairs, e.g. {"frequency_Hz": 100}.'}
+            )
+        errors = {}
+        if self.digitised and self.taken_from != self.TakenFrom.FIGURE:
+            errors["digitised"] = "Only values read off a figure are digitised: choose Figure under Taken from."
+        # Without a property and a variable there is nothing to check the conditions
+        # against, and the form already says to choose them.
+        if self.property_id and self.variable_id:
+            variable = self.variable
+            if variable.condition and variable.condition in self.conditions:
+                errors["conditions"] = (
+                    f"{variable.name} is what this series varies, so it can't also be a fixed "
+                    "condition: give it on each point instead."
+                )
+            missing = self.missing_conditions()
+            if missing:
+                # It can name the method and conditions together, so it belongs to no one field.
+                errors[NON_FIELD_ERRORS] = must_state(self.property, missing)
+        if errors:
+            raise ValidationError(errors)
 
 
 class Measurement(models.Model):
@@ -647,3 +717,50 @@ class Measurement(models.Model):
         if self.series.is_against_nothing():
             return None
         return self.temperature_c if self.series.is_against_temperature() else self.x
+
+    def clean(self):
+        """Refuse a point that breaks a rule for values, saying what is wrong or missing.
+        Every problem is reported at once, each on the field to fix."""
+        errors = {}
+        if self.qualifier != self.Qualifier.EXACT and self.uncertainty is not None:
+            errors["uncertainty"] = "A limit has no ±: enter the limit itself as the value."
+        try:
+            # On the admin's Add page this is the series being added, not saved yet.
+            series = self.series
+        except Series.DoesNotExist:
+            series = None  # the form already says a point needs a series
+        if series is not None and series.property_id and series.variable_id:
+            errors.update(self.position_errors(series))
+        if errors:
+            raise ValidationError(errors)
+
+    def position_errors(self, series):
+        """What is wrong with this point's x and temperature for its series, as
+        {field: message}: what each point must give depends on what the series is against."""
+        errors = {}
+        variable, prop = series.variable, series.property
+        if series.is_against_nothing():
+            # One way to store each value: a value with a temperature is against temperature.
+            if self.x is not None:
+                errors["x"] = "A value against nothing has no x."
+            if self.temperature_c is not None:
+                errors["temperature_c"] = (
+                    "A value with a temperature is plotted against temperature: choose Temperature "
+                    "as what the series is against."
+                )
+        elif series.is_against_temperature():
+            if self.x is not None:
+                errors["x"] = "A series against temperature gives each point's temperature as T, not x."
+        elif self.x is None:
+            errors["x"] = f"Give the {variable.name.lower()} ({variable.unit}) of each point."
+        elif variable.scale == Variable.Scale.LOG and self.x <= 0:
+            errors["x"] = f"{variable.name} is drawn on a log axis, so it must be more than 0."
+        if self.temperature_c is None:
+            if "temperature" in prop.conditions_for(series.kind):
+                errors["temperature_c"] = must_state(prop, ["temperature"])
+            elif series.is_against_temperature():
+                errors["temperature_c"] = (
+                    "Give each point's temperature, or choose Nothing as what the series is against "
+                    "for a value with nothing to plot it against (e.g. a gas-phase calculation)."
+                )
+        return errors

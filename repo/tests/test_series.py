@@ -82,7 +82,9 @@ class FieldTests(SeriesTestCase):
         self.assertIn("kind", caught.exception.message_dict)
 
     def test_an_emptied_conditions_box_means_no_conditions(self):
-        series = self.add()
+        # Density needs only a method and temperature, so no conditions is allowed.
+        series = self.add("density")
+        series.method = "pycnometer"
         series.conditions = None  # what the admin sends for an emptied box
         series.full_clean()
         self.assertEqual(series.conditions, {})
