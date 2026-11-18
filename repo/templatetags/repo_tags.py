@@ -52,15 +52,11 @@ def range_text(numbers):
     return low if low == high else f"{low} to {high}"
 
 
-def is_limit(point):
-    return point.qualifier != Measurement.Qualifier.EXACT
-
-
 def point_text(point):
     """One point's value, with its sign if it is a limit, "< 0.1", or its ±, "4.4 ± 0.2".
     A limit has no ± (Measurement.clean() refuses one)."""
     text = num(point.value)
-    if is_limit(point):
+    if point.is_limit():
         return f"{Measurement.SIGNS[point.qualifier]} {text}"
     if point.uncertainty is not None:
         text += f" ± {num(point.uncertainty)}"
@@ -79,8 +75,8 @@ def value_text(series):
         return "–"
     if len(points) == 1:
         return with_unit(point_text(points[0]), unit)
-    exact = [point.value for point in points if not is_limit(point)]
-    limits = sorted((point for point in points if is_limit(point)), key=lambda point: point.value)
+    exact = [point.value for point in points if not point.is_limit()]
+    limits = sorted((point for point in points if point.is_limit()), key=lambda point: point.value)
     counted = f"{len(limits)} limit{'s' if len(limits) != 1 else ''}"
     if not exact:
         low, high = point_text(limits[0]), point_text(limits[-1])

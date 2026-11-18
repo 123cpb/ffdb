@@ -87,6 +87,10 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .values h4 { font-size: 15px; margin: 14px 0 6px; }
 /* A values table has six columns: on a phone it scrolls sideways instead of widening the page. */
 .table-scroll { max-width: 900px; overflow-x: auto; }
+/* A chart, drawn by charts.py on white, scales down to fit a phone. */
+.chart { max-width: 640px; margin: 0 0 12px; padding: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart figcaption { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
 /* The tables of sequences and references. */
 .data-table { width: 100%; max-width: 900px; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); }
 .data-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }

@@ -71,7 +71,7 @@ class MaterialPageTests(ValuesTestCase):
         response = self.page(self.dio)
 
         sections = [
-            (group.name if group else None, [prop.symbol for prop, series in members])
+            (group.name if group else None, [prop.symbol for prop, series, charts in members])
             for group, members in response.context["value_sections"]
         ]
         self.assertEqual(sections, [(None, ["Ps"]), ("Refractive index", ["Δn"])])

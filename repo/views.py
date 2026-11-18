@@ -6,7 +6,7 @@ from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
-from . import chem
+from . import charts, chem
 from .models import (
     DOI_PREFIX,
     Material,
@@ -139,11 +139,12 @@ def materials(request):
     return render(request, "repo/materials.html", context)
 
 
-def value_sections(series):
-    """Series as the values section lists them: [(group, [(property, [its series]), ...]),
-    ...], with group None for a property in no group. The order is group_properties()'s,
-    so a group's members are listed together under its name. Only properties with series
-    are listed, and each keeps its series in the order given. Pass series with
+def value_sections(series, with_charts=False):
+    """Series as the values section lists them: [(group, [(property, [its series], [its
+    charts]), ...]), ...], with group None for a property in no group. The order is
+    group_properties()'s, so a group's members are listed together under its name. Only
+    properties with series are listed, and each keeps its series in the order given. The
+    charts are charts.charts_for()'s with with_charts, and [] without. Pass series with
     select_related("property__group"), or each property costs a query."""
     by_property = {}
     for one in series:
@@ -151,7 +152,10 @@ def value_sections(series):
         # primary key), so each property's series end up in one list.
         by_property.setdefault(one.property, []).append(one)
     return [
-        (group, [(prop, by_property[prop]) for prop in members])
+        (group, [
+            (prop, by_property[prop], charts.charts_for(prop, by_property[prop]) if with_charts else [])
+            for prop in members
+        ])
         for group, members in group_properties(by_property)
     ]
 
@@ -173,7 +177,7 @@ def material_detail(request, pk):
         # one more query for every row the template shows.
         "sequences": material.phase_sequences.select_related("reference"),
         "lc_phases": material.liquid_crystal_phases(),
-        "value_sections": value_sections(series),
+        "value_sections": value_sections(series, with_charts=True),
     }
     return render(request, "repo/material_detail.html", context)
 

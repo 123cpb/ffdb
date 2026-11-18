@@ -723,6 +723,10 @@ class Measurement(models.Model):
         prop = self.series.property
         return f"{self.series.material} {prop.symbol} {self.SIGNS[self.qualifier]} {self.value:g} {prop.unit}"
 
+    def is_limit(self):
+        """Whether the value is a limit, < or >, rather than a value."""
+        return self.qualifier != self.Qualifier.EXACT
+
     def x_value(self):
         """Where the point goes on its series' x-axis: its temperature for a series against
         temperature, x for one against anything else, and None for a value against nothing."""
