@@ -88,6 +88,15 @@ class ImportSeriesTests(TestCase):
 
         self.assertIn("Series added: 3\nSeries already there: 0\nSeries skipped: 5\nPoints added: 7\n", output)
 
+    def test_imported_series_and_references_record_no_one(self):
+        self.run_import()
+
+        for model in (Series, Reference):
+            with self.subTest(model.__name__):
+                self.assertTrue(model.objects.exists())
+                # Leave out the rows where both are blank, and nothing is left.
+                self.assertFalse(model.objects.exclude(entered_by=None, entered_at=None).exists())
+
     def test_running_it_twice_adds_nothing(self):
         self.run_import()
         before = (list(Series.objects.values_list("pk", flat=True)), Measurement.objects.count(),

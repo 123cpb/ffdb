@@ -76,6 +76,15 @@ class ImportTests(TestCase):
             output,
         )
 
+    def test_imported_references_and_sequences_record_no_one(self):
+        self.run_import()
+
+        for model in (Reference, PhaseSequence):
+            with self.subTest(model.__name__):
+                self.assertTrue(model.objects.exists())
+                # Leave out the rows where both are blank, and nothing is left.
+                self.assertFalse(model.objects.exclude(entered_by=None, entered_at=None).exists())
+
     def test_new_structures_are_added_and_new_names_become_aliases(self):
         self.run_import()
 

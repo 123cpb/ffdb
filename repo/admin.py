@@ -5,12 +5,42 @@ from django.forms.models import BaseInlineFormSet
 from django.utils.html import format_html
 
 from .models import (
-    Material, Measurement, Phase, PhaseSequence, Property, PropertyGroup, Reference, Series, Variable,
+    Entered, Material, Measurement, Phase, PhaseSequence, Property, PropertyGroup, Reference, Series, Variable,
 )
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
 # usual 10 rows.
 SMALL_JSON_BOX = {models.JSONField: {"widget": Textarea(attrs={"rows": 2, "cols": 80})}}
+
+# Who entered a row and when: shown, never typed in.
+ENTERED = ["entered_by", "entered_at"]
+# Filters by both, on the lists of models that record them. RelatedOnlyFieldListFilter offers
+# only the users who have entered a row, not every account. Each filter also has a choice
+# for blank, which means imported: "-" for entered by, "No date" for entered at.
+ENTERED_FILTERS = [("entered_by", admin.RelatedOnlyFieldListFilter), "entered_at"]
+
+
+class EnteredAdmin(admin.ModelAdmin):
+    """An admin page that records who adds a row, and when (see Entered): the page's own
+    row, and each new row in its inlines, such as the sequence rows on a material's page.
+    Rows of models that don't record it are saved as usual. Changing a row records nothing."""
+
+    def save_model(self, request, obj, form, change):
+        if not change and isinstance(obj, Entered):
+            obj.mark_entered(request.user)
+        super().save_model(request, obj, form, change)
+
+    def save_formset(self, request, form, formset, change):
+        """Save one inline's rows. Django's own version calls formset.save(); these are the same
+        steps written out, as Django's documentation shows, so new rows can be marked first."""
+        rows = formset.save(commit=False)  # the new and changed rows, not yet saved
+        for row in formset.deleted_objects:  # commit=False leaves the deleting to us too
+            row.delete()
+        for row in rows:
+            if row.pk is None and isinstance(row, Entered):  # no primary key yet: a new row
+                row.mark_entered(request.user)
+            row.save()
+        formset.save_m2m()
 
 
 class PhaseSequenceInline(admin.TabularInline):
@@ -19,7 +49,7 @@ class PhaseSequenceInline(admin.TabularInline):
 
     model = PhaseSequence
     extra = 1
-    readonly_fields = ["standard_sequence", "phase_list", "t_clearing_c", "t_melting_c"]
+    readonly_fields = ["standard_sequence", "phase_list", "t_clearing_c", "t_melting_c", *ENTERED]
 
     @admin.display(description="phases")
     def phase_list(self, obj):
@@ -43,7 +73,7 @@ class ReferenceSequenceInline(PhaseSequenceInline):
 
 
 @admin.register(Material)
-class MaterialAdmin(admin.ModelAdmin):
+class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't record it
     list_display = ["accession", "name"]
     # Also what the autocomplete box searches when a sequence's material is chosen.
     search_fields = ["name", "aliases", "inchikey"]
@@ -79,10 +109,12 @@ class PhaseAdmin(admin.ModelAdmin):
 
 
 @admin.register(Reference)
-class ReferenceAdmin(admin.ModelAdmin):
-    list_display = ["label", "kind", "identifier"]
+class ReferenceAdmin(EnteredAdmin):
+    list_display = ["label", "kind", "identifier", *ENTERED]
+    list_filter = ENTERED_FILTERS
     # Also what the autocomplete box searches when a sequence's reference is chosen.
     search_fields = ["identifier", "first_author", "title"]
+    readonly_fields = ENTERED
     inlines = [ReferenceSequenceInline]
 
 
@@ -130,13 +162,14 @@ class PointInline(admin.TabularInline):
 
 
 @admin.register(Series)
-class SeriesAdmin(admin.ModelAdmin):
-    list_display = ["material", "property", "variable", "kind", "reference", "point_count"]
-    list_filter = ["property", "kind", "variable"]
+class SeriesAdmin(EnteredAdmin):
+    list_display = ["material", "property", "variable", "kind", "reference", "point_count", *ENTERED]
+    list_filter = ["property", "kind", "variable", *ENTERED_FILTERS]
     # Fetch these with the series, in the same query, rather than one query per row.
-    list_select_related = ["material", "property", "variable", "reference"]
+    list_select_related = ["material", "property", "variable", "reference", "entered_by"]
     search_fields = ["material__name", "material__aliases", "reference__identifier", "reference__first_author", "method"]
     autocomplete_fields = ["material", "reference"]
+    readonly_fields = ENTERED
     formfield_overrides = SMALL_JSON_BOX
     inlines = [PointInline]
 

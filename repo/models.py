@@ -1,9 +1,11 @@
 import re
 from urllib.parse import quote, urlencode
 
+from django.conf import settings
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.db import models
 from django.urls import reverse
+from django.utils import timezone
 
 from . import chem
 from .phases import (
@@ -213,7 +215,32 @@ class Phase(models.Model):
             raise ValidationError(errors)
 
 
-class Reference(models.Model):
+class Entered(models.Model):
+    """Who entered a row, in a form or the admin, and when. Both stay blank for a row an
+    import added, so blank says it was imported. Abstract: there is no Entered table, and
+    each model that inherits from it gets the two columns in its own table."""
+
+    # SET_NULL: deleting a user's account keeps the rows they entered, with entered by blank.
+    # Their entered at stays, so those rows don't look imported. related_name="+" gives users
+    # no way back to the rows they entered, which nothing needs.
+    entered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, editable=False,
+        related_name="+",
+    )
+    # Not auto_now_add, which would fill in a time for imported rows too: mark_entered() sets it.
+    entered_at = models.DateTimeField(null=True, blank=True, editable=False)
+
+    class Meta:
+        abstract = True
+
+    def mark_entered(self, user):
+        """Record that user is entering this row now. Call it when the row is added, before
+        saving it, and never when it is changed: the record is of who added it."""
+        self.entered_by = user
+        self.entered_at = timezone.now()
+
+
+class Reference(Entered):
     """Where data comes from: a journal article, preprint, patent or thesis."""
 
     class Kind(models.TextChoices):
@@ -283,7 +310,7 @@ class Reference(models.Model):
             self.identifier = clean_doi(self.identifier)
 
 
-class PhaseSequence(models.Model):
+class PhaseSequence(Entered):
     """One material's phase sequence as one reference reports it. For now every sequence is
     a literature summary, from the solid up: "K 139.8 NF 132.7 N 187.9 I"."""
 
@@ -564,7 +591,7 @@ def must_state(prop, missing):
     )
 
 
-class Series(models.Model):
+class Series(Entered):
     """One curve as its reference reports it: values of one property of one material
     against one variable (temperature, frequency, ...), with everything its points share.
     A single value is a series of one point, so every page and export has one path. The
