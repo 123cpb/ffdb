@@ -20,17 +20,27 @@
         {% for code, label in phase_choices %}<option value="{{ code }}"{% if code == phase %} selected{% endif %}>{{ label }}</option>{% endfor %}
       </select>
     </div>
+    {# A fieldset groups the two boxes under one heading, its legend, for screen readers too. #}
+    <fieldset class="search__range" aria-describedby="range-hint">
+      <legend>Phase forms between (°C)</legend>
+      <div class="search__range-boxes">
+        <input name="tmin" type="number" step="any" value="{{ tmin }}" placeholder="from" aria-label="From (°C)">
+        <span>and</span>
+        <input name="tmax" type="number" step="any" value="{{ tmax }}" placeholder="to" aria-label="To (°C)">
+      </div>
+    </fieldset>
     <button type="submit">Search</button>
-    {% if query or substructure or phase %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
+    {% if search %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
   </div>
   <p id="sub-hint" class="search__hint">Substructure: <code>C#N</code> finds cyano groups. Write aromatic rings in lower case, as in <code>c1ccccc1</code>.</p>
+  <p id="range-hint" class="search__hint">Phase forms: on cooling, from the phase above. With no phase chosen, any phase. Either end can be left blank.</p>
 </form>
 
 {% if error %}
 <p class="form-error" role="alert">{{ error }}</p>
 {% else %}
 {% with total=page.paginator.count %}
-<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if phase %} with {{ phase }}{% endif %}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}{% if query and substructure %} and{% endif %}{% if substructure %} contain{{ total|pluralize:"s," }} <code>{{ substructure }}</code>{% endif %}</h2>
+<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if phase %} with {{ phase }}{% if range_text %} forming {{ range_text }}{% endif %}{% elif range_text %} with a phase forming {{ range_text }}{% endif %}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}{% if query and substructure %} and{% endif %}{% if substructure %} contain{{ total|pluralize:"s," }} <code>{{ substructure }}</code>{% endif %}</h2>
 {% endwith %}
 
 {% if page.object_list %}
@@ -56,7 +66,7 @@
   {% if page.has_next %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
 </nav>
 {% endif %}
-{% elif query or substructure or phase %}
+{% elif search %}
 <p>No materials match. <a href="{% url 'repo:materials' %}">Show all materials</a>.</p>
 {% else %}
 <p>No materials yet.</p>

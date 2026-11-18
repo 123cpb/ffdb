@@ -162,6 +162,59 @@ class PhaseSearchTests(TestCase):
         self.assertContains(response, '<option value="NF" selected>NF (Ferroelectric nematic)</option>')
 
 
+class TemperatureSearchTests(TestCase):
+    @classmethod
+    def setUpTestData(cls):
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
+        cls.six_cb = Material.objects.create(name="6CB", smiles=SIX_CB)
+        reference = add_reference("10.1000/test")
+        for material, sequence in [
+            (cls.rm734, "K 139.8 NF 132.7 N 187.9 I"),  # NF forms at 132.7
+            (cls.five_cb, "K 50 NF 90 N 140 I"),  # made up: NF forms at 90, N at 140
+            (cls.six_cb, "K 14 N 29 I"),
+        ]:
+            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence)
+
+    def search(self, **params):
+        return self.client.get(reverse("repo:materials"), params)
+
+    def found(self, **params):
+        return list(self.search(**params).context["page"].object_list)
+
+    def test_nf_between_100_and_150_lists_only_materials_whose_nf_forms_in_it(self):
+        # 5CB has NF, and N forming at 140, but no one transition is both: its NF forms at 90.
+        self.assertEqual(self.found(phase="NF", tmin="100", tmax="150"), [self.rm734])
+
+    def test_a_blank_range_behaves_as_the_phase_search_alone(self):
+        self.assertEqual(self.found(phase="NF", tmin="", tmax=""), [self.rm734, self.five_cb])
+
+    def test_with_no_phase_chosen_any_phase_forming_in_the_range_counts(self):
+        self.assertEqual(self.found(tmin="100", tmax="150"), [self.rm734, self.five_cb])
+
+    def test_either_end_can_be_left_blank(self):
+        self.assertEqual(self.found(phase="NF", tmin="100"), [self.rm734])
+        self.assertEqual(self.found(phase="NF", tmax="100"), [self.five_cb])
+
+    def test_a_temperature_that_is_not_a_number_is_ignored(self):
+        response = self.search(phase="NF", tmin="hot", tmax="nan")
+
+        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.five_cb])
+        self.assertEqual((response.context["tmin"], response.context["tmax"]), ("", ""))
+
+    def test_heading_boxes_and_page_links_keep_the_range(self):
+        response = self.search(phase="NF", tmin="100", tmax="150")
+
+        self.assertContains(response, "1 material with NF forming between 100 and 150 °C")
+        self.assertContains(response, 'name="tmin" type="number" step="any" value="100"')
+        self.assertEqual(response.context["search"], "phase=NF&tmin=100&tmax=150")
+
+    def test_heading_without_a_phase(self):
+        response = self.search(tmin="100")
+
+        self.assertContains(response, "2 materials with a phase forming at 100 °C or above")
+
+
 class PagingTests(TestCase):
     @classmethod
     def setUpTestData(cls):

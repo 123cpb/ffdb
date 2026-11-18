@@ -348,6 +348,32 @@ class PhaseSequence(models.Model):
         # when a monotropic phase lies below it, so it isn't always one of the transitions.
         self.t_melting_c = parsed.temperatures[0] if parsed.phases[0] == CRYSTAL else None
         super().save(*args, **kwargs)
-        # Links to phases need the sequence's primary key, so they come after the save.
-        # set() adds the missing links and removes the others.
-        self.phases.set(Phase.objects.filter(code__in=parsed.phases))
+        # Links to phases and transitions need the sequence's primary key, so they come after
+        # the save. set() adds the missing phase links and removes the others. The transitions
+        # are deleted and added again: simpler than working out which ones changed.
+        phases = {phase.code: phase for phase in Phase.objects.filter(code__in=parsed.phases)}
+        self.phases.set(phases.values())
+        self.transitions.all().delete()
+        PhaseTransition.objects.bulk_create(
+            PhaseTransition(sequence=self, upper=phases[t.upper], lower=phases[t.lower], temperature_c=t.temperature_c)
+            for t in parsed.transitions
+        )
+
+
+class PhaseTransition(models.Model):
+    """One transition in a sequence, worked out from it on save (see PhaseSequence.save()),
+    so materials can be found by the temperature at which a phase forms on cooling."""
+
+    sequence = models.ForeignKey(PhaseSequence, on_delete=models.CASCADE, related_name="transitions")
+    # PROTECT: deleting a phase would otherwise quietly delete these rows, and the
+    # temperature search would go wrong without saying so. related_name="+" gives Phase no
+    # way back to them, which nothing needs.
+    upper = models.ForeignKey(Phase, on_delete=models.PROTECT, related_name="+", help_text="The phase stable above.")
+    lower = models.ForeignKey(Phase, on_delete=models.PROTECT, related_name="+", help_text="The phase that forms below it.")
+    temperature_c = models.FloatField("temperature (°C)")
+
+    class Meta:
+        ordering = ["-temperature_c"]  # from the top down, as on cooling
+
+    def __str__(self):
+        return f"{self.upper.code} → {self.lower.code} at {self.temperature_c:g} °C"

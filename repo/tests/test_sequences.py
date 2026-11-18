@@ -1,3 +1,6 @@
+from importlib import import_module
+
+from django.apps import apps
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -5,7 +8,7 @@ from django.db.models import ProtectedError
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
-from repo.models import Material, PhaseSequence, Reference
+from repo.models import Material, Phase, PhaseSequence, PhaseTransition, Reference
 from repo.phases import PhaseSequenceError
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
@@ -56,6 +59,40 @@ class StoredFieldTests(SequenceTestCase):
         self.assertEqual(sequence.t_clearing_c, 24)
 
 
+def transitions(sequence):
+    """The sequence's stored transitions as (upper, lower, temperature), highest first."""
+    return list(sequence.transitions.values_list("upper__code", "lower__code", "temperature_c"))
+
+
+class TransitionTests(SequenceTestCase):
+    def test_saving_stores_the_transitions_highest_first(self):
+        sequence = self.add(RM734_SUMMARY)
+
+        # The melting point (139.8) lies above the monotropic NF, so it isn't a transition.
+        self.assertEqual(transitions(sequence), [("Iso", "N", 187.9), ("N", "NF", 132.7)])
+
+    def test_a_melting_point_below_every_transition_is_stored_as_one(self):
+        sequence = self.add("K 24 N 35 I")
+
+        self.assertEqual(transitions(sequence), [("Iso", "N", 35), ("N", "Cr", 24)])
+
+    def test_saving_a_corrected_sequence_replaces_its_transitions(self):
+        sequence = self.add(RM734_SUMMARY)
+        sequence.sequence = "K 139.8 N 187.9 I"
+        sequence.save()
+
+        self.assertEqual(transitions(sequence), [("Iso", "N", 187.9), ("N", "Cr", 139.8)])
+
+    def test_the_migration_fills_in_sequences_saved_before_the_table_existed(self):
+        sequence = self.add(RM734_SUMMARY)
+        sequence.transitions.all().delete()  # as it was before the migration
+        # The name starts with a digit, so `import` can't load it, but import_module() can.
+        # The app registry stands in for the migration's models: they have the same fields.
+        import_module("repo.migrations.0009_fill_transitions").fill_transitions(apps, None)
+
+        self.assertEqual(transitions(sequence), [("Iso", "N", 187.9), ("N", "NF", 132.7)])
+
+
 class RefusedSequenceTests(SequenceTestCase):
     def test_an_unknown_label_is_refused_naming_it(self):
         sequence = PhaseSequence(material=self.material, reference=self.reference, sequence="K 100 Q 50 I")
@@ -83,6 +120,12 @@ class DeletionTests(SequenceTestCase):
         self.add(RM734_SUMMARY)
         self.material.delete()
         self.assertFalse(PhaseSequence.objects.exists())
+        self.assertFalse(PhaseTransition.objects.exists())
+
+    def test_a_phase_in_a_stored_transition_cannot_be_deleted(self):
+        self.add(RM734_SUMMARY)
+        with self.assertRaises(ProtectedError):
+            Phase.objects.get(code="NF").delete()
 
 
 class AdminTests(SequenceTestCase):

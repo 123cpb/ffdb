@@ -1,3 +1,4 @@
+import math
 from urllib.parse import urlencode
 
 from django.core.paginator import Paginator
@@ -6,16 +7,20 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 from . import chem
-from .models import DOI_PREFIX, Material, Phase, Reference, pk_from_accession
+from .models import DOI_PREFIX, Material, Phase, PhaseTransition, Reference, pk_from_accession
 
 
-def find_materials(text, substructure="", phase=""):
+def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
     """The materials a search finds, in LCR ID order. A blank search finds them all.
 
     A material is found when the text is part of its name or an alias (ignoring case),
     is its InChIKey (ignoring case), or is its LCR ID; when at least one of its sequences
     has the phase (a code, e.g. NF); and when its structure contains the substructure
     (SMILES or SMARTS). Raises chem.StructureError when RDKit can't read the substructure.
+
+    With t_min or t_max (°C; either can be None), the phase must form on cooling in that
+    range, ends included: some sequence has a transition into it there. With no phase,
+    a transition into any phase counts.
     """
     materials = Material.objects.order_by("pk")
     text = text.strip()
@@ -25,7 +30,19 @@ def find_materials(text, substructure="", phase=""):
         if pk is not None:
             found |= Q(pk=pk)
         materials = materials.filter(found)
-    if phase:
+    if t_min is not None or t_max is not None:
+        # Find the transitions first. Every condition is on the one table, so each filter()
+        # narrows the same rows, and a transition has to meet them all: NF forming at 120 °C,
+        # not NF somewhere and some other phase forming at 120 °C.
+        transitions = PhaseTransition.objects.all()
+        if phase:
+            transitions = transitions.filter(lower__code=phase)
+        if t_min is not None:
+            transitions = transitions.filter(temperature_c__gte=t_min)
+        if t_max is not None:
+            transitions = transitions.filter(temperature_c__lte=t_max)
+        materials = materials.filter(phase_sequences__transitions__in=transitions).distinct()
+    elif phase:
         # The database follows Material -> its sequences -> their phases. That gives one row
         # per matching sequence, so a material with the phase in two sequences would come
         # back twice: distinct() keeps one. This comes before the substructure, so RDKit
@@ -50,34 +67,61 @@ def phase_choices():
     ]
 
 
+def temperature_param(request, key):
+    """?tmin= or ?tmax= as (the text typed, the number): ("100", 100.0). A blank, or anything
+    that isn't a number, gives ("", None), so it is ignored, as an unknown ?phase= is.
+    isfinite() refuses "nan" and "inf", which float() accepts."""
+    text = request.GET.get(key, "").strip()
+    try:
+        number = float(text)
+    except ValueError:
+        return "", None
+    return (text, number) if math.isfinite(number) else ("", None)
+
+
+def range_text(tmin, tmax):
+    """The temperature range as the heading says it, from the text typed in each box."""
+    if tmin and tmax:
+        return f"between {tmin} and {tmax} °C"
+    if tmin:
+        return f"at {tmin} °C or above"
+    if tmax:
+        return f"at {tmax} °C or below"
+    return ""
+
+
 def materials(request):
     """The Materials page, and for now the home page: every material, or those that ?q=,
-    ?sub= and ?phase= find, 25 to a page. get_page() turns a missing, bad or too-high
-    ?page= into a real page. A substructure RDKit can't read lists nothing and says why.
-    A ?phase= that isn't in the vocabulary is ignored."""
+    ?sub=, ?phase=, ?tmin= and ?tmax= find, 25 to a page. get_page() turns a missing, bad
+    or too-high ?page= into a real page. A substructure RDKit can't read lists nothing and
+    says why. A ?phase= that isn't in the vocabulary is ignored."""
     query = request.GET.get("q", "").strip()
     substructure = request.GET.get("sub", "").strip()
     choices = phase_choices()
     phase = request.GET.get("phase", "")
     if phase not in dict(choices):
         phase = ""
+    tmin, t_min = temperature_param(request, "tmin")
+    tmax, t_max = temperature_param(request, "tmax")
     error = ""
     try:
-        found = find_materials(query, substructure, phase)
+        found = find_materials(query, substructure, phase, t_min, t_max)
     except chem.StructureError as exc:
         found, error = Material.objects.none(), str(exc)
     page = Paginator(found, 25).get_page(request.GET.get("page"))
     # The search as it goes in an address, so the page links keep it. urlencode() turns
     # characters such as # into %23: a bare # would end the address there.
-    search = urlencode(
-        {key: value for key, value in [("q", query), ("sub", substructure), ("phase", phase)] if value}
-    )
+    fields = [("q", query), ("sub", substructure), ("phase", phase), ("tmin", tmin), ("tmax", tmax)]
+    search = urlencode({key: value for key, value in fields if value})
     context = {
         "nav": "materials",  # which link base.html marks as the current section
         "query": query,
         "substructure": substructure,
         "phase": phase,
         "phase_choices": choices,
+        "tmin": tmin,
+        "tmax": tmax,
+        "range_text": range_text(tmin, tmax),
         "error": error,
         "page": page,
         "search": search,
