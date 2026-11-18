@@ -6,13 +6,18 @@ from repo.tests.test_property_pages import PS_CONDITIONS, PropertyPagesTestCase
 from repo.tests.test_values import ValuesTestCase, add
 
 
+def with_points(series_list):
+    """Saved series as figure() takes them: each with its points from the database."""
+    return [(one, one.points.all()) for one in series_list]
+
+
 class ChartTests(ValuesTestCase):
     """Charts drawn from the DIO fixture in test_values, with series that tests add to RM734.
     figure() returns the matplotlib Figure, so a test looks at what was drawn on its one
     set of axes, not at the SVG text."""
 
     def draw(self, series):
-        return figure(series.property, series.variable, [series]).axes[0]
+        return figure(series.property, series.variable, with_points([series])).axes[0]
 
     def test_one_chart_per_kind_and_variable(self):
         measured = self.dio.series.get(property__code="ps")
@@ -37,7 +42,7 @@ class ChartTests(ValuesTestCase):
         series.points.create(value=0.1, temperature_c=80, qualifier=Measurement.Qualifier.UPPER)
         series.points.create(value=4.0, temperature_c=70)
 
-        self.assertEqual([point.value for point in plotted_points(series)], [5.0, 4.0])
+        self.assertEqual([point.value for point in plotted_points(series.points.all())], [5.0, 4.0])
         self.assertEqual(list(self.draw(series).lines[0].get_ydata()), [5.0, 4.0])
         self.assertContains(self.page(self.rm734), "1 limit not drawn")
 
@@ -79,7 +84,7 @@ class ChartTests(ValuesTestCase):
     def test_the_legend_names_the_reference(self):
         series = self.dio.series.get(property__code="ps")
 
-        legend = figure(series.property, series.variable, [series]).legends[0]
+        legend = figure(series.property, series.variable, with_points([series])).legends[0]
 
         self.assertEqual([text.get_text() for text in legend.get_texts()], ["Chen 2022, Liq. Cryst."])
 
@@ -89,7 +94,7 @@ class ChartTests(ValuesTestCase):
         series = add(self.rm734, reference, "ps")
         series.points.create(value=4.4, temperature_c=100)
 
-        self.assertIn(r"$\frac{$", to_svg(figure(series.property, series.variable, [series])))
+        self.assertIn(r"$\frac{$", to_svg(figure(series.property, series.variable, with_points([series]))))
 
 
 class MaterialPageChartTests(ValuesTestCase):
@@ -130,7 +135,7 @@ class PropertyPageChartTests(PropertyPagesTestCase):
 
     def ps_figure(self):
         series = list(Series.objects.filter(property__code="ps").order_by("material_id", "id"))
-        return figure(series[0].property, series[0].variable, series, by_material=True)
+        return figure(series[0].property, series[0].variable, with_points(series), by_material=True)
 
     def test_one_chart_per_kind_and_variable(self):
         response = self.page()

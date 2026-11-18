@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 
 from . import charts, chem, crossref, exports
-from .forms import CompoundTableForm, FindReferenceForm, ValueChoiceForm, ValueForm
+from .forms import CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, ValueChoiceForm, ValueForm
 from .models import (
     DOI_PREFIX,
     Material,
@@ -495,8 +495,11 @@ def add_from_reference(request, pk):
         # A Counter gives 0 for a status no line has.
         "status_counts": Counter(line.status for line in lines),
         "materials": reference.materials(),
-        # The first form for adding a single value. It is sent to add_value.
+        # The first forms for adding a single value and a curve, sent to add_value and
+        # add_curve. Both have a material box: auto_id gives the curve's boxes other ids, so
+        # each label still points at its own box.
         "choice": ValueChoiceForm(reference=reference),
+        "curve_choice": CurveChoiceForm(reference=reference, auto_id="id_curve_%s"),
         **reference_tables(reference),
     }
     return render(request, "repo/add_from_reference.html", context)
@@ -526,3 +529,34 @@ def add_value(request, pk):
             return redirect("repo:add_from_reference", reference.pk)
     context = {"nav": "add", "reference": reference, "choice": choice, "form": form}
     return render(request, "repo/add_value.html", context)
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+def add_curve(request, pk):
+    """Adding a curve from a reference, in two forms, as add_value() adds a single value. The
+    first, CurveChoiceForm, also chooses what the curve is against, e.g. ?material=12&
+    property=ps&kind=measured&variable=temperature. The second, CurveForm, has a box for the
+    points. Check reads them and shows how many points were read, the lines that weren't, and
+    the chart the curve will make, saving nothing. Save (a POST with save in it) saves the
+    curve, but only once every line is a point. A number with no reference gives a 404."""
+    reference = get_object_or_404(Reference, pk=pk)
+    choice = CurveChoiceForm(request.GET or None, reference=reference)
+    form, curve_charts = None, []
+    if choice.is_valid():
+        data = request.POST if request.method == "POST" else None
+        form = CurveForm(data, reference=reference, choice=choice.cleaned_data)
+        if form.is_valid() and "save" in request.POST:
+            series = form.save(request.user)
+            n = len(form.point_list)
+            messages.success(
+                request, f"Saved a {series.property.symbol} curve of {n} point{pluralize(n)} for {series.material.accession}."
+            )
+            return redirect("repo:add_from_reference", reference.pk)
+        if form.point_list:
+            # Drawn as the material page draws it, from the points read, even when some lines
+            # weren't. chart() gives None for a curve whose points are all limits.
+            drawn = charts.chart(form.prop, form.kind, form.variable, [(form.series, form.point_list)])
+            curve_charts = [drawn] if drawn else []
+    context = {"nav": "add", "reference": reference, "choice": choice, "form": form, "charts": curve_charts}
+    return render(request, "repo/add_curve.html", context)

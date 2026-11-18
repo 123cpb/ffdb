@@ -96,6 +96,8 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .search__range-boxes { clear: both; display: flex; align-items: center; gap: 6px; }
 
 .form-error { margin: 0 0 16px; padding: 10px 14px; color: #8a1c1c; background: #fdf0f0; border: 1px solid #f0c4c4; border-radius: 6px; }
+/* A list of errors, one a line (a curve's lines with a problem): room for the bullets inside the box. */
+ul.form-error { padding-left: 32px; }
 
 .result-count { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
 .result-list { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--hairline); border-radius: 8px; }

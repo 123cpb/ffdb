@@ -1,0 +1,17 @@
+{% comment %}
+The first form for adding a curve, CurveChoiceForm (as choice): what the curve is of, and what
+it is against. It is sent with GET to views.add_curve, which shows the second form once these
+are valid. A reference's Add data page and the add-a-curve page both include it.
+{% endcomment %}
+<form method="get" action="{% url 'repo:add_curve' reference.pk %}" class="entry-form entry-form--wide">
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=choice.material %}
+    {% include "repo/_entry_field.html" with field=choice.lcr_id %}
+  </div>
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=choice.property %}
+    {% include "repo/_entry_field.html" with field=choice.kind %}
+    {% include "repo/_entry_field.html" with field=choice.variable %}
+  </div>
+  <button type="submit">Next</button>
+</form>

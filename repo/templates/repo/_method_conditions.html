@@ -1,0 +1,19 @@
+{% comment %}
+The method and conditions boxes of a second form for adding values (forms.SeriesForm, as
+form), with the property's usual methods as suggestions. The add-a-value and add-a-curve
+pages both include it inside their form.
+{% endcomment %}
+<fieldset>
+  <legend>Method and conditions</legend>
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=form.method %}
+    {% for field in form.condition_fields %}{% include "repo/_entry_field.html" %}{% endfor %}
+  </div>
+  {% include "repo/_entry_field.html" with field=form.other_conditions %}
+</fieldset>
+{# The method box's suggestions (its list attribute names this id). #}
+{% if form.prop.methods %}
+<datalist id="method-suggestions">
+  {% for method in form.prop.methods %}<option value="{{ method }}">{% endfor %}
+</datalist>
+{% endif %}

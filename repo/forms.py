@@ -304,8 +304,8 @@ class CompoundTableForm(forms.Form):
         return counts, warnings
 
 
-# Adding a single value takes two short forms. The first says what the value is of; the
-# second asks for what that property needs for that kind of value.
+# Adding a single value or a curve takes two short forms. The first says what the values are
+# of; the second asks for what that property needs for that kind of value.
 
 
 def property_choices(field):
@@ -320,14 +320,11 @@ def property_choices(field):
     return choices
 
 
-class ValueChoiceForm(forms.Form):
-    """The first form for adding a single value: the material, the property, the kind of
-    value and whether it has a temperature. It is sent with GET, because it changes nothing:
-    the next page's address holds the choices. A valid form's cleaned_data has material (a
-    Material, from either box), property, kind and temperature (True or False). Pass the
-    reference the value is from."""
-
-    YES, NO = "yes", "no"
+class SeriesChoiceForm(forms.Form):
+    """What both first forms ask: the material, the property and the kind of value. A first
+    form is sent with GET, because it changes nothing: the next page's address holds the
+    choices. A valid form's cleaned_data has material (a Material, from either box), property,
+    kind and variable, what the values are against. Pass the reference they are from."""
 
     material = forms.ModelChoiceField(
         queryset=Material.objects.none(),  # __init__ sets the reference's materials
@@ -340,19 +337,11 @@ class ValueChoiceForm(forms.Form):
     property = forms.ModelChoiceField(queryset=Property.objects.all(), to_field_name="code", empty_label="Choose…")
     # No default: a default of measured would quietly save a computed value as measured.
     kind = forms.ChoiceField(choices=[("", "Choose…"), *Series.Kind.choices])
-    temperature = forms.ChoiceField(
-        label="Does the value have a temperature?",
-        choices=[(YES, "Yes: measured or computed at a temperature"), (NO, "No, e.g. a gas-phase calculation")],
-        widget=forms.RadioSelect,
-    )
 
     def __init__(self, *args, reference, **kwargs):
         super().__init__(*args, **kwargs)
         self.fields["material"].queryset = reference.materials()
         self.fields["property"].choices = property_choices(self.fields["property"])
-
-    def clean_temperature(self):
-        return self.cleaned_data["temperature"] == self.YES
 
     def clean(self):
         cleaned = super().clean()
@@ -370,12 +359,48 @@ class ValueChoiceForm(forms.Form):
                 cleaned["material"] = found
         elif not material:
             self.add_error("material", "Choose one of this reference's materials, or give an LCR ID.")
+        return cleaned
+
+
+class ValueChoiceForm(SeriesChoiceForm):
+    """The first form for adding a single value: what SeriesChoiceForm asks, and whether the
+    value has a temperature. The answer gives the variable: one way to store each value is
+    against temperature with a temperature, and against nothing without one (see
+    Measurement.position_errors()). cleaned_data's temperature is True or False."""
+
+    YES, NO = "yes", "no"
+
+    temperature = forms.ChoiceField(
+        label="Does the value have a temperature?",
+        choices=[(YES, "Yes: measured or computed at a temperature"), (NO, "No, e.g. a gas-phase calculation")],
+        widget=forms.RadioSelect,
+    )
+
+    def clean_temperature(self):
+        return self.cleaned_data["temperature"] == self.YES
+
+    def clean(self):
+        cleaned = super().clean()
+        if "temperature" not in cleaned:
+            return cleaned  # the field's error already says to answer it
+        cleaned["variable"] = Variable.objects.get(code=Variable.TEMPERATURE if cleaned["temperature"] else Variable.NONE)
         prop, kind = cleaned.get("property"), cleaned.get("kind")
         # The second form has no temperature box for a value without one, so this rule is
         # checked here, with the message the rules for values give.
-        if prop and kind and cleaned.get("temperature") is False and "temperature" in prop.conditions_for(kind):
+        if prop and kind and cleaned["temperature"] is False and "temperature" in prop.conditions_for(kind):
             self.add_error("temperature", must_state(prop, ["temperature"]))
         return cleaned
+
+
+class CurveChoiceForm(SeriesChoiceForm):
+    """The first form for adding a curve: what SeriesChoiceForm asks, and what the curve is
+    against. Nothing isn't offered: a value against nothing is one value, added as a single
+    value."""
+
+    # to_field_name: the address uses the variable's code, e.g. variable=frequency.
+    variable = forms.ModelChoiceField(
+        label="Against", queryset=Variable.objects.exclude(code=Variable.NONE), to_field_name="code", empty_label="Choose…"
+    )
 
 
 def condition_value(text):
@@ -391,24 +416,21 @@ def condition_value(text):
     return int(number) if number.is_integer() else number
 
 
-class ValueForm(forms.Form):
-    """The second form for adding a single value: the value, and what its property needs for
-    its kind. Pass the reference and the first form's cleaned_data as choice. The fields
-    depend on them: a temperature box only for a value with a temperature, and a box for
-    each of the property's required conditions for the kind, apart from temperature and
-    method, which have boxes of their own. Other conditions are typed as key: value lines.
 
-    clean() builds the value as a series of one point, not saved, and checks both by the
-    rules for values (Series.clean() and Measurement.clean()), so a value is refused with
-    the same messages as an import. save() saves them."""
 
-    qualifier = forms.ChoiceField(
-        label="The value is", choices=Measurement.Qualifier.choices, initial=Measurement.Qualifier.EXACT,
-        help_text=Measurement._meta.get_field("qualifier").help_text,
-    )
-    value = forms.FloatField()  # __init__ adds the unit to the label
-    uncertainty = forms.FloatField(label="±", required=False)
-    temperature_c = forms.FloatField(label="T (°C)")  # __init__ removes it for a value without one
+class SeriesForm(forms.Form):
+    """What both second forms ask: the method and conditions, and where in the reference the
+    values are. Pass the reference and the first form's cleaned_data as choice. There is a box
+    for each of the property's required conditions for the kind, apart from three given
+    another way: temperature and method, which have boxes of their own, and the condition the
+    series' variable stands for, which its points give (a frequency sweep gives its
+    frequencies). Other conditions are typed as key: value lines.
+
+    clean() builds the series, not saved, and checks it by the rules for values
+    (Series.clean()), so it is refused with the same messages as an import. Each subclass
+    builds its points in point_list and checks them by the rules too (Measurement.clean()).
+    save() saves them all."""
+
     method = forms.CharField(required=False, max_length=Series._meta.get_field("method").max_length)
     other_conditions = forms.CharField(
         required=False,
@@ -428,22 +450,20 @@ class ValueForm(forms.Form):
     def __init__(self, *args, reference, choice, **kwargs):
         super().__init__(*args, **kwargs)
         self.reference, self.material = reference, choice["material"]
-        self.prop, self.kind, self.has_temperature = choice["property"], choice["kind"], choice["temperature"]
+        self.prop, self.kind, self.variable = choice["property"], choice["kind"], choice["variable"]
         self.required = self.prop.conditions_for(self.kind)  # for the line above the form
-        self.fields["value"].label = f"Value ({self.prop.unit})"
-        if not self.has_temperature:
-            del self.fields["temperature_c"]
         if self.prop.methods:
             # The page's <datalist> of the property's methods: the browser offers them as the
             # curator types, and anything else can still be typed.
             self.fields["method"].widget.attrs["list"] = "method-suggestions"
-        self.condition_keys = [key for key in self.required if key not in ("temperature", "method")]
+        given_another_way = {"temperature", "method", self.variable.condition}
+        self.condition_keys = [key for key in self.required if key not in given_another_way]
         for key in self.condition_keys:
             unit = CONDITION_UNITS.get(key)
             label = capfirst(CONDITION_NAMES.get(key, key)) + (f" ({unit})" if unit else "")
             # Not required here, so a blank box gets the rules' message, as an import would.
             self.fields[f"condition_{key}"] = forms.CharField(label=label, required=False)
-        self.series = self.point = None  # built by clean()
+        self.series, self.point_list = None, []  # built by clean()
 
     def condition_fields(self):
         """The boxes for the property's required conditions, for the template."""
@@ -466,6 +486,11 @@ class ValueForm(forms.Form):
             conditions[key] = condition_value(text)
         return conditions
 
+    def series_fields(self, cleaned):
+        """The series' fields that differ between the forms, as {name: value}. A single value
+        is no temperature sweep."""
+        return {"direction": Series.Direction.NOT_APPLICABLE}
+
     def clean(self):
         cleaned = super().clean()
         if cleaned.get("taken_from") == Series.TakenFrom.FIGURE and not cleaned.get("location"):
@@ -476,24 +501,15 @@ class ValueForm(forms.Form):
             if cleaned.get(f"condition_{key}")
         }
         conditions.update(cleaned.get("other_conditions") or {})
-        # One way to store each value: with a temperature it is against temperature,
-        # without one against nothing (see Measurement.position_errors()).
-        variable = Variable.objects.get(code=Variable.TEMPERATURE if self.has_temperature else Variable.NONE)
         self.series = Series(
-            material=self.material, reference=self.reference, property=self.prop, variable=variable,
+            material=self.material, reference=self.reference, property=self.prop, variable=self.variable,
             kind=self.kind, method=cleaned.get("method", ""), conditions=conditions,
-            direction=Series.Direction.NOT_APPLICABLE,  # one value is no temperature sweep
             taken_from=cleaned.get("taken_from", ""), location=cleaned.get("location", ""),
+            **self.series_fields(cleaned),
         )
-        self.check_rules(self.series)
-        # The point can be built only from boxes that were read: a blank value has nothing to check.
-        if not any(self.has_error(name) for name in ["qualifier", "value", "uncertainty", "temperature_c"]):
-            self.point = Measurement(
-                series=self.series, qualifier=cleaned["qualifier"], value=cleaned["value"],
-                uncertainty=cleaned["uncertainty"], temperature_c=cleaned.get("temperature_c"),
-            )
-            # The series has no primary key yet, which is all full_clean() would say about it.
-            self.check_rules(self.point, exclude=["series"])
+        # A box that already has an error isn't checked again, so a blank one isn't refused
+        # twice. Series.clean() runs whatever is left out.
+        self.check_rules(self.series, exclude=list(self.errors))
         return cleaned
 
     def check_rules(self, obj, **kwargs):
@@ -507,12 +523,245 @@ class ValueForm(forms.Form):
                 self.add_error(field if field in self.fields else None, messages)
 
     def save(self, user):
-        """Save the series and its point, recorded as entered by user, in one transaction, so
-        a failure between the two saves keeps neither. Call it only on a valid form. Returns
-        the series."""
+        """Save the series and its points, recorded as entered by user, in one transaction, so
+        a failure partway keeps none of them. bulk_create() saves all the points in one query.
+        Call it only on a valid form. Returns the series."""
         with transaction.atomic():
             self.series.mark_entered(user)
             self.series.save()
-            self.point.series = self.series  # again, now the series has its primary key
-            self.point.save()
+            for point in self.point_list:
+                point.series = self.series  # again, now the series has its primary key
+            Measurement.objects.bulk_create(self.point_list)
         return self.series
+
+
+class ValueForm(SeriesForm):
+    """The second form for adding a single value: the value, and what SeriesForm asks. Only a
+    value with a temperature has a box for it. clean() builds the value as a series of one
+    point."""
+
+    qualifier = forms.ChoiceField(
+        label="The value is", choices=Measurement.Qualifier.choices, initial=Measurement.Qualifier.EXACT,
+        help_text=Measurement._meta.get_field("qualifier").help_text,
+    )
+    value = forms.FloatField()  # __init__ adds the unit to the label
+    uncertainty = forms.FloatField(label="±", required=False)
+    temperature_c = forms.FloatField(label="T (°C)")  # __init__ removes it for a value without one
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.has_temperature = self.variable.code == Variable.TEMPERATURE
+        self.fields["value"].label = f"Value ({self.prop.unit})"
+        if not self.has_temperature:
+            del self.fields["temperature_c"]
+
+    def clean(self):
+        cleaned = super().clean()
+        # The point can be built only from boxes that were read: a blank value has nothing to check.
+        if not any(self.has_error(name) for name in ["qualifier", "value", "uncertainty", "temperature_c"]):
+            point = Measurement(
+                series=self.series, qualifier=cleaned["qualifier"], value=cleaned["value"],
+                uncertainty=cleaned["uncertainty"], temperature_c=cleaned.get("temperature_c"),
+            )
+            # The series has no primary key yet, which is all full_clean() would say about it.
+            self.check_rules(point, exclude=["series"])
+            self.point_list = [point]
+        return cleaned
+
+
+# A curve's points, pasted into one box. The most lines it can have, as in the prototype. FFDB
+# never thins data (data rule 1): whoever has a longer curve thins it and says how in its notes.
+MAX_CURVE_POINTS = 5000
+# How many lines with a problem the messages name, before saying how many more there are.
+NAMED_PROBLEM_LINES = 20
+LIMIT_SIGNS = {"<": Measurement.Qualifier.UPPER, ">": Measurement.Qualifier.LOWER}
+
+
+def point_number(text):
+    """A number in a pasted point: "6.08" -> 6.08. The minus sign papers print, −, is read as
+    -. Raises ValueError, saying why, for anything else. isfinite() refuses "nan" and "inf",
+    which float() accepts."""
+    if not text:
+        raise ValueError("A cell is empty.")
+    try:
+        number = float(text.replace("−", "-"))
+    except ValueError:
+        number = math.nan
+    if not math.isfinite(number):
+        hint = " Use a decimal point." if "," in text else ""
+        raise ValueError(f"“{text}” isn't a number.{hint}")
+    return number
+
+
+def point_cells(line):
+    """Split one pasted line of a curve into its cells: on tabs if it has any (pasted from a
+    spreadsheet), otherwise on commas, or else on runs of spaces. Spaces after < or > are
+    dropped first, so "< 0.1" stays one cell."""
+    line = re.sub(r"([<>])\s+", r"\1", line.strip())
+    if "\t" in line:
+        cells = line.split("\t")
+    elif "," in line:
+        cells = line.split(",")
+    else:
+        cells = line.split()  # no argument: any run of spaces counts as one break
+    return [cell.strip() for cell in cells]
+
+
+def is_number(cell):
+    """Whether a cell reads as a number, with or without a limit sign."""
+    try:
+        point_number(cell.lstrip("<>"))
+    except ValueError:
+        return False
+    return True
+
+
+@dataclass
+class PointLine:
+    """One line of a pasted curve, as read_points() reads it."""
+
+    number: int
+    text: str
+    x: float | None = None
+    qualifier: str = Measurement.Qualifier.EXACT
+    value: float | None = None
+    uncertainty: float | None = None
+    problem: str = ""  # why the line can't be read, or "" when it can
+
+
+def read_point_line(number, text, cells):
+    """One line's cells as a PointLine: x, value and optionally ±, in that order, as the form
+    states them. A value starting with < or > is a limit. Nothing is converted."""
+    line = PointLine(number, text)
+    if len(cells) not in (2, 3):
+        line.problem = f"Expected two or three cells (x, value and optionally ±), but found {len(cells)}."
+        return line
+    x, value, uncertainty = (cells + [""])[:3]
+    line.qualifier = LIMIT_SIGNS.get(value[:1], Measurement.Qualifier.EXACT)
+    if line.qualifier != Measurement.Qualifier.EXACT:
+        value = value[1:]
+    try:
+        line.x, line.value = point_number(x), point_number(value)
+        line.uncertainty = point_number(uncertainty) if uncertainty else None
+    except ValueError as exc:
+        line.problem = str(exc)
+    return line
+
+
+def read_points(text):
+    """The lines of a pasted curve as (header, lines), each line read as a PointLine. Blank
+    lines are skipped but still counted, so the numbers are the pasted text's. A first line
+    with no number in it, such as "T (°C), Ps (µC/cm²)", is a header: header is its number,
+    or None when there is none. Nothing else is skipped: a line that can't be read has its
+    problem."""
+    header, lines = None, []
+    for number, text_line in enumerate(text.splitlines(), start=1):
+        if not text_line.strip():
+            continue
+        cells = point_cells(text_line)
+        if header is None and not lines and not any(is_number(cell) for cell in cells):
+            header = number
+            continue
+        lines.append(read_point_line(number, text_line.strip(), cells))
+    return header, lines
+
+
+class CurveForm(SeriesForm):
+    """The second form for adding a curve: what SeriesForm asks, and its points, pasted into
+    one box and read by read_points(). A curve against temperature asks which way it was
+    taken; one against anything else asks the temperature every point was measured at.
+
+    clean() builds a point from every line that reads, in point_list, for Check to count and
+    draw. A line that can't be read, or whose point the rules for values refuse, goes in
+    problem_lines, and each is named as an error on the box. So the form is valid, and can be
+    saved, only when every line is a point."""
+
+    EMPTY = "Paste at least one line: x, then the value."
+
+    direction = forms.ChoiceField(
+        # No default, as for sequences: a default would quietly save a heating curve as Not
+        # stated. Not applicable is left out: it is for curves that aren't against temperature.
+        choices=[("", "Choose…"), *[c for c in Series.Direction.choices if c[0] != Series.Direction.NOT_APPLICABLE]],
+        help_text="Whether the points were taken on heating or cooling.",
+    )
+    # Not required here: the rules for values say whether the property needs a temperature.
+    temperature_c = forms.FloatField(label="T (°C)", required=False, help_text="The temperature of every point.")
+    digitised = forms.BooleanField(label="Digitised from the figure", required=False)
+    notes = forms.CharField(
+        required=False, max_length=Series._meta.get_field("notes").max_length,
+        help_text=f"e.g. how a curve of more than {MAX_CURVE_POINTS:,} points was thinned.",
+    )
+    points = forms.CharField(
+        widget=forms.Textarea(attrs={"rows": 10, "spellcheck": "false"}),
+        strip=False,  # stripping blank lines from the start would change the line numbers
+        error_messages={"required": EMPTY},
+    )  # __init__ gives it its label and help, with the units
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.against_temperature = self.variable.code == Variable.TEMPERATURE
+        del self.fields["temperature_c" if self.against_temperature else "direction"]
+        points = self.fields["points"]
+        points.label = f"Points: {self.variable}, {self.prop.symbol} ({self.prop.unit}) and optionally ±"
+        points.help_text = (
+            f"One point a line: the {self.variable.name.lower()}, the value and, if the reference gives one, its ±, "
+            "separated by tabs (as pasted from a spreadsheet), commas or spaces. Start a value with < or > for an "
+            "upper or lower limit. Give them in these units: nothing is converted. A first line with no number in "
+            f"it is read as a header. At most {MAX_CURVE_POINTS:,} lines."
+        )
+        self.header, self.problem_lines = None, []  # set by clean_points() and clean()
+
+    def clean_points(self):
+        """The box's lines, read. A box with no lines or too many is refused as a whole."""
+        self.header, lines = read_points(self.cleaned_data["points"])
+        if not lines:
+            raise ValidationError(self.EMPTY)
+        if len(lines) > MAX_CURVE_POINTS:
+            raise ValidationError(
+                f"A curve can have at most {MAX_CURVE_POINTS:,} lines, and this one has {len(lines):,}. FFDB never "
+                "thins data: thin the curve yourself, and say how in its notes."
+            )
+        return lines
+
+    def series_fields(self, cleaned):
+        """The direction, which only a curve against temperature has, digitised and notes."""
+        return {
+            "direction": cleaned.get("direction", "") if self.against_temperature else Series.Direction.NOT_APPLICABLE,
+            "digitised": cleaned.get("digitised", False),
+            "notes": cleaned.get("notes", ""),
+        }
+
+    def clean(self):
+        cleaned = super().clean()  # builds and checks the series
+        box_messages = {}  # the rules' messages about the T box, each once: a dict keeps their order
+        for line in cleaned.get("points", []):
+            if line.problem:
+                self.problem_lines.append(line)
+                continue
+            point = Measurement(
+                series=self.series, qualifier=line.qualifier, value=line.value, uncertainty=line.uncertainty,
+                # Against temperature, x is the temperature. Against anything else, every point
+                # has the T box's temperature.
+                temperature_c=line.x if self.against_temperature else cleaned.get("temperature_c"),
+                x=None if self.against_temperature else line.x,
+            )
+            try:
+                point.full_clean(exclude=["series"])
+            except ValidationError as exc:
+                errors = exc.message_dict
+                # About the T box, so the same for every point.
+                box_messages.update(dict.fromkeys(errors.pop("temperature_c", [])))
+                if errors:
+                    line.problem = " ".join(message for messages in errors.values() for message in messages)
+                    self.problem_lines.append(line)
+                    continue
+            self.point_list.append(point)
+        if box_messages:
+            self.add_error("temperature_c" if "temperature_c" in self.fields else None, list(box_messages))
+        if self.problem_lines:
+            named = [f"Line {line.number}: {line.problem}" for line in self.problem_lines[:NAMED_PROBLEM_LINES]]
+            more = len(self.problem_lines) - NAMED_PROBLEM_LINES
+            if more > 0:
+                named.append(f"…and {more:,} more line{'' if more == 1 else 's'} with a problem.")
+            self.add_error("points", ["Nothing is saved until every line is a point: fix or delete these lines.", *named])
+        return cleaned

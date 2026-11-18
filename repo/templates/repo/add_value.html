@@ -30,14 +30,7 @@
         {% if form.has_temperature %}{% include "repo/_entry_field.html" with field=form.temperature_c %}{% endif %}
       </div>
     </fieldset>
-    <fieldset>
-      <legend>Method and conditions</legend>
-      <div class="entry-form__row">
-        {% include "repo/_entry_field.html" with field=form.method %}
-        {% for field in form.condition_fields %}{% include "repo/_entry_field.html" %}{% endfor %}
-      </div>
-      {% include "repo/_entry_field.html" with field=form.other_conditions %}
-    </fieldset>
+    {% include "repo/_method_conditions.html" %}
     <fieldset>
       <legend>Where in the reference</legend>
       <div class="entry-form__row">
@@ -45,12 +38,6 @@
         {% include "repo/_entry_field.html" with field=form.location %}
       </div>
     </fieldset>
-    {# The method box's suggestions (its list attribute names this id). #}
-    {% if form.prop.methods %}
-    <datalist id="method-suggestions">
-      {% for method in form.prop.methods %}<option value="{{ method }}">{% endfor %}
-    </datalist>
-    {% endif %}
     <button type="submit">Save</button>
   </form>
 </section>

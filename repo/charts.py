@@ -51,11 +51,10 @@ def chart_groups(series):
     return [(kind, variable, groups[(kind, variable)]) for kind, variable in ordered]
 
 
-def plotted_points(series):
-    """The points of a series a chart draws, in x order. Limits are left out: < 0.1 isn't
-    a value of 0.1. Uses the points prefetched with the series, so it costs no queries."""
-    points = [point for point in series.points.all() if not point.is_limit() and point.x_value() is not None]
-    return sorted(points, key=lambda point: point.x_value())
+def plotted_points(points):
+    """The points a chart draws, in x order. Limits are left out: < 0.1 isn't a value of 0.1."""
+    drawn = [point for point in points if not point.is_limit() and point.x_value() is not None]
+    return sorted(drawn, key=lambda point: point.x_value())
 
 
 def plain(text):
@@ -79,12 +78,13 @@ def line_label(series, by_material=False):
     return plain(label)
 
 
-def figure(prop, variable, series_list, by_material=False):
+def figure(prop, variable, lines, by_material=False):
     """One chart: prop against variable, one line per series, named in the legend by
-    line_label() while there are no more than LABELLED_LINES lines. A single value is one
-    marker. Series with no points to draw are left out. Returns the matplotlib Figure, so
-    tests can look at what was drawn."""
-    lines = [(one, plotted_points(one)) for one in series_list]
+    line_label() while there are no more than LABELLED_LINES lines. lines are (series, its
+    points) pairs: the points are passed in, not fetched through the series, so a curve not
+    saved yet can be drawn. A single value is one marker. Series with no points to draw are
+    left out. Returns the matplotlib Figure, so tests can look at what was drawn."""
+    lines = [(one, plotted_points(points)) for one, points in lines]
     lines = [(one, points) for one, points in lines if points]
     labelled = len(lines) <= LABELLED_LINES
     # Taller with each line in the legend, so the legend under the plot doesn't squash it.
@@ -142,27 +142,35 @@ def description(prop, kind, variable, series_list, by_material=False):
     return f"{prop.symbol} against {variable.name.lower()}, {kind} values: {n} series{of}, from {references}"
 
 
+def chart(prop, kind, variable, lines, by_material=False):
+    """One chart as the template (_charts.html) shows it: {"kind", "variable", "svg",
+    "description", "n_series", "labelled", "n_limits"}. lines are (series, its points) pairs,
+    as figure() takes them. With by_material, the legend and description name each line's
+    material too, as the property page needs. A chart whose values are all limits has no svg,
+    only the count of limits left out; with nothing at all it is None."""
+    drawn = [(one, points) for one, points in lines if plotted_points(points)]
+    n_limits = sum(point.is_limit() for _, points in lines for point in points)
+    if not (drawn or n_limits):
+        return None
+    return {
+        "kind": kind,
+        "variable": variable,
+        # mark_safe(): the template includes the SVG as it is. matplotlib escapes the text it
+        # writes into it, such as the legend's labels.
+        "svg": mark_safe(to_svg(figure(prop, variable, drawn, by_material))) if drawn else "",
+        "description": description(prop, kind, variable, [one for one, _ in drawn], by_material),
+        "n_series": len(drawn),
+        "labelled": len(drawn) <= LABELLED_LINES,  # as figure() decides it
+        "n_limits": n_limits,
+    }
+
+
 def charts_for(prop, series_list, by_material=False):
-    """A property's charts, as the template shows them: [{"kind", "variable", "svg",
-    "description", "n_series", "labelled", "n_limits"}], one per kind and variable. With
-    by_material, the legend and description name each line's material too, as the property
-    page needs. A chart whose values are all limits has no svg, only the count of limits
-    left out; one with nothing at all is left out."""
+    """A property's charts, one per kind and variable, each as chart() gives it. Each series'
+    points are those prefetched with it, so drawing them costs no queries."""
     charts = []
     for kind, variable, group in chart_groups(series_list):
-        drawn = [one for one in group if plotted_points(one)]
-        n_limits = sum(point.is_limit() for one in group for point in one.points.all())
-        if not (drawn or n_limits):
-            continue
-        charts.append({
-            "kind": kind,
-            "variable": variable,
-            # mark_safe(): the template includes the SVG as it is. matplotlib escapes the
-            # text it writes into it, such as the legend's labels.
-            "svg": mark_safe(to_svg(figure(prop, variable, drawn, by_material))) if drawn else "",
-            "description": description(prop, kind, variable, drawn, by_material),
-            "n_series": len(drawn),
-            "labelled": len(drawn) <= LABELLED_LINES,  # as figure() decides it
-            "n_limits": n_limits,
-        })
+        one_chart = chart(prop, kind, variable, [(one, one.points.all()) for one in group], by_material)
+        if one_chart:
+            charts.append(one_chart)
     return charts

@@ -10,8 +10,7 @@
   {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
 </p>
 
-<p>Add this reference's compounds, their phase sequences and single property values here. For now,
-add curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
+<p>Add this reference's compounds, their phase sequences, and its property values and curves here.</p>
 
 <section>
   <h2>Add compounds</h2>
@@ -87,6 +86,12 @@ add curves in the <a href="{% url 'admin:index' %}">admin</a>.</p>
   <h2>Add a single value</h2>
   <p>Say what the value is of. The next page asks for the value and what its property needs for that kind.</p>
   {% include "repo/_value_choice.html" %}
+</section>
+
+<section>
+  <h2>Add a curve</h2>
+  <p>Say what the curve is of and what it is against. The next page has a box for its points.</p>
+  {% include "repo/_curve_choice.html" with choice=curve_choice %}
 </section>
 
 <section>
