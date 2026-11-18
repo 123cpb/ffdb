@@ -6,10 +6,11 @@ from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
-from . import charts, chem
+from . import charts, chem, exports
 from .models import (
     DOI_PREFIX,
     Material,
+    Measurement,
     Phase,
     PhaseTransition,
     Property,
@@ -100,38 +101,51 @@ def range_text(tmin, tmax):
     return ""
 
 
-def materials(request):
-    """The Materials page, and for now the home page: every material, or those that ?q=,
-    ?sub=, ?phase=, ?tmin= and ?tmax= find, 25 to a page. get_page() turns a missing, bad
-    or too-high ?page= into a real page. A substructure RDKit can't read lists nothing and
-    says why. A ?phase= that isn't in the vocabulary is ignored."""
-    query = request.GET.get("q", "").strip()
-    substructure = request.GET.get("sub", "").strip()
-    choices = phase_choices()
+def search_results(request):
+    """The Materials page's search, read the same way by the page and its downloads, so a
+    download holds the materials the page lists. Returns (terms, found, error).
+
+    terms is what ?q=, ?sub=, ?phase=, ?tmin= and ?tmax= hold, as typed, in that order. A
+    ?phase= that isn't in the vocabulary is ignored, and so is a ?tmin= or ?tmax= that isn't
+    a number. found is what find_materials() finds. A substructure RDKit can't read finds
+    nothing, and error says why; otherwise error is ""."""
     phase = request.GET.get("phase", "")
-    if phase not in dict(choices):
+    if phase and not Phase.objects.filter(code=phase).exists():
         phase = ""
     tmin, t_min = temperature_param(request, "tmin")
     tmax, t_max = temperature_param(request, "tmax")
-    error = ""
-    try:
-        found = find_materials(query, substructure, phase, t_min, t_max)
-    except chem.StructureError as exc:
-        found, error = Material.objects.none(), str(exc)
-    page = Paginator(found, 25).get_page(request.GET.get("page"))
-    # The search as it goes in an address, so the page links keep it. urlencode() turns
-    # characters such as # into %23: a bare # would end the address there.
-    fields = [("q", query), ("sub", substructure), ("phase", phase), ("tmin", tmin), ("tmax", tmax)]
-    search = urlencode({key: value for key, value in fields if value})
-    context = {
-        "nav": "materials",  # which link base.html marks as the current section
-        "query": query,
-        "substructure": substructure,
+    terms = {
+        "q": request.GET.get("q", "").strip(),
+        "sub": request.GET.get("sub", "").strip(),
         "phase": phase,
-        "phase_choices": choices,
         "tmin": tmin,
         "tmax": tmax,
-        "range_text": range_text(tmin, tmax),
+    }
+    try:
+        return terms, find_materials(terms["q"], terms["sub"], phase, t_min, t_max), ""
+    except chem.StructureError as exc:
+        return terms, Material.objects.none(), str(exc)
+
+
+def materials(request):
+    """The Materials page, and for now the home page: every material, or those that the
+    search finds (search_results()), 25 to a page. get_page() turns a missing, bad or
+    too-high ?page= into a real page. A substructure RDKit can't read lists nothing and
+    says why."""
+    terms, found, error = search_results(request)
+    page = Paginator(found, 25).get_page(request.GET.get("page"))
+    # The search as it goes in an address, so the page links and the downloads keep it.
+    # urlencode() turns characters such as # into %23: a bare # would end the address there.
+    search = urlencode({key: value for key, value in terms.items() if value})
+    context = {
+        "nav": "materials",  # which link base.html marks as the current section
+        "query": terms["q"],
+        "substructure": terms["sub"],
+        "phase": terms["phase"],
+        "phase_choices": phase_choices(),
+        "tmin": terms["tmin"],
+        "tmax": terms["tmax"],
+        "range_text": range_text(terms["tmin"], terms["tmax"]),
         "error": error,
         "page": page,
         "search": search,
@@ -324,6 +338,33 @@ def property_detail(request, code):
         "sort": sort,
     }
     return render(request, "repo/property_detail.html", context)
+
+
+# The downloads (exports.py). The Materials page's three are for the materials its search
+# finds: a search that finds nothing, or a substructure RDKit can't read, gives a file with
+# its header and no rows.
+
+
+def materials_csv(request):
+    found = search_results(request)[1]
+    return exports.csv_response("ffdb-materials.csv", exports.MATERIAL_COLUMNS, exports.material_rows(found))
+
+
+def sequences_csv(request):
+    found = search_results(request)[1]
+    return exports.csv_response("ffdb-sequences.csv", exports.SEQUENCE_COLUMNS, exports.sequence_rows(found))
+
+
+def values_csv(request):
+    points = Measurement.objects.filter(series__material__in=search_results(request)[1])
+    return exports.csv_response("ffdb-values.csv", exports.VALUE_COLUMNS, exports.value_rows(points))
+
+
+def property_values_csv(request, code):
+    """Every value of one property. A code with no property gives a 404."""
+    prop = get_object_or_404(Property, code=code)
+    points = Measurement.objects.filter(series__property=prop)
+    return exports.csv_response(f"ffdb-{prop.code}-values.csv", exports.VALUE_COLUMNS, exports.value_rows(points))
 
 
 def structure(request, pk):

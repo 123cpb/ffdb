@@ -19,6 +19,7 @@
   <h2>Values</h2>
   {% if series_list %}
   <p>{{ property.n_materials }} material{{ property.n_materials|pluralize }} from {{ property.n_references }} reference{{ property.n_references|pluralize }}. Each row is one value or one curve, as its reference gives it.</p>
+  <p class="downloads"><a href="{% url 'repo:property_values_csv' property.code %}">Download these values as CSV</a>, one row per point.</p>
   {% include "repo/_charts.html" %}
   <p class="table-note">Select the Material or Value heading to sort by it. By value, the smallest comes first, and a curve sits where its lowest value would.</p>
   <div class="table-scroll">

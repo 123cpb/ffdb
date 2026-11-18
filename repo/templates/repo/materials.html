@@ -44,6 +44,12 @@
 {% endwith %}
 
 {% if page.object_list %}
+{# Each download keeps the search, so it holds every material found, not just this page's. #}
+<p class="downloads">Download all {{ page.paginator.count }} as CSV:
+  <a href="{% url 'repo:materials_csv' %}{% if search %}?{{ search }}{% endif %}">materials</a>,
+  <a href="{% url 'repo:sequences_csv' %}{% if search %}?{{ search }}{% endif %}">phase sequences</a>,
+  <a href="{% url 'repo:values_csv' %}{% if search %}?{{ search }}{% endif %}">property values</a>
+</p>
 <ol class="result-list">
   {% for material in page %}
   <li class="result">

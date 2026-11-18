@@ -65,6 +65,8 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .result__id { font: 600 19px/1.25 var(--serif); margin-right: 10px; }
 .result__name { color: var(--ink-2); }
 
+.downloads { margin: 0 0 12px; font-size: 14px; }
+
 .pagination { display: flex; gap: 14px; justify-content: center; margin-top: 18px; color: var(--ink-2); }
 
 .material-id { font: 600 44px/1.05 var(--serif); margin: 0 0 6px; }
