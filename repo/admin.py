@@ -3,7 +3,13 @@ from django.db import models
 from django.forms import Textarea
 from django.utils.html import format_html
 
-from .models import Material, Phase, PhaseSequence, Property, PropertyGroup, Reference, Variable
+from .models import (
+    Material, Measurement, Phase, PhaseSequence, Property, PropertyGroup, Reference, Series, Variable,
+)
+
+# The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
+# usual 10 rows.
+SMALL_JSON_BOX = {models.JSONField: {"widget": Textarea(attrs={"rows": 2, "cols": 80})}}
 
 
 class PhaseSequenceInline(admin.TabularInline):
@@ -88,10 +94,36 @@ class PropertyGroupAdmin(admin.ModelAdmin):
 class PropertyAdmin(admin.ModelAdmin):
     list_display = ["symbol", "name", "group", "unit", "required_conditions", "sort_order"]
     list_filter = ["group"]
-    # The JSON fields hold a short list, so a smaller box than the usual 10 rows.
-    formfield_overrides = {models.JSONField: {"widget": Textarea(attrs={"rows": 2, "cols": 80})}}
+    formfield_overrides = SMALL_JSON_BOX
 
 
 @admin.register(Variable)
 class VariableAdmin(admin.ModelAdmin):
     list_display = ["name", "code", "unit", "scale", "condition", "sort_order"]
+
+
+class PointInline(admin.TabularInline):
+    """A series' points, as rows on its page. Against temperature, each point gives its T;
+    against another variable, its x and the T it was measured at."""
+
+    model = Measurement
+    extra = 1
+    fields = ["qualifier", "value", "uncertainty", "temperature_c", "x"]
+    verbose_name = "point"
+    verbose_name_plural = "points"
+
+
+@admin.register(Series)
+class SeriesAdmin(admin.ModelAdmin):
+    list_display = ["material", "property", "variable", "kind", "reference", "point_count"]
+    list_filter = ["property", "kind", "variable"]
+    # Fetch these with the series, in the same query, rather than one query per row.
+    list_select_related = ["material", "property", "variable", "reference"]
+    search_fields = ["material__name", "material__aliases", "reference__identifier", "reference__first_author", "method"]
+    autocomplete_fields = ["material", "reference"]
+    formfield_overrides = SMALL_JSON_BOX
+    inlines = [PointInline]
+
+    @admin.display(description="points")
+    def point_count(self, obj):
+        return obj.points.count()

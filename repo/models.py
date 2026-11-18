@@ -485,8 +485,12 @@ def group_properties(properties):
 
 class Variable(models.Model):
     """What a series is plotted against: its x-axis, e.g. temperature or frequency. Two
-    will be special when series arrive: against Temperature, each point's temperature is
-    its x; against Nothing, a value has no x at all, e.g. a gas-phase calculation."""
+    are special, and are found by their codes: against Temperature, each point's
+    temperature is its x; against Nothing, a value has no x at all, e.g. a gas-phase
+    calculation. Changing either code in the admin would break Measurement.x_value()."""
+
+    TEMPERATURE = "temperature"
+    NONE = "none"
 
     class Scale(models.TextChoices):
         LINEAR = "linear", "Linear"
@@ -516,3 +520,130 @@ class Variable(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.unit})" if self.unit else self.name
+
+
+class Series(models.Model):
+    """One curve as its reference reports it: values of one property of one material
+    against one variable (temperature, frequency, ...), with everything its points share.
+    A single value is a series of one point, so every page and export has one path. The
+    points are Measurement rows."""
+
+    # The stored values are the kinds Property.conditions_for() takes.
+    class Kind(models.TextChoices):
+        MEASURED = "measured", "Measured"
+        EXTRAPOLATED = "extrapolated", "Extrapolated (e.g. from mixtures)"
+        COMPUTED = "computed", "Computed (DFT, MD, ...)"
+
+    class Direction(models.TextChoices):
+        COOLING = "cooling", "Cooling"
+        HEATING = "heating", "Heating"
+        NOT_STATED = "unspecified", "Not stated"
+        NOT_APPLICABLE = "not_applicable", "Not applicable"
+
+    class TakenFrom(models.TextChoices):
+        TABLE = "table", "Table"
+        TEXT = "text", "Text"
+        FIGURE = "figure", "Figure"
+        DATASET = "dataset", "Data file (deposited, or the group's own)"
+        # For lists that don't record it, such as LCPROP's values.
+        NOT_RECORDED = "", "Not recorded"
+
+    # Deleting a material deletes its series. A reference that has series can't be
+    # deleted, as with sequences, and nor can a property or variable that series use.
+    material = models.ForeignKey(Material, on_delete=models.CASCADE, related_name="series")
+    reference = models.ForeignKey(Reference, on_delete=models.PROTECT, related_name="series")
+    property = models.ForeignKey(Property, on_delete=models.PROTECT, related_name="series")
+    variable = models.ForeignKey(
+        Variable, on_delete=models.PROTECT, related_name="series", help_text="What the values are plotted against."
+    )
+    # No default, so the admin makes you choose: a default of measured would quietly save
+    # a computed value as measured, and kinds are never mixed.
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    method = models.CharField(max_length=100, blank=True)
+    conditions = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text='Conditions fixed for the whole series, as key: value pairs, e.g. {"frequency_Hz": 100, '
+        '"cell_gap_um": 5}. The variable itself isn\'t one of them.',
+    )
+    direction = models.CharField(
+        max_length=16, choices=Direction.choices, default=Direction.NOT_STATED,
+        help_text="Heating or cooling, if the reference says. Not applicable: no temperature sweep, e.g. a "
+        "single value at a fixed temperature or a frequency sweep.",
+    )
+    taken_from = models.CharField(
+        max_length=10, choices=TakenFrom.choices, default=TakenFrom.NOT_RECORDED, blank=True,
+        help_text="Where in the reference the values are.",
+    )
+    location = models.CharField(
+        "where in the reference", max_length=100, blank=True,
+        help_text="e.g. Fig. 3b, Table S2, [0129], or a data file's name.",
+    )
+    digitised = models.BooleanField("digitised from figure", default=False)
+    notes = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["property__sort_order", "reference__identifier", "id"]
+        verbose_name_plural = "series"
+
+    def __str__(self):
+        if self.is_against_nothing():
+            return f"{self.material}: {self.property.symbol}, {self.reference}"
+        return f"{self.material}: {self.property.symbol} against {self.variable.name.lower()}, {self.reference}"
+
+    def is_against_temperature(self):
+        return self.variable.code == Variable.TEMPERATURE
+
+    def is_against_nothing(self):
+        """A value with nothing to plot it against, e.g. a gas-phase calculation."""
+        return self.variable.code == Variable.NONE
+
+    def clean(self):
+        # An emptied Conditions box in the admin arrives as None, which the database
+        # refuses: it means no conditions. The rules for values are in block 4.3.
+        if self.conditions is None:
+            self.conditions = {}
+
+
+class Measurement(models.Model):
+    """One point of a series: a value, with the temperature it was measured at and, for a
+    series against another variable, that variable's value (x)."""
+
+    class Qualifier(models.TextChoices):
+        EXACT = "exact", "= exact"
+        UPPER = "upper", "< upper limit"
+        LOWER = "lower", "> lower limit"
+
+    SIGNS = {Qualifier.EXACT: "=", Qualifier.UPPER: "<", Qualifier.LOWER: ">"}
+
+    series = models.ForeignKey(Series, on_delete=models.CASCADE, related_name="points")
+    qualifier = models.CharField(
+        "value is", max_length=5, choices=Qualifier.choices, default=Qualifier.EXACT,
+        help_text='For "not detected", choose < and enter the detection limit, not 0.',
+    )
+    value = models.FloatField()
+    uncertainty = models.FloatField("±", null=True, blank=True)
+    temperature_c = models.FloatField(
+        "T (°C)", null=True, blank=True,
+        help_text="For a series against another variable, the temperature it was measured at.",
+    )
+    x = models.FloatField(
+        null=True, blank=True,
+        help_text="The series' variable at this point, in its unit. Empty for a series against temperature "
+        "(its x is T) and for a value against nothing.",
+    )
+
+    class Meta:
+        # series_id, not series: "series" would sort by Series's own ordering, through a join.
+        ordering = ["series_id", "temperature_c", "x", "id"]
+
+    def __str__(self):
+        prop = self.series.property
+        return f"{self.series.material} {prop.symbol} {self.SIGNS[self.qualifier]} {self.value:g} {prop.unit}"
+
+    def x_value(self):
+        """Where the point goes on its series' x-axis: its temperature for a series against
+        temperature, x for one against anything else, and None for a value against nothing."""
+        if self.series.is_against_nothing():
+            return None
+        return self.temperature_c if self.series.is_against_temperature() else self.x
