@@ -18,6 +18,10 @@ DENSE_POINTS = 200
 # as a set for colour-blind readers; the markers tell series apart without colour.
 COLOURS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
 MARKERS = ["o", "s", "^", "D"]
+# A chart names its lines in a legend only up to this many. The ninth line would have the
+# first one's colour and marker, so a legend could no longer tell them apart: the table
+# under the chart lists the series instead.
+LABELLED_LINES = len(COLOURS)
 # The page's own colours (style.css): white surface, ink for text, hairline for the grid.
 SURFACE, INK, INK_2, HAIRLINE = "#ffffff", "#17202a", "#4a5664", "#d9dfe4"
 
@@ -65,20 +69,33 @@ def axis_title(name, unit):
     return plain(name if unit in ("", "dimensionless") else f"{name} ({unit})")
 
 
-def figure(prop, variable, series_list):
-    """One chart: prop against variable, one line per series, labelled in the legend by
-    its reference. A single value is one marker. Series with no points to draw are left
-    out. Returns the matplotlib Figure, so tests can look at what was drawn."""
+def line_label(series, by_material=False):
+    """A line's name in the legend: its reference, "Chen 2022, Liq. Cryst.", or with
+    by_material its material too, "LCR-00026 DIO – Chen 2022, Liq. Cryst.". A material
+    with no name is its LCR ID alone: strip() drops the space a blank name leaves."""
+    label = series.reference.label
+    if by_material:
+        label = f"{str(series.material).strip()} – {label}"
+    return plain(label)
+
+
+def figure(prop, variable, series_list, by_material=False):
+    """One chart: prop against variable, one line per series, named in the legend by
+    line_label() while there are no more than LABELLED_LINES lines. A single value is one
+    marker. Series with no points to draw are left out. Returns the matplotlib Figure, so
+    tests can look at what was drawn."""
     lines = [(one, plotted_points(one)) for one in series_list]
     lines = [(one, points) for one, points in lines if points]
-    # Taller with each line, so the legend under the plot doesn't squash it.
-    fig = Figure(figsize=(6.4, 3.2 + 0.25 * len(lines)), facecolor=SURFACE, layout="constrained")
+    labelled = len(lines) <= LABELLED_LINES
+    # Taller with each line in the legend, so the legend under the plot doesn't squash it.
+    height = 3.2 + 0.25 * len(lines) if labelled else 3.2
+    fig = Figure(figsize=(6.4, height), facecolor=SURFACE, layout="constrained")
     ax = fig.subplots()
     handles = []  # what each line looks like in the legend, in the order drawn
     for index, (one, points) in enumerate(lines):
         xs = [point.x_value() for point in points]
         values = [point.value for point in points]
-        style = {"color": COLOURS[index % len(COLOURS)], "label": plain(one.reference.label)}
+        style = {"color": COLOURS[index % len(COLOURS)], "label": line_label(one, by_material)}
         if len(points) > DENSE_POINTS:
             handles += ax.plot(xs, values, linewidth=1, **style)
             continue
@@ -94,9 +111,10 @@ def figure(prop, variable, series_list):
     ax.grid(color=HAIRLINE, linewidth=0.75)
     ax.set_axisbelow(True)  # the grid behind the lines
     ax.spines[["top", "right"]].set_visible(False)
-    # Given the handles, the legend keeps the lines' order. Left to itself, it would list
-    # dense lines before the others.
-    fig.legend(handles=handles, loc="outside lower center", frameon=False)
+    if labelled:
+        # Given the handles, the legend keeps the lines' order. Left to itself, it would
+        # list dense lines before the others.
+        fig.legend(handles=handles, loc="outside lower center", frameon=False)
     return fig
 
 
@@ -110,19 +128,26 @@ def to_svg(fig):
     return text[text.index("<svg"):]
 
 
-def description(prop, kind, variable, series_list):
+def description(prop, kind, variable, series_list, by_material=False):
     """What a screen reader says for a chart, which it can't see: "Ps against temperature,
-    measured values: 1 series, from Chen 2022, Liq. Cryst." References are joined with ;
-    because a label can contain a comma."""
+    measured values: 1 series, from Chen 2022, Liq. Cryst.", and with by_material how many
+    materials: "3 series of 3 materials, from ...". References are joined with ; because a
+    label can contain a comma."""
     references = "; ".join(dict.fromkeys(one.reference.label for one in series_list))
     n = len(series_list)
-    return f"{prop.symbol} against {variable.name.lower()}, {kind} values: {n} series, from {references}"
+    of = ""
+    if by_material:
+        n_materials = len({one.material_id for one in series_list})
+        of = f" of {n_materials} material{'s' if n_materials != 1 else ''}"
+    return f"{prop.symbol} against {variable.name.lower()}, {kind} values: {n} series{of}, from {references}"
 
 
-def charts_for(prop, series_list):
+def charts_for(prop, series_list, by_material=False):
     """A property's charts, as the template shows them: [{"kind", "variable", "svg",
-    "description", "n_limits"}], one per kind and variable. A chart whose values are all
-    limits has no svg, only the count of limits left out; one with nothing at all is left out."""
+    "description", "n_series", "labelled", "n_limits"}], one per kind and variable. With
+    by_material, the legend and description name each line's material too, as the property
+    page needs. A chart whose values are all limits has no svg, only the count of limits
+    left out; one with nothing at all is left out."""
     charts = []
     for kind, variable, group in chart_groups(series_list):
         drawn = [one for one in group if plotted_points(one)]
@@ -134,8 +159,10 @@ def charts_for(prop, series_list):
             "variable": variable,
             # mark_safe(): the template includes the SVG as it is. matplotlib escapes the
             # text it writes into it, such as the legend's labels.
-            "svg": mark_safe(to_svg(figure(prop, variable, drawn))) if drawn else "",
-            "description": description(prop, kind, variable, drawn),
+            "svg": mark_safe(to_svg(figure(prop, variable, drawn, by_material))) if drawn else "",
+            "description": description(prop, kind, variable, drawn, by_material),
+            "n_series": len(drawn),
+            "labelled": len(drawn) <= LABELLED_LINES,  # as figure() decides it
             "n_limits": n_limits,
         })
     return charts

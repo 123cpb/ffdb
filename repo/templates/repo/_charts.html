@@ -1,0 +1,15 @@
+{% comment %}
+A property's charts, from charts.charts_for(), one figure each. The material page puts them
+above each property's table, and the property page above its one table. role="img" has a
+screen reader say the description instead of reading out the chart's text.
+{% endcomment %}
+{% for chart in charts %}
+<figure class="chart">
+  {% if chart.svg %}<div role="img" aria-label="{{ chart.description }}">{{ chart.svg }}</div>{% endif %}
+  <figcaption>
+    {{ chart.kind|capfirst }} values against {{ chart.variable.name|lower }}.
+    {% if not chart.labelled %}{{ chart.n_series }} series, too many to label: the table lists them.{% endif %}
+    {% if chart.n_limits %}{{ chart.n_limits }} limit{{ chart.n_limits|pluralize }} not drawn: see the table.{% endif %}
+  </figcaption>
+</figure>
+{% endfor %}

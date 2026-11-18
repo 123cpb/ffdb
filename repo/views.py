@@ -305,9 +305,14 @@ def property_detail(request, code):
         .annotate(lowest_value=Min("points__value"))
         .order_by(*PROPERTY_SORTS[sort])
     )
+    # The charts draw the series in material order, whatever the table's sort, so a line
+    # keeps its colour when the table is sorted by value. sorted() runs the queries once:
+    # the queryset keeps the rows, and the template's table uses them again.
+    in_material_order = sorted(series, key=lambda one: (one.material_id, one.reference.identifier, one.pk))
     context = {
         "nav": "properties",
         "property": prop,
+        "charts": charts.charts_for(prop, in_material_order, by_material=True),
         # The kinds with conditions of their own, in the order the kinds are listed:
         # [("computed", ["method", ...])]. A kind name that isn't one of the kinds is left out.
         "by_kind": [

@@ -1,7 +1,8 @@
 from django.urls import reverse
 
-from repo.charts import DENSE_POINTS, chart_groups, figure, plotted_points, to_svg
+from repo.charts import DENSE_POINTS, LABELLED_LINES, chart_groups, figure, plotted_points, to_svg
 from repo.models import Measurement, Reference, Series, Variable
+from repo.tests.test_property_pages import PS_CONDITIONS, PropertyPagesTestCase
 from repo.tests.test_values import ValuesTestCase, add
 
 
@@ -117,3 +118,78 @@ class MaterialPageChartTests(ValuesTestCase):
 
         self.assertContains(response, "0.198 to 6.08 µC/cm²")
         self.assertNotContains(response, 'class="chart"')
+
+
+class PropertyPageChartTests(PropertyPagesTestCase):
+    """Charts on the property page, from the three Ps curves in test_property_pages: DIO's
+    and RM734's from Chen 2022, and 5CB's from a reference with no details, so its label is
+    its DOI."""
+
+    def page(self, **params):
+        return self.client.get(reverse("repo:property", args=["ps"]), params)
+
+    def ps_figure(self):
+        series = list(Series.objects.filter(property__code="ps").order_by("material_id", "id"))
+        return figure(series[0].property, series[0].variable, series, by_material=True)
+
+    def test_one_chart_per_kind_and_variable(self):
+        response = self.page()
+
+        self.assertContains(response, '<figure class="chart">', count=1)
+        self.assertContains(
+            response,
+            'aria-label="Ps against temperature, measured values: 3 series of 3 materials, '
+            'from Chen 2022, Liq. Cryst.; 10.1039/d2sm01298g"',
+        )
+
+        add(self.dio, self.other, "ps", "frequency").points.create(value=5.0, temperature_c=70, x=1000)
+        add(self.rm734, self.chen, "ps", kind=Series.Kind.COMPUTED).points.create(value=6.0, temperature_c=25)
+        add(self.rm734, self.chen, "ps", "none", kind=Series.Kind.COMPUTED).points.create(value=7.0)
+
+        response = self.page()
+
+        # The value against nothing has no chart: it is only in the table.
+        self.assertEqual(
+            [(chart["kind"], chart["variable"].code) for chart in response.context["charts"]],
+            [("measured", "temperature"), ("measured", "frequency"), ("computed", "temperature")],
+        )
+        self.assertContains(response, '<figure class="chart">', count=3)
+
+    def test_the_legend_names_material_and_reference(self):
+        legend = self.ps_figure().legends[0]
+
+        self.assertEqual(
+            [text.get_text() for text in legend.get_texts()],
+            [
+                f"{self.dio.accession} DIO – Chen 2022, Liq. Cryst.",
+                f"{self.rm734.accession} RM734 – Chen 2022, Liq. Cryst.",
+                f"{self.five_cb.accession} 5CB – 10.1039/d2sm01298g",
+            ],
+        )
+
+    def test_more_lines_than_can_be_told_apart_are_not_labelled(self):
+        def add_line():
+            add(self.dio, self.other, "ps", **PS_CONDITIONS).points.create(value=5.0, temperature_c=70)
+
+        for _ in range(LABELLED_LINES - 3):
+            add_line()
+        self.assertEqual(len(self.ps_figure().legends), 1)
+        self.assertTrue(self.page().context["charts"][0]["labelled"])
+
+        add_line()
+
+        self.assertEqual(self.ps_figure().legends, [])
+        self.assertContains(self.page(), f"{LABELLED_LINES + 1} series, too many to label: the table lists them.")
+
+    def test_the_chart_keeps_material_order_whatever_the_sort(self):
+        # The lowest Ps of all, so sorting by value puts this series first in the table.
+        add(self.five_cb, self.chen, "ps", **PS_CONDITIONS).points.create(value=0.05, temperature_c=100)
+        dio = f"{self.dio.accession} DIO – Chen 2022"
+        five_cb = f"{self.five_cb.accession} 5CB – Chen 2022"
+
+        for sort in ["material", "value"]:
+            response = self.page(sort=sort)
+            svg = response.context["charts"][0]["svg"]
+            self.assertLess(svg.index(dio), svg.index(five_cb), sort)
+
+        self.assertEqual(response.context["series_list"][0].material, self.five_cb)  # the table did re-sort
