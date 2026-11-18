@@ -1,7 +1,9 @@
 from django.contrib import admin, messages
+from django.db import models
+from django.forms import Textarea
 from django.utils.html import format_html
 
-from .models import Material, Phase, PhaseSequence, Reference
+from .models import Material, Phase, PhaseSequence, Property, PropertyGroup, Reference, Variable
 
 
 class PhaseSequenceInline(admin.TabularInline):
@@ -75,3 +77,21 @@ class ReferenceAdmin(admin.ModelAdmin):
     # Also what the autocomplete box searches when a sequence's reference is chosen.
     search_fields = ["identifier", "first_author", "title"]
     inlines = [ReferenceSequenceInline]
+
+
+@admin.register(PropertyGroup)
+class PropertyGroupAdmin(admin.ModelAdmin):
+    list_display = ["name", "code"]
+
+
+@admin.register(Property)
+class PropertyAdmin(admin.ModelAdmin):
+    list_display = ["symbol", "name", "group", "unit", "required_conditions", "sort_order"]
+    list_filter = ["group"]
+    # The JSON fields hold a short list, so a smaller box than the usual 10 rows.
+    formfield_overrides = {models.JSONField: {"widget": Textarea(attrs={"rows": 2, "cols": 80})}}
+
+
+@admin.register(Variable)
+class VariableAdmin(admin.ModelAdmin):
+    list_display = ["name", "code", "unit", "scale", "condition", "sort_order"]

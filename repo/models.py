@@ -377,3 +377,142 @@ class PhaseTransition(models.Model):
 
     def __str__(self):
         return f"{self.upper.code} → {self.lower.code} at {self.temperature_c:g} °C"
+
+
+class PropertyGroup(models.Model):
+    """One physical quantity whose components are separate properties, e.g. the refractive
+    index: Δn, nₑ and nₒ. A group is only for showing them together: each component keeps
+    its own unit and conditions, and a group never combines values. It has no sort order:
+    lists show it where its first member would be (see group_properties())."""
+
+    code = models.SlugField(unique=True)
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+def is_name_list(value):
+    """Whether value is a list of names, e.g. ["temperature", "method"]."""
+    return isinstance(value, list) and all(isinstance(name, str) and name.strip() for name in value)
+
+
+class Property(models.Model):
+    """One property that values can be given for, e.g. Ps, with the unit every value of it
+    is stored in and the conditions every value must state."""
+
+    code = models.SlugField(unique=True, help_text="A short name for addresses and imports, e.g. ps.")
+    name = models.CharField(max_length=100)
+    symbol = models.CharField(max_length=20, help_text="As tables and charts show it, e.g. Ps.")
+    unit = models.CharField(max_length=30, help_text="All values of this property are stored in this unit.")
+    # PROTECT: a group can't be deleted while properties are in it.
+    group = models.ForeignKey(
+        PropertyGroup, on_delete=models.PROTECT, null=True, blank=True, related_name="properties",
+        help_text="The quantity this property is one component of, e.g. Refractive index for nₑ. "
+        "Blank for a property that is its own quantity, such as Ps.",
+    )
+    required_conditions = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='What every value must state, as a list, e.g. ["temperature", "method", "frequency_Hz"].',
+    )
+    required_conditions_by_kind = models.JSONField(
+        "required conditions by kind",
+        default=dict,
+        blank=True,
+        help_text='A different list for one kind of value, e.g. {"computed": ["method", "conformer_protocol"]}: '
+        "a computed d33 names no reference crystal. Kinds not given here use the required conditions above.",
+    )
+    description = models.TextField(blank=True)
+    sort_order = models.PositiveSmallIntegerField(
+        default=100, help_text="Lists show properties from the lowest number up."
+    )
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        verbose_name_plural = "properties"
+
+    def __str__(self):
+        return f"{self.symbol} ({self.unit})"
+
+    def conditions_for(self, kind):
+        """What a value of this kind (measured, extrapolated or computed) must state: the
+        kind's own list if it has one, otherwise the required conditions. It returns a copy,
+        so changing the list doesn't change the property."""
+        by_kind = self.required_conditions_by_kind or {}
+        return list(by_kind.get(kind, self.required_conditions or []))
+
+    def clean(self):
+        """Refuse required conditions in the wrong shape. A JSON field takes any JSON, and
+        conditions_for() would read "temperature" as the letters t, e, m, ... without saying so."""
+        # An emptied box in the admin arrives as None: it means no conditions.
+        if self.required_conditions is None:
+            self.required_conditions = []
+        if self.required_conditions_by_kind is None:
+            self.required_conditions_by_kind = {}
+        errors = {}
+        if not is_name_list(self.required_conditions):
+            errors["required_conditions"] = 'Give a list of names, e.g. ["temperature", "method"].'
+        by_kind = self.required_conditions_by_kind
+        if not (isinstance(by_kind, dict) and all(is_name_list(names) for names in by_kind.values())):
+            errors["required_conditions_by_kind"] = (
+                'Give each kind a list of names, e.g. {"computed": ["method", "conformer_protocol"]}.'
+            )
+        if errors:
+            raise ValidationError(errors)
+
+
+def group_properties(properties):
+    """Properties as lists show them: [(group, [its members]), ...], with group None for a
+    property in no group, one entry each. A group sits where its first member would be, and
+    its members keep their own order. Pass properties with select_related("group"), or
+    each group costs a query."""
+    entries, members = [], {}
+    for prop in sorted(properties, key=lambda p: (p.sort_order, p.name)):
+        if prop.group_id is None:
+            entries.append((None, [prop]))
+        elif prop.group_id in members:
+            # The group's entry holds this same list, so the member shows up there too.
+            members[prop.group_id].append(prop)
+        else:
+            members[prop.group_id] = [prop]
+            entries.append((prop.group, members[prop.group_id]))
+    return entries
+
+
+class Variable(models.Model):
+    """What a series is plotted against: its x-axis, e.g. temperature or frequency. Two
+    will be special when series arrive: against Temperature, each point's temperature is
+    its x; against Nothing, a value has no x at all, e.g. a gas-phase calculation."""
+
+    class Scale(models.TextChoices):
+        LINEAR = "linear", "Linear"
+        LOG = "log", "Logarithmic"
+
+    code = models.SlugField(unique=True)
+    name = models.CharField(max_length=100)
+    unit = models.CharField(
+        max_length=30, blank=True,
+        help_text="Every x value of this variable is stored in this unit. Blank for Nothing.",
+    )
+    scale = models.CharField(
+        max_length=10, choices=Scale.choices, default=Scale.LINEAR, help_text="How its chart axis is drawn."
+    )
+    condition = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text='The required condition a series against this variable states through its points, e.g. '
+        '"frequency_Hz": a frequency sweep gives its frequencies. Blank if there is none.',
+    )
+    sort_order = models.PositiveSmallIntegerField(
+        default=100, help_text="Lists show variables from the lowest number up."
+    )
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.unit})" if self.unit else self.name
