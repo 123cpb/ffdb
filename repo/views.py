@@ -7,7 +7,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
 
 from . import chem
-from .models import DOI_PREFIX, Material, Phase, PhaseTransition, Reference, pk_from_accession
+from .models import DOI_PREFIX, Material, Phase, PhaseTransition, Reference, group_properties, pk_from_accession
 
 
 def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
@@ -129,10 +129,31 @@ def materials(request):
     return render(request, "repo/materials.html", context)
 
 
+def value_sections(series):
+    """Series as the values section lists them: [(group, [(property, [its series]), ...]),
+    ...], with group None for a property in no group. The order is group_properties()'s,
+    so a group's members are listed together under its name. Only properties with series
+    are listed, and each keeps its series in the order given. Pass series with
+    select_related("property__group"), or each property costs a query."""
+    by_property = {}
+    for one in series:
+        # Two rows' property objects are equal when they are the same property (same
+        # primary key), so each property's series end up in one list.
+        by_property.setdefault(one.property, []).append(one)
+    return [
+        (group, [(prop, by_property[prop]) for prop in members])
+        for group, members in group_properties(by_property)
+    ]
+
+
 def material_detail(request, pk):
     """One material's public page. A number with no material gives a 404."""
     material = get_object_or_404(Material, pk=pk)
     formula, mass = chem.formula_and_mass(material.canonical_smiles)
+    # One query for the series with what each row shows of their reference, property and
+    # variable, and one more for the points of all of them (prefetch_related), however
+    # many series there are.
+    series = material.series.select_related("reference", "property__group", "variable").prefetch_related("points")
     context = {
         "nav": "materials",
         "material": material,
@@ -142,6 +163,7 @@ def material_detail(request, pk):
         # one more query for every row the template shows.
         "sequences": material.phase_sequences.select_related("reference"),
         "lc_phases": material.liquid_crystal_phases(),
+        "value_sections": value_sections(series),
     }
     return render(request, "repo/material_detail.html", context)
 
@@ -204,15 +226,23 @@ def references(request):
 
 
 def reference_detail(request, pk):
-    """One reference's public page: its details and link, and the materials it gives
-    sequences for, with those sequences. A number with no reference gives a 404."""
+    """One reference's public page: its details and link, the materials it gives
+    sequences for, with those sequences, and the property values it gives. A number with
+    no reference gives a 404."""
     reference = get_object_or_404(references_with_counts(), pk=pk)
+    # As on the material page, with each row's material in place of its reference.
+    series = (
+        reference.series.select_related("material", "property__group", "variable")
+        .prefetch_related("points")
+        .order_by("material_id", "id")
+    )
     context = {
         "nav": "references",
         "reference": reference,
         # In LCR ID order, as on the Materials page. select_related() fetches each row's
         # material in the same query.
         "sequences": reference.phase_sequences.select_related("material").order_by("material_id", "id"),
+        "value_sections": value_sections(series),
     }
     return render(request, "repo/reference_detail.html", context)
 

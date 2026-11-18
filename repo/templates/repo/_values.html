@@ -1,0 +1,52 @@
+{% load repo_tags %}
+{% comment %}
+The property values of a material or a reference: a table per property, a group's members
+under its name, and one row per series, so a curve is one row. value_sections comes from
+views.value_sections(). The reference page passes material_column=True, so each row names
+its material instead of its reference. empty is what to say when there are no values.
+{% endcomment %}
+<section class="values">
+  <h2>Property values</h2>
+  {% for group, members in value_sections %}
+  {% if group %}<h3>{{ group.name }}</h3>{% endif %}
+  {% for prop, series_list in members %}
+  {% if group %}<h4>{{ prop.name }}, {{ prop.symbol }}</h4>{% else %}<h3>{{ prop.name }}, {{ prop.symbol }}</h3>{% endif %}
+  <div class="table-scroll">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th scope="col">Value</th><th scope="col">At</th><th scope="col">Conditions</th>
+          <th scope="col">Kind</th><th scope="col">Method</th>
+          <th scope="col">{% if material_column %}Material{% else %}Reference{% endif %}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for series in series_list %}
+        <tr>
+          <td>
+            {{ series|value_text }}
+            {% with n=series.points.all|length %}{% if n != 1 %}<span class="cell-note">{{ n }} points</span>{% endif %}{% endwith %}
+          </td>
+          <td>{{ series|at_text }}</td>
+          <td>{{ series.conditions|conditions_text|default:"–" }}</td>
+          <td>{{ series.kind|capfirst }}</td>
+          <td>{{ series.method|default:"–" }}</td>
+          <td class="data-table__reference">
+            {% if material_column %}
+            <a href="{% url 'repo:material' series.material.pk %}">{{ series.material.accession }}</a>
+            {% if series.material.name %}<span class="result__name">{{ series.material.name }}</span>{% endif %}
+            {% else %}
+            <a href="{% url 'repo:reference' series.reference.pk %}">{{ series.reference.label }}</a>
+            {% endif %}
+            {% with where=series|where_text %}{% if where %}<span class="cell-note">{{ where }}</span>{% endif %}{% endwith %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endfor %}
+  {% empty %}
+  <p>{{ empty }}</p>
+  {% endfor %}
+</section>

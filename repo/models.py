@@ -522,12 +522,14 @@ class Variable(models.Model):
         return f"{self.name} ({self.unit})" if self.unit else self.name
 
 
-# How messages name the conditions given in a series' Conditions box. A key not listed here
-# is shown as it is. Temperature and method have their own boxes, so they need no name.
+# How messages and pages name the conditions given in a series' Conditions box. A key not
+# listed here is shown as it is. Temperature and method have their own boxes, so they need
+# no name.
 CONDITION_NAMES = {
     "frequency_Hz": "frequency",
     "cell_gap_um": "cell gap",
     "wavelength_nm": "wavelength",
+    "field_V_um": "field",
     "reference_crystal": "reference crystal",
     "electrode_coating": "electrode coating",
     "conformer_protocol": "conformer protocol",
@@ -536,6 +538,16 @@ CONDITION_NAMES = {
     "order_parameter_P1": "⟨P1⟩ assumed",
     "order_parameter_P3": "⟨P3⟩ assumed",
     "density_kg_m3": "density assumed",
+}
+
+# The unit of each condition that has one, as pages write it after the value. The key's
+# ending says it too: frequency_Hz is in Hz.
+CONDITION_UNITS = {
+    "frequency_Hz": "Hz",
+    "cell_gap_um": "µm",
+    "wavelength_nm": "nm",
+    "field_V_um": "V/µm",
+    "density_kg_m3": "kg/m³",
 }
 
 

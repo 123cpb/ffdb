@@ -45,6 +45,8 @@
   {% endif %}
 </section>
 
+{% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
+
 {% if user.is_staff %}
 <p><a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a></p>
 {% endif %}

@@ -82,12 +82,16 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .facts dd { margin: 2px 0 12px; overflow-wrap: anywhere; }
 .facts code { word-break: break-all; color: var(--ink-2); }
 
-.phases h2 { font: 600 22px/1.2 var(--serif); margin: 28px 0 8px; }
+.phases h2, .values h2 { font: 600 22px/1.2 var(--serif); margin: 28px 0 8px; }
+.values h3 { font: 600 18px/1.3 var(--serif); margin: 22px 0 8px; }
+.values h4 { font-size: 15px; margin: 14px 0 6px; }
+/* A values table has six columns: on a phone it scrolls sideways instead of widening the page. */
+.table-scroll { max-width: 900px; overflow-x: auto; }
 /* The tables of sequences and references. */
 .data-table { width: 100%; max-width: 900px; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); }
 .data-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .data-table th, .data-table td { padding: 8px 12px; border-top: 1px solid var(--hairline); vertical-align: top; }
-.reported { display: block; font-size: 13px; color: var(--muted); }
+.reported, .cell-note { display: block; font-size: 13px; color: var(--muted); }
 /* A DOI has no spaces, so without this a long one would push the table wider than a phone. */
 .data-table__reference { overflow-wrap: anywhere; }
 
