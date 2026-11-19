@@ -33,19 +33,27 @@
 
 <section class="phases">
   <h2>Phase sequences</h2>
-  {% if sequences %}
+  {% if sequence_rows %}
   <p>Liquid-crystal phases: {% for phase in lc_phases %}{{ phase.code }}{% if not forloop.last %}, {% endif %}{% empty %}none reported{% endfor %}</p>
+  {# The ribbons (views.sequence_ribbons()) share the axis in their column's heading. On a phone the table scrolls sideways. #}
+  <div class="table-scroll">
   <table class="data-table">
     <thead>
-      <tr><th scope="col">Sequence (°C)</th><th scope="col">Direction</th><th scope="col">Reference</th></tr>
+      <tr>
+        <th scope="col">Sequence (°C)</th>
+        <th scope="col">Phases against temperature (°C){{ axis }}</th>
+        <th scope="col">Direction</th>
+        <th scope="col">Reference</th>
+      </tr>
     </thead>
     <tbody>
-      {% for sequence in sequences %}
+      {% for sequence, ribbon in sequence_rows %}
       <tr>
         <td>
           {{ sequence.standard_sequence }}
           {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
         </td>
+        <td>{{ ribbon }}</td>
         <td>{{ sequence.run_text }}</td>
         <td class="data-table__reference">
           <a href="{% url 'repo:reference' sequence.reference.pk %}">{{ sequence.reference.label }}</a>
@@ -54,6 +62,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% else %}
   <p>No phase sequences yet.</p>
   {% endif %}

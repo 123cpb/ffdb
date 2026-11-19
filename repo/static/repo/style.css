@@ -153,6 +153,13 @@ ul.form-error { padding-left: 32px; }
 .data-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }
 .data-table th, .data-table td { padding: 8px 12px; border-top: 1px solid var(--hairline); vertical-align: top; }
 .reported, .cell-note { display: block; font-size: 13px; color: var(--muted); }
+/* Phase ribbons and their axis (ribbons.py), drawn at the size they show, so their text keeps its size. */
+svg.ribbon, svg.ribbon-axis { display: block; }
+.ribbon-axis { margin-top: 4px; }
+.ribbon-label { font: 600 11.5px var(--sans); pointer-events: none; }
+.ribbon-temp, .axis-text { font: 400 11px var(--sans); fill: var(--muted); }
+.axis-line { stroke: #c3c9cf; stroke-width: 1; }
+.not-examined { fill: none; stroke: #c3c9cf; stroke-width: 1; stroke-dasharray: 3 3; }
 /* A DOI has no spaces, so without this a long one would push the table wider than a phone. */
 .data-table__reference { overflow-wrap: anywhere; }
 

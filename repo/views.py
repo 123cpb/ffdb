@@ -12,7 +12,7 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 
-from . import charts, chem, crossref, exports
+from . import charts, chem, crossref, exports, ribbons
 from .forms import (
     CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, MixtureForm, ValueChoiceForm, ValueForm,
 )
@@ -224,6 +224,24 @@ def value_sections(series, with_charts=False):
     ]
 
 
+def sequence_ribbons(sequences):
+    """Each sequence with its ribbon, all on one temperature axis, for the material page's
+    table: ([(sequence, ribbon), ...], axis). A screen reader reads each ribbon as its
+    sequence, how it was observed and its reference."""
+    data = [ribbons.ribbon_data(sequence) for sequence in sequences]
+    lo, hi = ribbons.temperature_range(data)
+    rows = [
+        (
+            sequence,
+            ribbons.ribbon_svg(
+                one, lo, hi, label=f"{sequence.standard_sequence} (°C), {sequence.run_text()}, {sequence.reference.label}"
+            ),
+        )
+        for sequence, one in zip(sequences, data)
+    ]
+    return rows, ribbons.axis_svg(lo, hi)
+
+
 def material_detail(request, pk):
     """One material's public page. A compound's page shows its structure and the mixtures it
     is in; a mixture's, its composition. A merged ID leads to the material it went into, a
@@ -245,14 +263,20 @@ def material_detail(request, pk):
     # variable, and one more for the points of all of them (prefetch_related), however
     # many series there are.
     series = material.series.select_related("reference", "property__group", "variable").prefetch_related("points")
+    # select_related() fetches each sequence's reference in the same query, instead of one more
+    # query for every row the template shows. prefetch_related() fetches the transitions of
+    # all of them in one more query, and the phases either side in two more, for the ribbons.
+    sequences = material.phase_sequences.select_related("reference").prefetch_related(
+        "transitions__upper", "transitions__lower"
+    )
+    sequence_rows, axis = sequence_ribbons(sequences)
     context = {
         "nav": "materials",
         "material": material,
         "formula": formula,
         "mass": mass,
-        # select_related() fetches each sequence's reference in the same query, instead of
-        # one more query for every row the template shows.
-        "sequences": material.phase_sequences.select_related("reference"),
+        "sequence_rows": sequence_rows,
+        "axis": axis,
         "lc_phases": material.liquid_crystal_phases(),
         "value_sections": value_sections(series, with_charts=True),
         # A mixture's components in FFDB, largest first (MixtureComponent's ordering), each
