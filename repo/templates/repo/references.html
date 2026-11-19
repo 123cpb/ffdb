@@ -16,6 +16,8 @@
         {% for value, label in kinds %}<option value="{{ value }}"{% if value == kind %} selected{% endif %}>{{ label }}</option>{% endfor %}
       </select>
     </div>
+    {# As on the Materials page: a new search keeps the order chosen. #}
+    {% if sort != "newest" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
     <button type="submit">Search</button>
     {% if query or kind %}<a href="{% url 'repo:references' %}">Show all</a>{% endif %}
   </div>
@@ -26,6 +28,11 @@
 {% endwith %}
 
 {% if page.object_list %}
+{# The current order in bold, and the other a link that keeps the search. #}
+<p class="sort-choice">Order:
+  {% if sort == "newest" %}<strong>recently added</strong>{% else %}<a href="{% url 'repo:references' %}{% if search %}?{{ search }}{% endif %}">recently added</a>{% endif %} ·
+  {% if sort == "year" %}<strong>year published</strong>{% else %}<a href="?{% if search %}{{ search }}&amp;{% endif %}sort=year">year published</a>{% endif %}
+</p>
 <table class="data-table">
   <thead>
     <tr><th scope="col">Reference</th><th scope="col">Kind</th><th scope="col">Materials</th></tr>
@@ -43,9 +50,9 @@
 
 {% if page.has_other_pages %}
 <nav class="pagination" aria-label="Pages">
-  {% if page.has_previous %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  {% if page.has_previous %}<a href="?{% if paging %}{{ paging }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
   <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
-  {% if page.has_next %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
+  {% if page.has_next %}<a href="?{% if paging %}{{ paging }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
 </nav>
 {% endif %}
 {% elif query or kind %}

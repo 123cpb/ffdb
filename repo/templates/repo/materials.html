@@ -29,6 +29,8 @@
         <input name="tmax" type="number" step="any" value="{{ tmax }}" placeholder="to" aria-label="To (°C)">
       </div>
     </fieldset>
+    {# A new search keeps the order chosen. The default has no ?sort=, so needs no box. #}
+    {% if sort != "newest" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
     <button type="submit">Search</button>
     {% if search %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
   </div>
@@ -44,7 +46,13 @@
 {% endwith %}
 
 {% if page.object_list %}
+{# The current order in bold, and the other a link that keeps the search. #}
+<p class="sort-choice">Order:
+  {% if sort == "newest" %}<strong>recently added</strong>{% else %}<a href="{% url 'repo:materials' %}{% if search %}?{{ search }}{% endif %}">recently added</a>{% endif %} ·
+  {% if sort == "id" %}<strong>LCR ID</strong>{% else %}<a href="?{% if search %}{{ search }}&amp;{% endif %}sort=id">LCR ID</a>{% endif %}
+</p>
 {# Each download keeps the search, so it holds every material found, not just this page's. #}
+{# It doesn't keep the order: a file's order is fixed. #}
 <p class="downloads">Download all {{ page.paginator.count }} as CSV:
   <a href="{% url 'repo:materials_csv' %}{% if search %}?{{ search }}{% endif %}">materials</a>,
   <a href="{% url 'repo:sequences_csv' %}{% if search %}?{{ search }}{% endif %}">phase sequences</a>,
@@ -72,9 +80,9 @@
 
 {% if page.has_other_pages %}
 <nav class="pagination" aria-label="Pages">
-  {% if page.has_previous %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
+  {% if page.has_previous %}<a href="?{% if paging %}{{ paging }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>{% endif %}
   <span>Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
-  {% if page.has_next %}<a href="?{% if search %}{{ search }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
+  {% if page.has_next %}<a href="?{% if paging %}{{ paging }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>{% endif %}
 </nav>
 {% endif %}
 {% elif search %}

@@ -332,5 +332,5 @@ class MixtureListAndSearchTests(MixtureTestCase):
     def test_a_substructure_search_finds_compounds_only_and_says_so(self):
         response = self.client.get(reverse("repo:materials"), {"sub": "c1ccccc1"})
 
-        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.cb5])
+        self.assertEqual(list(response.context["page"].object_list), [self.cb5, self.rm734])
         self.assertContains(response, "compounds only, because mixtures have no structure")

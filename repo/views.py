@@ -142,16 +142,49 @@ def search_results(request):
         return terms, Material.objects.none(), str(exc)
 
 
+# How ?sort= orders the Materials and References pages. The first, newest added first, is
+# the default, so whoever opens either list sees what is new. A primary key counts up as
+# rows go into the database, and the imports add their rows one at a time in the file's
+# order, so the highest is the newest: imported or entered, it needs no date. A material's
+# primary key is its LCR ID, so newest first is LCR ID backwards. A restored material is
+# back under its old number, so it goes back to its old place.
+MATERIAL_SORTS = {
+    "newest": ["-pk"],
+    "id": ["pk"],
+}
+REFERENCE_SORTS = {
+    "newest": ["-pk"],
+    "year": [F("year").desc(nulls_last=True), "first_author", "identifier"],
+}
+
+
+def sort_param(request, sorts):
+    """?sort= if it is one of sorts, otherwise "newest": a missing or unknown one is ignored."""
+    sort = request.GET.get("sort", "")
+    return sort if sort in sorts else "newest"
+
+
+def paging_query(kept, sort):
+    """What the page links keep, as it goes in an address: the search (kept, a dict of the
+    terms that aren't blank) and the order, unless it is the default."""
+    return urlencode({**kept, "sort": sort} if sort != "newest" else kept)
+
+
 def materials(request):
     """The Materials page, and for now the home page: every material, or those that the
-    search finds (search_results()), 25 to a page. get_page() turns a missing, bad or
-    too-high ?page= into a real page. A substructure RDKit can't read lists nothing and
-    says why."""
+    search finds (search_results()), 25 to a page, in the order ?sort= chooses
+    (MATERIAL_SORTS). get_page() turns a missing, bad or too-high ?page= into a real page.
+    A substructure RDKit can't read lists nothing and says why."""
     terms, found, error = search_results(request)
-    page = Paginator(found, 25).get_page(request.GET.get("page"))
-    # The search as it goes in an address, so the page links and the downloads keep it.
+    sort = sort_param(request, MATERIAL_SORTS)
+    # order_by() replaces the LCR ID order that find_materials() gives. The downloads keep that
+    # order, because they use search_results() themselves, so a file is the same whichever
+    # order the page shows.
+    page = Paginator(found.order_by(*MATERIAL_SORTS[sort]), 25).get_page(request.GET.get("page"))
+    kept = {key: value for key, value in terms.items() if value}
+    # The search as it goes in an address, so the order links and the downloads keep it.
     # urlencode() turns characters such as # into %23: a bare # would end the address there.
-    search = urlencode({key: value for key, value in terms.items() if value})
+    search = urlencode(kept)
     context = {
         "nav": "materials",  # which link base.html marks as the current section
         "query": terms["q"],
@@ -164,6 +197,8 @@ def materials(request):
         "error": error,
         "page": page,
         "search": search,
+        "sort": sort,
+        "paging": paging_query(kept, sort),
     }
     return render(request, "repo/materials.html", context)
 
@@ -238,7 +273,8 @@ def references_with_counts():
 
 
 def find_references(text, kind=""):
-    """The references a search finds, newest year first. A blank search finds them all.
+    """The references a search finds, in no set order: the page orders them
+    (REFERENCE_SORTS). A blank search finds them all.
 
     The label is worked out in Python, so the database can't search it. Instead, each word
     of the text must be part of the identifier (a DOI or patent number), first author,
@@ -246,9 +282,7 @@ def find_references(text, kind=""):
     labelled "Mandle 2017, Chem. Eur. J.". A pasted https://doi.org/ or doi: is removed
     first. kind, if given, is one of Reference.Kind and keeps only that kind.
     """
-    references = references_with_counts().order_by(
-        F("year").desc(nulls_last=True), "first_author", "identifier"
-    )
+    references = references_with_counts()
     # Commas count as spaces, so a whole copied label works.
     for word in DOI_PREFIX.sub("", text.strip()).replace(",", " ").split():
         found = (
@@ -268,13 +302,16 @@ def find_references(text, kind=""):
 
 def references(request):
     """The References page: every reference, or those that ?q= and ?kind= find, 25 to a
-    page. A ?kind= that isn't one of the kinds is ignored."""
+    page, in the order ?sort= chooses (REFERENCE_SORTS). A ?kind= that isn't one of the
+    kinds is ignored."""
     query = request.GET.get("q", "").strip()
     kind = request.GET.get("kind", "")
     if kind not in Reference.Kind.values:
         kind = ""
-    page = Paginator(find_references(query, kind), 25).get_page(request.GET.get("page"))
-    search = urlencode({key: value for key, value in [("q", query), ("kind", kind)] if value})
+    sort = sort_param(request, REFERENCE_SORTS)
+    found = find_references(query, kind).order_by(*REFERENCE_SORTS[sort])
+    page = Paginator(found, 25).get_page(request.GET.get("page"))
+    kept = {key: value for key, value in [("q", query), ("kind", kind)] if value}
     context = {
         "nav": "references",
         "query": query,
@@ -282,7 +319,9 @@ def references(request):
         "kind_label": Reference.Kind(kind).label if kind else "",
         "kinds": Reference.Kind.choices,
         "page": page,
-        "search": search,
+        "search": urlencode(kept),
+        "sort": sort,
+        "paging": paging_query(kept, sort),
     }
     return render(request, "repo/references.html", context)
 

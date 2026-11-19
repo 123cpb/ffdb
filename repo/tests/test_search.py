@@ -31,8 +31,8 @@ class SearchTests(TestCase):
         response = self.client.get(reverse("repo:materials"), {"q": query})
         return list(response.context["page"].object_list)
 
-    def test_empty_search_lists_everything_in_id_order(self):
-        self.assertEqual(self.found(""), [self.rm734, self.five_cb])
+    def test_empty_search_lists_everything_newest_first(self):
+        self.assertEqual(self.found(""), [self.five_cb, self.rm734])
 
     def test_name_search_ignores_case_and_finds_part_of_a_name(self):
         for query in ["RM734", "rm734", "rm7"]:
@@ -63,7 +63,7 @@ class SearchTests(TestCase):
         response = self.client.get(reverse("repo:home"))
 
         self.assertTemplateUsed(response, "repo/materials.html")
-        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.five_cb])
+        self.assertEqual(list(response.context["page"].object_list), [self.five_cb, self.rm734])
 
     def test_row_shows_thumbnail_id_and_name_linking_to_the_page(self):
         response = self.client.get(reverse("repo:materials"))
@@ -88,7 +88,7 @@ class SubstructureSearchTests(TestCase):
         return list(self.search(**params).context["page"].object_list)
 
     def test_cyano_query_finds_the_cyano_compounds_and_not_the_others(self):
-        self.assertEqual(self.found(sub="C#N"), [self.five_cb, self.six_cb])
+        self.assertEqual(self.found(sub="C#N"), [self.six_cb, self.five_cb])
 
     def test_smarts_query(self):
         # Read as SMILES, this nitro fragment would match nothing (chem.substructure_pattern).
@@ -140,7 +140,7 @@ class PhaseSearchTests(TestCase):
 
     def test_phase_lists_only_the_materials_with_it_in_a_sequence(self):
         # RM734 has NF in two sequences but is listed once.
-        self.assertEqual(self.found(phase="NF"), [self.rm734, self.six_cb])
+        self.assertEqual(self.found(phase="NF"), [self.six_cb, self.rm734])
 
     def test_substructure_narrows_the_phase_search(self):
         self.assertEqual(self.found(phase="NF", sub="C#N"), [self.six_cb])
@@ -152,7 +152,7 @@ class PhaseSearchTests(TestCase):
     def test_a_phase_not_in_the_vocabulary_is_ignored(self):
         response = self.search(phase="XYZ")
 
-        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.five_cb, self.six_cb])
+        self.assertEqual(list(response.context["page"].object_list), [self.six_cb, self.five_cb, self.rm734])
         self.assertEqual(response.context["phase"], "")
 
     def test_heading_and_box_show_the_phase(self):
@@ -187,10 +187,10 @@ class TemperatureSearchTests(TestCase):
         self.assertEqual(self.found(phase="NF", tmin="100", tmax="150"), [self.rm734])
 
     def test_a_blank_range_behaves_as_the_phase_search_alone(self):
-        self.assertEqual(self.found(phase="NF", tmin="", tmax=""), [self.rm734, self.five_cb])
+        self.assertEqual(self.found(phase="NF", tmin="", tmax=""), [self.five_cb, self.rm734])
 
     def test_with_no_phase_chosen_any_phase_forming_in_the_range_counts(self):
-        self.assertEqual(self.found(tmin="100", tmax="150"), [self.rm734, self.five_cb])
+        self.assertEqual(self.found(tmin="100", tmax="150"), [self.five_cb, self.rm734])
 
     def test_either_end_can_be_left_blank(self):
         self.assertEqual(self.found(phase="NF", tmin="100"), [self.rm734])
@@ -199,7 +199,7 @@ class TemperatureSearchTests(TestCase):
     def test_a_temperature_that_is_not_a_number_is_ignored(self):
         response = self.search(phase="NF", tmin="hot", tmax="nan")
 
-        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.five_cb])
+        self.assertEqual(list(response.context["page"].object_list), [self.five_cb, self.rm734])
         self.assertEqual((response.context["tmin"], response.context["tmax"]), ("", ""))
 
     def test_heading_boxes_and_page_links_keep_the_range(self):
@@ -221,13 +221,13 @@ class PagingTests(TestCase):
         # 26 straight-chain alkanes, methane to hexacosane: 26 different structures.
         cls.materials = [Material.objects.create(name=f"C{n}", smiles="C" * n) for n in range(1, 27)]
 
-    def test_25_to_a_page(self):
+    def test_25_to_a_page_newest_first(self):
         first = self.client.get(reverse("repo:materials"))
         second = self.client.get(reverse("repo:materials"), {"page": 2})
 
-        self.assertEqual(list(first.context["page"].object_list), self.materials[:25])
+        self.assertEqual(list(first.context["page"].object_list), self.materials[:0:-1])  # hexacosane down to ethane
         self.assertContains(first, "Page 1 of 2")
-        self.assertEqual(list(second.context["page"].object_list), self.materials[25:])
+        self.assertEqual(list(second.context["page"].object_list), self.materials[:1])  # methane
 
     def test_page_links_keep_the_search(self):
         response = self.client.get(reverse("repo:materials"), {"q": "C"})

@@ -90,8 +90,8 @@ class ReferenceSearchTests(ReferenceTestCase):
 
 
 class ReferenceListTests(ReferenceTestCase):
-    def test_newest_year_first_and_no_year_last(self):
-        self.assertEqual(self.found(), [self.preprint, self.article, self.patent, self.thesis])
+    def test_by_year_newest_year_first_and_no_year_last(self):
+        self.assertEqual(self.found(sort="year"), [self.preprint, self.article, self.patent, self.thesis])
 
     def test_row_shows_label_linking_to_its_page_kind_and_material_count(self):
         response = self.search()

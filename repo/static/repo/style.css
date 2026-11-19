@@ -115,6 +115,8 @@ ul.form-error { padding-left: 32px; }
 .result__name { color: var(--ink-2); }
 
 .downloads { margin: 0 0 12px; font-size: 14px; }
+/* The Materials and References pages: which order the list is in. */
+.sort-choice { margin: 0 0 8px; font-size: 14px; }
 
 .pagination { display: flex; gap: 14px; justify-content: center; margin-top: 18px; color: var(--ink-2); }
 
