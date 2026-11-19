@@ -32,7 +32,7 @@
     <button type="submit">Search</button>
     {% if search %}<a href="{% url 'repo:materials' %}">Show all</a>{% endif %}
   </div>
-  <p id="sub-hint" class="search__hint">Substructure: <code>C#N</code> finds cyano groups. Write aromatic rings in lower case, as in <code>c1ccccc1</code>.</p>
+  <p id="sub-hint" class="search__hint">Substructure: compounds only, because mixtures have no structure. <code>C#N</code> finds cyano groups. Write aromatic rings in lower case, as in <code>c1ccccc1</code>.</p>
   <p id="range-hint" class="search__hint">Phase forms: on cooling, from the phase above. A heating run counts too, at the same transition seen on heating. With no phase chosen, any phase. Either end can be left blank.</p>
 </form>
 
@@ -53,10 +53,15 @@
 <ol class="result-list">
   {% for material in page %}
   <li class="result">
+    {% if material.kind == "mixture" %}
+    {# No drawing for a mixture. The box isn't a link and isn't hidden, so screen readers say it is a mixture. #}
+    <span class="result__mixture">Mixture</span>
+    {% else %}
     {# The drawing repeats the ID link, so screen readers and the Tab key skip it. #}
     <a class="result__thumb" href="{% url 'repo:material' material.pk %}" tabindex="-1" aria-hidden="true">
       <img src="{{ material.thumbnail_url }}" alt="" width="200" height="128" loading="lazy">
     </a>
+    {% endif %}
     <div>
       <a class="result__id" href="{% url 'repo:material' material.pk %}">{{ material.accession }}</a>
       {% if material.name %}<span class="result__name">{{ material.name }}</span>{% endif %}

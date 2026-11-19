@@ -7,7 +7,7 @@ from django.db.models import ProtectedError
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
-from repo.models import Material, MixtureComponent
+from repo.models import Material, MixtureComponent, PhaseSequence, Reference
 from repo.tests.test_sequences import RM734
 
 CB5 = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"  # 5CB
@@ -212,3 +212,101 @@ class AdminTests(MixtureTestCase):
         response = self.client.get(reverse("admin:repo_material_change", args=[self.f7.pk]))
 
         self.assertContains(response, "None: a mixture has no structure.")
+
+
+class MixturePageTests(MixtureTestCase):
+    """A mixture's page shows its composition, and a compound's page the mixtures it is in."""
+
+    def page(self, material):
+        return self.client.get(reverse("repo:material", args=[material.pk]))
+
+    def link(self, material):
+        """The link to material's page, as the pages write it: its LCR ID."""
+        return f'<a href="{reverse("repo:material", args=[material.pk])}">{material.accession}</a>'
+
+    def test_a_mixtures_page_lists_its_components_largest_first_each_linking_to_its_page(self):
+        response = self.page(self.f7)
+
+        self.assertContains(response, "<dd>Mixture</dd>", html=True)
+        self.assertContains(response, f"{self.link(self.rm734)} RM734, 70 mol%")
+        self.assertContains(response, f"{self.link(self.cb5)} 5CB, 30 mol%")
+        text = response.content.decode()
+        self.assertLess(text.index("70 mol%"), text.index("30 mol%"))
+
+    def test_a_mixtures_page_has_no_drawing_formula_molar_mass_or_identifiers(self):
+        response = self.page(self.f7)
+
+        for absent in ("structure.svg", "Formula", "g/mol", "SMILES", "InChIKey"):
+            self.assertNotContains(response, absent)
+
+    def test_other_components_come_after_the_listed_ones_and_partly_known_says_so(self):
+        f8 = Material.objects.create(
+            kind=MIXTURE, name="F8", composition_status=PARTLY_KNOWN, other_components="A nematic host"
+        )
+        MixtureComponent.objects.create(mixture=f8, component=self.rm734, fraction=10, unit=WT)
+
+        response = self.page(f8)
+
+        self.assertContains(response, "Other components: A nematic host")
+        self.assertContains(response, "Partly known: only what is listed here is known.")
+        text = response.content.decode()
+        self.assertLess(text.index("10 wt%"), text.index("Other components"))
+
+    def test_a_mixture_whose_composition_is_not_disclosed_says_so(self):
+        m5 = Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED)
+
+        self.assertContains(self.page(m5), "<dd>Not disclosed</dd>", html=True)
+
+    def test_a_compounds_page_lists_the_mixtures_it_is_in_with_its_fraction(self):
+        response = self.page(self.cb5)
+
+        self.assertContains(response, "<h2>In mixtures</h2>", html=True)
+        self.assertContains(response, f"{self.link(self.f7)} F7: 30 mol%")
+
+    def test_a_compound_in_no_mixture_has_no_in_mixtures_section(self):
+        lone = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
+
+        self.assertNotContains(self.page(lone), "In mixtures")
+
+
+class MixtureListAndSearchTests(MixtureTestCase):
+    """Mixtures on the Materials page: listed without a drawing, and found by every search
+    except a substructure."""
+
+    def found(self, **params):
+        """The materials the Materials page lists, read from its context, as in test_search."""
+        return list(self.client.get(reverse("repo:materials"), params).context["page"].object_list)
+
+    def test_the_list_shows_a_mixture_without_a_drawing(self):
+        response = self.client.get(reverse("repo:materials"))
+
+        self.assertContains(response, '<span class="result__mixture">Mixture</span>', count=1, html=True)
+        self.assertContains(response, reverse("repo:structure", args=[self.rm734.pk]))
+        self.assertNotContains(response, reverse("repo:structure", args=[self.f7.pk]))
+
+    def test_a_mixtures_drawing_address_gives_a_404(self):
+        response = self.client.get(reverse("repo:structure", args=[self.f7.pk]))
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_searching_by_name_or_alias_finds_a_mixture(self):
+        Material.objects.filter(pk=self.f7.pk).update(aliases="FMix-7")
+
+        self.assertEqual(self.found(q="F7"), [self.f7])
+        self.assertEqual(self.found(q="fmix"), [self.f7])
+
+    def test_phase_and_temperature_searches_find_a_mixture_with_a_sequence(self):
+        reference = Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier="10.1000/f7")
+        PhaseSequence.objects.create(
+            material=self.f7, reference=reference, direction=PhaseSequence.Direction.COOLING,
+            sequence="Iso 120 N 95 NF 40 Cr",
+        )
+
+        self.assertEqual(self.found(phase="NF"), [self.f7])
+        self.assertEqual(self.found(phase="NF", tmin="90", tmax="100"), [self.f7])  # NF forms at 95
+
+    def test_a_substructure_search_finds_compounds_only_and_says_so(self):
+        response = self.client.get(reverse("repo:materials"), {"sub": "c1ccccc1"})
+
+        self.assertEqual(list(response.context["page"].object_list), [self.rm734, self.cb5])
+        self.assertContains(response, "compounds only, because mixtures have no structure")

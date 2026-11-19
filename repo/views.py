@@ -34,7 +34,8 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
     A material is found when the text is part of its name or an alias (ignoring case),
     is its InChIKey (ignoring case), or is its LCR ID; when at least one of its sequences
     has the phase (a code, e.g. NF); and when its structure contains the substructure
-    (SMILES or SMARTS). Raises chem.StructureError when RDKit can't read the substructure.
+    (SMILES or SMARTS). A substructure finds compounds only, because a mixture has no
+    structure. Raises chem.StructureError when RDKit can't read the substructure.
 
     With t_min or t_max (°C; either can be None), the phase must form on cooling in that
     range, ends included: some sequence has a transition into it there. With no phase,
@@ -70,8 +71,10 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
         materials = materials.filter(phase_sequences__phases__code=phase).distinct()
     if substructure.strip():
         pattern = chem.substructure_pattern(substructure)
-        # The database can't compare structures, so RDKit checks each material found so far.
-        rows = materials.values_list("pk", "canonical_smiles")
+        # The database can't compare structures, so RDKit checks each compound found so far.
+        # Mixtures are left out here, rather than left to RDKit: it reads a mixture's blank
+        # SMILES as a molecule with no atoms, which happens to match nothing.
+        rows = materials.filter(kind=Material.Kind.COMPOUND).values_list("pk", "canonical_smiles")
         matches = [pk for pk, smiles in rows if chem.has_substructure(smiles, pattern)]
         materials = materials.filter(pk__in=matches)
     return materials
@@ -184,9 +187,12 @@ def value_sections(series, with_charts=False):
 
 
 def material_detail(request, pk):
-    """One material's public page. A number with no material gives a 404."""
+    """One material's public page. A number with no material gives a 404. A compound's
+    page shows its structure and the mixtures it is in; a mixture's, its composition."""
     material = get_object_or_404(Material, pk=pk)
-    formula, mass = chem.formula_and_mass(material.canonical_smiles)
+    formula, mass = "", None  # a mixture has no structure to work them out from
+    if material.kind == Material.Kind.COMPOUND:
+        formula, mass = chem.formula_and_mass(material.canonical_smiles)
     # One query for the series with what each row shows of their reference, property and
     # variable, and one more for the points of all of them (prefetch_related), however
     # many series there are.
@@ -201,6 +207,12 @@ def material_detail(request, pk):
         "sequences": material.phase_sequences.select_related("reference"),
         "lc_phases": material.liquid_crystal_phases(),
         "value_sections": value_sections(series, with_charts=True),
+        # A mixture's components in FFDB, largest first (MixtureComponent's ordering), each
+        # with its compound fetched in the same query. None for a compound.
+        "components": material.components.select_related("component"),
+        # The mixtures a compound is in, in LCR ID order, each row with its fraction. None
+        # for a mixture: a component must be a compound.
+        "in_mixtures": material.in_mixtures.select_related("mixture").order_by("mixture_id"),
     }
     return render(request, "repo/material_detail.html", context)
 
@@ -382,8 +394,9 @@ def property_values_csv(request, code):
 
 def structure(request, pk):
     """A material's structure drawing, as an SVG image of its own: 360 by 220 pixels,
-    or 200 by 128 with ?size=thumb (Material.thumbnail_url)."""
-    material = get_object_or_404(Material, pk=pk)
+    or 200 by 128 with ?size=thumb (Material.thumbnail_url). A mixture has no structure, so
+    its address gives a 404, as a number with no material does."""
+    material = get_object_or_404(Material, pk=pk, kind=Material.Kind.COMPOUND)
     width, height = (200, 128) if request.GET.get("size") == "thumb" else (360, 220)
     response = HttpResponse(
         chem.structure_svg(material.canonical_smiles, width, height), content_type="image/svg+xml"
