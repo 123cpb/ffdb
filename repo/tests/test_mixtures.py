@@ -1,6 +1,6 @@
 """Mixtures: materials with no structure, made of components. Each test is one rule."""
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
@@ -140,7 +140,11 @@ class AdminTests(MixtureTestCase):
     add_url = reverse("admin:repo_material_add")
 
     def setUp(self):
-        self.client.force_login(User.objects.create_superuser("admin", password="pw"))
+        # A curator, not a superuser: a superuser has every permission, so the admin would
+        # show them sections a curator doesn't get.
+        curator = User.objects.create_user("curator", password="pw", is_staff=True)
+        curator.groups.add(Group.objects.get(name="Curators"))
+        self.client.force_login(curator)
 
     def add_mixture(self, name, rows, status=LISTED, other=""):
         """Fill in the admin's Add material form for a mixture, one component row for each
@@ -174,6 +178,24 @@ class AdminTests(MixtureTestCase):
 
         self.assertContains(response, "Give every fraction in the same unit")
         self.assertFalse(Material.objects.filter(name="F8").exists())
+
+    def test_a_mixtures_page_shows_its_components(self):
+        response = self.client.get(reverse("admin:repo_material_change", args=[self.f7.pk]))
+
+        self.assertContains(response, "Components in FFDB")
+        self.assertContains(response, 'name="components-TOTAL_FORMS" value="4"')  # F7's 2, and 2 empty
+
+    def test_the_composition_status_must_match_what_is_given(self):
+        cases = [
+            (LISTED, "", "or choose Not disclosed"),  # listed, with nothing given
+            (NOT_DISCLOSED, "A commercial host", "Not disclosed means no components"),
+        ]
+        for status, other, message in cases:
+            with self.subTest(status=status):
+                response = self.add_mixture("F8", [], status, other)
+
+                self.assertContains(response, message)
+                self.assertFalse(Material.objects.filter(name="F8").exists())
 
     def test_a_compound_given_twice_is_refused(self):
         response = self.add_mixture("F8", [(self.cb5, 60, MOL), (self.cb5, 40, MOL)])

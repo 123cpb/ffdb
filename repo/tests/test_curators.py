@@ -1,7 +1,10 @@
+from django.apps import apps
+from django.contrib import admin
 from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import reverse
 
+ACTIONS = ["add", "change", "delete"]
 ADD = reverse("repo:add")
 LOGIN = reverse("login")
 LOGOUT = reverse("logout")
@@ -23,10 +26,26 @@ class CuratorTests(TestCase):
         codenames = set(self.curators.permissions.values_list("codename", flat=True))
         expected = {
             f"{action}_{model}"
-            for action in ["add", "change", "delete"]
-            for model in ["material", "reference", "phasesequence", "series", "measurement"]
+            for action in ACTIONS
+            for model in ["material", "reference", "phasesequence", "series", "measurement", "mixturecomponent"]
         }
         self.assertEqual(codenames, expected)
+
+    def test_curators_can_work_on_every_section_of_rows_on_their_admin_pages(self):
+        """The admin leaves out a section of rows (an inline) whose model the user has no
+        permission on, and with it any rules checked in that section. So each section on a
+        page curators can change needs the group's permissions too, including a section
+        added after migration 0013 made the group."""
+        for model in apps.get_app_config("repo").get_models():
+            if not admin.site.is_registered(model):
+                continue
+            if not self.curator.has_perm(f"repo.change_{model._meta.model_name}"):
+                continue  # not a curators' page, like the vocabularies
+            for inline in admin.site.get_model_admin(model).inlines:
+                for action in ACTIONS:
+                    codename = f"{action}_{inline.model._meta.model_name}"
+                    with self.subTest(page=model.__name__, permission=codename):
+                        self.assertTrue(self.curator.has_perm(f"repo.{codename}"))
 
     def test_curator_with_staff_status_can_add_data_in_the_admin(self):
         self.curator.is_staff = True  # set on the user's admin page; a group can't give it
