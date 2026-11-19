@@ -51,7 +51,8 @@
         <tr>
           <td>{{ line.number }}</td>
           <td class="compound-table__drawing">
-            {% if line.canonical_smiles %}<div role="img" aria-label="Structure of {{ line.label }}">{{ line.drawing }}</div>{% endif %}
+            {% if line.canonical_smiles %}<div role="img" aria-label="Structure of {{ line.label }}">{{ line.drawing }}</div>
+            {% elif line.match.kind == "mixture" %}<span class="result__mixture">Mixture</span>{% endif %}
           </td>
           <td>{{ line.label }}</td>
           <td>
@@ -86,7 +87,8 @@
   <h2>Add a mixture</h2>
   <p>Its components must already be in FFDB as compounds: add any that aren't with the table above, or describe them
   under Other components. Check shows the compound each line finds, and asks if a mixture with this name is already in
-  FFDB.</p>
+  FFDB. Once it is in FFDB, add its phase sequences with the table above, giving its LCR ID in place of a SMILES, and
+  its values and curves with the forms below.</p>
   {% include "repo/_mixture_form.html" with form=mixture_form %}
 </section>
 

@@ -1,5 +1,8 @@
-"""A reference's Add data page reads a pasted table of compounds: Check shows what each line
-would add and saves nothing; Save adds the lines without a problem and lists the others."""
+"""A reference's Add data page reads a pasted table of compounds, where a material already in
+FFDB, such as a mixture, can be given by its LCR ID: Check shows what each line would add and
+saves nothing; Save adds the lines without a problem and lists the others."""
+
+from urllib.parse import urlencode
 
 from django.test import SimpleTestCase
 from django.urls import reverse
@@ -101,12 +104,13 @@ class CheckTests(CompoundTableTestCase):
 
     def test_each_kind_of_problem_line_says_why(self):
         for bad, problem in [
-            ("5CB", "Expected a label, a SMILES and, optionally, a phase sequence, but found 1 cell."),
+            ("5CB", "Expected a label, a SMILES or LCR ID and, optionally, a phase sequence, but found 1 cell."),
             ("5CB\tC1CC1\tK 24 N 35 I\tmore", "but found 4 cells."),
-            ("\tC1CC1", "Give the compound's label as the paper prints it."),
+            ("\tC1CC1", "Give the label as the reference prints it."),
             ("X" * 201 + "\tC1CC1", "longer than the 200 characters a name can have"),
             ("9z\tC1CC1x", "RDKit could not read “C1CC1x” as a SMILES"),
-            (f"9z\t{FIVE_CB}", "Same structure as line 1: give each compound once."),
+            ("9z\tLCR-09999", "No material has the LCR ID LCR-09999."),
+            (f"9z\t{FIVE_CB}", "Same material as line 1: give each material once."),
             ("10b\tC1CC1\tK 80 NFF 120 I", "Phase sequence: Unknown phase label: NFF."),
             ("10b\tC1CC1\tK 50 NF 120 N 80 I", "Phase sequence: In a summary, transition temperatures must rise"),
         ]:
@@ -252,3 +256,69 @@ class SaveTests(CompoundTableTestCase):
         self.assertRedirects(response, f"{LOGIN}?next={self.add_page(self.article)}")
         self.assertEqual(Material.objects.count(), 1)
         self.assertFalse(PhaseSequence.objects.exists())
+
+
+class LcrIdLineTests(CompoundTableTestCase):
+    """RM734 is in FFDB, and so is F7, a mixture whose composition isn't disclosed. Nothing is
+    from the article yet."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.f7 = Material.objects.create(
+            kind=Material.Kind.MIXTURE, name="F7", composition_status=Material.CompositionStatus.NOT_DISCLOSED
+        )
+
+    def test_a_material_in_ffdb_can_be_given_by_its_lcr_id_in_place_of_a_smiles(self):
+        # Typed any way pk_from_accession() reads: RM734's in lower case, without the dash.
+        response = self.send(f"MB-1\tlcr{self.rm734.pk}\nF7\t{self.f7.accession}")
+
+        compound, mixture = response.context["lines"]
+        self.assertEqual((compound.status, compound.match), ("in_ffdb", self.rm734))
+        self.assertEqual((mixture.status, mixture.match), ("in_ffdb", self.f7))
+        # The compound is drawn from the structure FFDB has. The mixture has none.
+        self.assertContains(response, '<div role="img" aria-label="Structure of MB-1"><svg')
+        self.assertNotContains(response, 'aria-label="Structure of F7"')
+        self.assertContains(response, '<span class="result__mixture">Mixture</span>', html=True)
+        self.assertContains(response, "MB-1 will be kept as an alias.")
+        self.assertContains(response, "F7 won't be kept as an alias: it is already one of its names.")
+
+    def test_the_same_material_twice_is_a_problem_line_by_smiles_or_by_lcr_id(self):
+        for table in [f"RM734\t{RM734}\nMB-1\t{self.rm734.accession}", f"F7\t{self.f7.accession}\nF7\t{self.f7.accession}"]:
+            with self.subTest(table):
+                line = self.line(table)
+
+                self.assertEqual(line.problem, "Same material as line 1: give each material once.")
+
+    def test_a_mixtures_run_goes_in_by_its_lcr_id_and_makes_it_one_of_the_references_materials(self):
+        response = self.send(f"F7, {self.f7.accession}, Iso 120 N 95 NF 40 Cr", "save", follow=True, direction="cooling")
+
+        self.assertIn("Saved from the table: 0 new compounds, 1 sequence, 0 aliases.", self.messages(response))
+        [run] = self.f7.phase_sequences.all()
+        self.assertEqual(
+            (run.reference, run.direction, run.standard_sequence), (self.article, "cooling", "Iso 120 N 95 NF 40 Cr")
+        )
+        # Back on the Add data page, F7 is listed, and both menus offer it.
+        self.assertEqual(list(response.context["materials"]), [self.f7])
+        self.assertEqual(list(response.context["choice"].fields["material"].queryset), [self.f7])
+        self.assertEqual(list(response.context["curve_choice"].fields["material"].queryset), [self.f7])
+        page = self.client.get(reverse("repo:material", args=[self.f7.pk]))
+        self.assertContains(page, "<td>Iso 120 N 95 NF 40 Cr</td>", html=True)
+        self.assertContains(page, "<td>Cooling</td>", html=True)
+
+    def test_a_ps_value_for_the_mixture_shows_on_the_ps_page_under_its_name(self):
+        PhaseSequence.objects.create(
+            material=self.f7, reference=self.article, sequence="Iso 120 N 95 NF 40 Cr", direction="cooling"
+        )
+        # Chosen from the menu (material=), which offers F7 now it has a run from the article.
+        query = urlencode({"material": self.f7.pk, "property": "ps", "kind": "measured", "temperature": "yes"})
+        boxes = {"qualifier": "exact", "value": "4.4", "temperature_c": "30", "method": "current reversal",
+                 "condition_frequency_Hz": "50", "condition_cell_gap_um": "8", "taken_from": "table", "location": "Table 1"}
+
+        response = self.client.post(f"{reverse('repo:add_value', args=[self.article.pk])}?{query}", boxes, follow=True)
+
+        self.assertEqual(self.messages(response), [f"Saved a Ps value for {self.f7.accession}."])
+        page = self.client.get(reverse("repo:property", args=["ps"]))
+        link = reverse("repo:material", args=[self.f7.pk])
+        self.assertContains(page, f'<a href="{link}">{self.f7.accession}</a>', html=True)
+        self.assertContains(page, '<span class="result__name">F7</span>', html=True)

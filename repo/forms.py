@@ -87,6 +87,13 @@ class FindReferenceForm(forms.Form):
         return cleaned
 
 
+def material_with_lcr_id(pk):
+    """The material with this primary key, as (material, ""), or (None, why none was found).
+    Pass the number pk_from_accession() reads from an LCR ID."""
+    material = Material.objects.filter(pk=pk).first()
+    return (material, "") if material else (None, f"No material has the LCR ID {accession(pk)}.")
+
+
 # A pasted table of compounds. The most lines one table can have, as in the prototype.
 MAX_TABLE_LINES = 100
 NAME_LENGTH = Material._meta.get_field("name").max_length
@@ -95,7 +102,7 @@ METHOD_LENGTH = PhaseSequence._meta.get_field("method").max_length
 
 
 def table_cells(line):
-    """Split one pasted line into its cells: label, SMILES and, optionally, phase sequence.
+    """Split one pasted line into its cells: label, SMILES or LCR ID and, optionally, phase sequence.
     On tabs if it has any (pasted from a spreadsheet); otherwise on the first two commas, or
     else on the first two runs of spaces, so the sequence keeps its own commas and spaces.
     Empty cells at the end are dropped."""
@@ -112,7 +119,7 @@ def table_cells(line):
 
 
 def table_rows(text):
-    """The lines of a pasted table that hold compounds, as (header, rows). Each row is
+    """The lines of a pasted table that hold materials, as (header, rows). Each row is
     (line number, the line as pasted, its cells). Blank lines are skipped but still counted,
     so the numbers are the pasted text's. A first line without digits, such as "Label, SMILES,
     Phases", is a header: header is its number, or None when the table has none."""
@@ -129,16 +136,16 @@ def table_rows(text):
 
 @dataclass
 class TableLine:
-    """One compound line of a pasted table, as read_lines() reads it."""
+    """One line of a pasted table, as read_lines() reads it."""
 
     number: int
     text: str
     label: str
-    smiles: str
+    identifier: str  # a SMILES, or the LCR ID of a material already in FFDB
     sequence: str
     problem: str = ""  # why the line can't be saved, or "" when it can
-    canonical_smiles: str = ""
-    match: Material | None = None  # the material already in FFDB with this structure
+    canonical_smiles: str = ""  # blank for a mixture
+    match: Material | None = None  # the material already in FFDB with this structure or LCR ID
     standard_sequence: str = ""
     sequence_already_there: bool = False  # the match has this sequence from this reference
     alias_problem: str = ""  # why the match won't keep the label as an alias, or ""
@@ -161,37 +168,50 @@ class TableLine:
 
 
 def read_lines(rows, reference, direction):
-    """Read each row from table_rows() as a TableLine: check its cells, structure and
-    sequence, and look its structure up in FFDB. Each sequence is read as direction says
-    (one of PhaseSequence.Direction). Nothing is saved. A line gets one problem, the first
-    found, so each check can rely on those before it."""
+    """Read each row from table_rows() as a TableLine: check its cells and sequence, and find
+    its material in FFDB, by the LCR ID or by the structure. Each sequence is read as
+    direction says (one of PhaseSequence.Direction). Nothing is saved. A line gets one
+    problem, the first found, so each check can rely on those before it."""
     synonyms = Phase.synonym_map()  # read once, for every line's sequence
-    first_seen = {}  # InChIKey -> the number of the line it was first on
+    first_seen = {}  # a material in FFDB's pk, or a new structure's InChIKey -> the number of the line it was first on
     lines = []
     for number, text, cells in rows:
         line = TableLine(number, text, *(cells + ["", ""])[:3])
         lines.append(line)
         if len(cells) not in (2, 3):
             line.problem = (
-                "Expected a label, a SMILES and, optionally, a phase sequence, but found "
+                "Expected a label, a SMILES or LCR ID and, optionally, a phase sequence, but found "
                 f"{len(cells)} cell{'' if len(cells) == 1 else 's'}."
             )
             continue
         if not line.label:
-            line.problem = "Give the compound's label as the paper prints it."
+            line.problem = "Give the label as the reference prints it."
             continue
         if len(line.label) > NAME_LENGTH:
             line.problem = f"The label is longer than the {NAME_LENGTH} characters a name can have."
             continue
-        try:
-            line.canonical_smiles, inchikey = chem.standardise(line.smiles)
-        except chem.StructureError as exc:
-            line.problem = str(exc)
+        # No SMILES reads as an LCR ID, because L isn't an element, so the two can't be confused.
+        pk = pk_from_accession(line.identifier)
+        if pk is not None:
+            line.match, line.problem = material_with_lcr_id(pk)
+            if line.problem:
+                continue
+            # Drawn from the structure FFDB has, so the curator sees it is the one they meant.
+            # A mixture has none, so it isn't drawn.
+            line.canonical_smiles = line.match.canonical_smiles
+        else:
+            try:
+                line.canonical_smiles, inchikey = chem.standardise(line.identifier)
+            except chem.StructureError as exc:
+                line.problem = str(exc)
+                continue
+            line.match = Material.objects.filter(inchikey=inchikey).first()
+        # A pk is a number and an InChIKey is text, so the two can never be mistaken for each other.
+        key = line.match.pk if line.match else inchikey
+        if key in first_seen:
+            line.problem = f"Same material as line {first_seen[key]}: give each material once."
             continue
-        if inchikey in first_seen:
-            line.problem = f"Same structure as line {first_seen[inchikey]}: give each compound once."
-            continue
-        first_seen[inchikey] = number
+        first_seen[key] = number
         if line.sequence:
             try:
                 # An unsaved sequence, so it is read exactly as saving it would read it.
@@ -204,7 +224,6 @@ def read_lines(rows, reference, direction):
             if max(len(line.sequence), len(line.standard_sequence)) > SEQUENCE_LENGTH:
                 line.problem = f"Phase sequence: longer than the {SEQUENCE_LENGTH} characters it can have."
                 continue
-        line.match = Material.objects.filter(inchikey=inchikey).first()
         if line.match:
             line.alias_problem = line.match.alias_problem(line.label)
             # The direction too: a heating run and a summary can be written the same way.
@@ -218,12 +237,13 @@ def read_lines(rows, reference, direction):
 
 
 class CompoundTableForm(forms.Form):
-    """A reference's compounds, pasted as a table into one box. A valid form's cleaned_data
-    has table, the lines read as TableLine objects (read_lines()), and header is the number
-    of the line read as a header, or None. Every sequence in the table has the direction,
-    rate and method chosen once above it. Pass the reference the compounds are from."""
+    """A reference's compounds, pasted as a table into one box, and any material already in
+    FFDB, such as a mixture, given by its LCR ID in place of the SMILES. A valid form's
+    cleaned_data has table, the lines read as TableLine objects (read_lines()), and header
+    is the number of the line read as a header, or None. Every sequence in the table has the
+    direction, rate and method chosen once above it. Pass the reference the lines are from."""
 
-    EMPTY = "Paste at least one line: a label, a SMILES and, optionally, a phase sequence."
+    EMPTY = "Paste at least one line: a label, a SMILES or LCR ID and, optionally, a phase sequence."
     NO_DIRECTION = "This table has phase sequences: choose what they are, summaries or cooling or heating runs."
 
     # These come before the table, so clean_table() can read them.
@@ -241,7 +261,8 @@ class CompoundTableForm(forms.Form):
         strip=False,  # keeps the tab at the start of a first line whose label is missing
         error_messages={"required": EMPTY},
         help_text="One compound per line: its label as the paper prints it, its SMILES and, if the "
-        "paper gives one, its phase sequence. Write a summary from the solid up, e.g. K 139.8 NF 132.7 N "
+        "paper gives one, its phase sequence. For a material already in FFDB, including a mixture, its LCR ID "
+        "can take the place of the SMILES, e.g. LCR-00512. Write a summary from the solid up, e.g. K 139.8 NF 132.7 N "
         "187.9 I, and a run in the order observed, e.g. Iso 187.9 N 132.7 NF 70 K on cooling. Separate "
         "the cells with tabs (as pasted from a spreadsheet), commas or spaces; a label with a space in it "
         f"needs tabs or commas. A first line without digits is read as a header. At most {MAX_TABLE_LINES} lines.",
@@ -285,7 +306,8 @@ class CompoundTableForm(forms.Form):
                     continue
                 material = line.match
                 if material is None:
-                    material = Material.objects.create(name=line.label, smiles=line.smiles)
+                    # Only a SMILES line finds no match: an LCR ID line without one is a problem.
+                    material = Material.objects.create(name=line.label, smiles=line.identifier)
                     counts["compounds"] += 1
                     # Asked again now it is saved: it has its LCR ID, and it sees the
                     # materials that earlier lines added.
@@ -794,8 +816,7 @@ def find_component(text):
     MixtureComponent.clean()."""
     pk = pk_from_accession(text)
     if pk is not None:
-        material = Material.objects.filter(pk=pk).first()
-        return (material, "") if material else (None, f"No material has the LCR ID {accession(pk)}.")
+        return material_with_lcr_id(pk)
     found = materials_named(text)
     if len(found) == 1:
         return found[0], ""
