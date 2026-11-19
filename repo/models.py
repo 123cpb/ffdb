@@ -160,6 +160,10 @@ class Material(models.Model):
         """The aliases as a list: "RM-734, DIO-1" -> ["RM-734", "DIO-1"]."""
         return [alias.strip() for alias in self.aliases.split(",") if alias.strip()]
 
+    def names(self):
+        """The name, if it has one, then the aliases."""
+        return [self.name, *self.alias_list()] if self.name.strip() else self.alias_list()
+
     def has_name(self, name):
         """Whether name is this material's name or one of its aliases, compared by name_key()."""
         key = name_key(name)
@@ -287,16 +291,84 @@ class Material(models.Model):
             rows += [series, *series.points.all()]
         return serializers.serialize("json", rows, indent=2)
 
-    def retire(self, user):
+    def retire(self, user, merged_into=None, moved=None):
         """Delete this material, first saving a RetiredID record of its ID, retired by user,
         with a snapshot of everything deleted. Both happen or neither: if the delete fails,
-        the record is undone too."""
+        the record is undone too. A merge (merge_into()) also gives the number it went into
+        and what it moved."""
         with transaction.atomic():
             RetiredID.objects.create(
                 number=self.pk, kind=self.kind, name=self.name, inchikey=self.inchikey, retired_by=user,
-                snapshot=self.snapshot(),
+                snapshot=self.snapshot(), merged_into=merged_into, moved=moved or {},
             )
             self.delete()
+
+    def merge_problems(self, target):
+        """Why this material can't be merged into target, as a list of messages, empty when
+        it can."""
+        if target.pk == self.pk:
+            return ["A material can't be merged into itself."]
+        if target.kind != self.kind:
+            return [
+                f"{self.accession} is a {self.get_kind_display().lower()} and {target.accession} a "
+                f"{target.get_kind_display().lower()}: a material can only be merged into one of its own kind."
+            ]
+        # The mixtures with both as components. Moving this one's rows to target would put
+        # target in them twice, which MixtureComponent's constraint refuses. Two filter()
+        # calls across a relation to many rows each follow it separately: one component row
+        # must be this material and another target. One filter() with both would need one
+        # row to be both, and find nothing.
+        shared = Material.objects.filter(components__component=self).filter(components__component=target)
+        if shared:
+            mixtures = ", ".join(str(mixture) for mixture in shared)
+            return [f"Both are components of {mixtures}, which can have each compound once: fix its composition first."]
+        return []
+
+    def add_aliases(self, names):
+        """Add names to the aliases, one at a time so each is checked against those before
+        it, without saving. Returns (added, refused): the names added, and [(name, why), ...]
+        for those alias_problem() refuses. A name that is already one of this material's
+        names is in neither list: it isn't lost."""
+        added, refused = [], []
+        for name in names:
+            if self.has_name(name):
+                continue
+            problem = self.alias_problem(name)
+            if problem:
+                refused.append((name, problem))
+            else:
+                self.aliases = ", ".join(self.alias_list() + [name])
+                added.append(name)
+        return added, refused
+
+    def merge_into(self, target, user):
+        """Merge this material, a duplicate, into target: move its sequences, values and
+        mixture memberships to target, add its names to target's aliases, point earlier
+        merges into it at target, and retire it, merged by user, with what moved recorded,
+        so a merge can be undone. All of it or none. Raises ValidationError with the reason
+        when merge_problems() finds one. Returns the names target couldn't take, as
+        add_aliases() does."""
+        problems = self.merge_problems(target)
+        if problems:
+            raise ValidationError(problems)
+        earlier = RetiredID.objects.filter(merged_into=self.pk)
+        with transaction.atomic():
+            moved = {
+                "sequences": list(self.phase_sequences.values_list("pk", flat=True)),
+                "series": list(self.series.values_list("pk", flat=True)),
+                "memberships": list(self.in_mixtures.values_list("pk", flat=True)),
+                "merges": list(earlier.values_list("number", flat=True)),
+            }
+            # update(): one query per table, changing only the material. save() isn't run,
+            # and needn't be: nothing it works out depends on the material.
+            self.phase_sequences.update(material=target)
+            self.series.update(material=target)
+            self.in_mixtures.update(component=target)
+            earlier.update(merged_into=target.pk)
+            moved["aliases"], refused = target.add_aliases(self.names())
+            target.save(update_fields=["aliases"])
+            self.retire(user, merged_into=target.pk, moved=moved)
+        return refused
 
 
 def materials_named(name, kind=None):
@@ -1146,6 +1218,16 @@ class RetiredID(models.Model):
         blank=True,
         help_text="Why it was deleted, e.g. entered twice, or not a liquid crystal. Shown on the ID's public page.",
     )
+    # A number, not a ForeignKey to Material: it still names the ID it went into if that
+    # material is deleted later, when a ForeignKey would be blanked or delete this record.
+    merged_into = models.PositiveIntegerField(
+        null=True, blank=True, editable=False,
+        help_text="After a merge: the number of the material it went into. Its address redirects there.",
+    )
+    # What a merge moved, so it can be undone: {"sequences": [primary keys], "series": [...],
+    # "memberships": [...], "merges": [numbers of the earlier merges pointed on], "aliases":
+    # [names added]}. Empty for a material deleted on its own.
+    moved = models.JSONField(default=dict, blank=True, editable=False)
     # The JSON text from Material.snapshot(), as serializers.deserialize("json", ...) reads it back.
     snapshot = models.TextField(editable=False)
 
@@ -1165,7 +1247,13 @@ class RetiredID(models.Model):
         deleted with it, then delete this record: all of it or none. What comes back is what
         would be there had the material never been deleted, so it is refused, raising
         ValidationError with every reason, when something has changed that would have
-        stopped that. Returns the material."""
+        stopped that. A merged record is refused: its rows were moved, not deleted, so they aren't
+        in the snapshot. Returns the material."""
+        if self.merged_into is not None:
+            raise ValidationError(
+                f"it was merged into {accession(self.merged_into)}, and its sequences and values are there "
+                "now: Restore doesn't undo a merge."
+            )
         try:
             # Each row as a DeserializedObject, which holds the model instance, not yet saved,
             # as .object. Reading them makes no queries.

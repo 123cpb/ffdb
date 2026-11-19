@@ -4,13 +4,15 @@ from django.db import models, transaction
 from django.forms import Textarea
 from django.forms.models import BaseInlineFormSet
 from django.shortcuts import get_object_or_404, redirect
+from django.template.response import TemplateResponse
 from django.urls import path
 from django.utils.html import format_html
 from django.views.decorators.http import require_POST
 
+from .forms import MergeForm
 from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
-    RetiredID, Series, Variable,
+    RetiredID, Series, Variable, accession,
 )
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
@@ -165,19 +167,70 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
             for material in queryset:
                 material.retire(request.user)
 
+    def get_urls(self):
+        """Django's addresses for materials, with a material's merge/ in front, as for
+        RetiredIDAdmin's restore/. The link to it is in this model's own change_form.html."""
+        merge = self.admin_site.admin_view(self.merge_view)
+        return [path("<int:pk>/merge/", merge, name="repo_material_merge"), *super().get_urls()]
+
+    def merge_view(self, request, pk):
+        """Merge a duplicate into another material (Material.merge_into()). The ID box is sent
+        with GET, which changes nothing, so the page can show what will move first. Its Merge
+        button posts to the same address, with the ID, and the merge is checked again then.
+        Only users who may delete materials may merge them."""
+        if not request.user.has_perm("repo.delete_material"):
+            raise PermissionDenied
+        duplicate = get_object_or_404(Material, pk=pk)
+        data = request.POST if request.method == "POST" else (request.GET or None)
+        form = MergeForm(data, duplicate=duplicate)
+        context = {
+            **self.admin_site.each_context(request),  # what every admin page needs, e.g. the site's name
+            "opts": self.model._meta,
+            "title": f"Merge {duplicate}",
+            "duplicate": duplicate,
+            "form": form,
+        }
+        if form.is_valid():
+            target = form.cleaned_data["into"]
+            if request.method == "POST":
+                name = str(duplicate)  # before merging, which takes its pk
+                refused = duplicate.merge_into(target, request.user)
+                self.message_user(request, f"{name} has been merged into {target}.", messages.SUCCESS)
+                for alias, why in refused:
+                    self.message_user(request, f"{alias} wasn't added to {target.accession}'s aliases: {why}.", messages.WARNING)
+                return redirect("admin:repo_material_change", target.pk)
+            # What the merge would do. add_aliases() changes target only here: it isn't saved.
+            context["aliases_added"], context["aliases_refused"] = target.add_aliases(duplicate.names())
+            context.update({
+                "target": target,
+                "sequences": duplicate.phase_sequences.select_related("reference"),
+                "series": duplicate.series.select_related("property", "reference"),
+                "memberships": duplicate.in_mixtures.select_related("mixture"),
+                "earlier": RetiredID.objects.filter(merged_into=duplicate.pk),
+                "components": duplicate.components.select_related("component"),
+            })
+        return TemplateResponse(request, "admin/repo/material/merge.html", context)
+
 
 @admin.register(RetiredID)
 class RetiredIDAdmin(admin.ModelAdmin):
     """Records are made only by deleting a material, and go only when it is restored: only
     the reason can be changed. The Restore button is in this model's own change_form.html."""
 
-    list_display = ["accession", "name", "kind", "retired_by", "retired_at"]
-    fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "reason", "deleted_rows"]
-    readonly_fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "deleted_rows"]
+    list_display = ["accession", "name", "kind", "retired_by", "retired_at", "merged"]
+    fields = [
+        "accession", "kind", "name", "inchikey", "retired_by", "retired_at", "merged", "moved", "reason", "deleted_rows",
+    ]
+    readonly_fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "merged", "moved", "deleted_rows"]
 
     @admin.display(description="ID", ordering="number")
     def accession(self, obj):
         return obj.accession
+
+    @admin.display(description="merged into")
+    def merged(self, obj):
+        # None shows as "-", as for any empty field.
+        return accession(obj.merged_into) if obj.merged_into is not None else None
 
     @admin.display(description="snapshot")
     def deleted_rows(self, obj):

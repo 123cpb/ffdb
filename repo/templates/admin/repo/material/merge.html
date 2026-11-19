@@ -1,0 +1,64 @@
+{% extends "admin/base_site.html" %}
+{% load repo_tags %}
+{% comment %}
+The merge page (MaterialAdmin.merge_view). Its ID box is sent with GET, which changes nothing.
+Once the ID is one the duplicate can be merged into, the page shows what will move, and its
+Merge button posts the ID back to the same address.
+{% endcomment %}
+{% block breadcrumbs %}
+<ol class="breadcrumbs">
+<li><a href="{% url 'admin:index' %}">Home</a></li>
+<li><a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a></li>
+<li><a href="{% url 'admin:repo_material_changelist' %}">Materials</a></li>
+<li><a href="{% url 'admin:repo_material_change' duplicate.pk %}">{{ duplicate }}</a></li>
+<li aria-current="page">Merge</li>
+</ol>
+{% endblock %}
+
+{% block content %}
+<p>Merging moves {{ duplicate.accession }}'s sequences, values and mixture memberships to the
+material it goes into, and adds its names to that material's aliases. {{ duplicate.accession }}
+is then retired, and its address leads to that material.</p>
+<form method="get">
+  {{ form.as_p }}
+  <input type="submit" value="Show what will move">
+</form>
+
+{% if target %}
+<h2>{{ duplicate }} into {{ target }}</h2>
+<h3>Sequences moved</h3>
+<ul>
+  {% for sequence in sequences %}<li>{{ sequence.reference }}: {{ sequence.sequence }} ({{ sequence.run_text }})</li>{% empty %}<li>None</li>{% endfor %}
+</ul>
+<h3>Values moved</h3>
+<ul>
+  {% for one in series %}<li>{{ one.property.symbol }}, {{ one.reference }}</li>{% empty %}<li>None</li>{% endfor %}
+</ul>
+<h3>Mixture memberships moved</h3>
+<ul>
+  {% for row in memberships %}<li>{{ row.mixture }}: {{ row.fraction|num }} {{ row.unit }}</li>{% empty %}<li>None</li>{% endfor %}
+</ul>
+<h3>Names</h3>
+<p>Added to {{ target.accession }}'s aliases: {{ aliases_added|join:", "|default:"none" }}.</p>
+{% if aliases_refused %}
+<p>Not added:</p>
+<ul>
+  {% for name, why in aliases_refused %}<li>{{ name }}: {{ why }}</li>{% endfor %}
+</ul>
+{% endif %}
+{% if earlier %}
+<h3>Earlier merges</h3>
+<p>These were merged into {{ duplicate.accession }}, and will lead to {{ target.accession }}:
+{% for record in earlier %}{{ record }}{% if not forloop.last %}, {% endif %}{% endfor %}.</p>
+{% endif %}
+<h3>Not moved</h3>
+<p>{{ duplicate.accession }}'s notes{% if components %} and its composition ({% for row in components %}{{ row.component.accession }} {{ row.fraction|num }} {{ row.unit }}{% if not forloop.last %}, {% endif %}{% endfor %}){% endif %}.
+{{ target.accession }} keeps its own. They stay in the snapshot on {{ duplicate.accession }}'s retired ID record.</p>
+
+<form method="post">
+  {% csrf_token %}
+  <input type="hidden" name="into" value="{{ target.accession }}">
+  <input type="submit" value="Merge {{ duplicate.accession }} into {{ target.accession }}">
+</form>
+{% endif %}
+{% endblock %}

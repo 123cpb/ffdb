@@ -191,13 +191,17 @@ def value_sections(series, with_charts=False):
 
 def material_detail(request, pk):
     """One material's public page. A compound's page shows its structure and the mixtures it
-    is in; a mixture's, its composition. A retired ID gives a page saying what it was, and
-    a number never given out gives a 404."""
+    is in; a mixture's, its composition. A merged ID leads to the material it went into, a
+    retired ID gives a page saying what it was, and a number never given out gives a 404."""
     material = Material.objects.filter(pk=pk).first()
     if material is None:
+        record = get_object_or_404(RetiredID, number=pk)
+        if record.merged_into is not None:
+            # A 302, which browsers ask again each time, not a 301, which they keep for good:
+            # an undone merge would leave them going to the wrong material.
+            return redirect("repo:material", record.merged_into)
         # 410 Gone, not 404 Not Found: the address did name a material, and never will again,
         # so search engines can drop it. The snapshot isn't shown: what was deleted may be wrong.
-        record = get_object_or_404(RetiredID, number=pk)
         return render(request, "repo/retired_material.html", {"nav": "materials", "record": record}, status=410)
     formula, mass = "", None  # a mixture has no structure to work them out from
     if material.kind == Material.Kind.COMPOUND:

@@ -1,4 +1,4 @@
-"""Forms for the Add data pages."""
+"""Forms for the Add data pages, and the admin's merge page (MergeForm)."""
 
 import math
 import re
@@ -973,3 +973,27 @@ class MixtureForm(forms.Form):
                 for line in self.lines
             )
         return self.mixture, True
+
+
+class MergeForm(forms.Form):
+    """The admin's merge page: the LCR ID of the material a duplicate goes into. It is valid
+    when Material.merge_problems() finds no reason to refuse, and its cleaned into is that
+    material."""
+
+    into = forms.CharField(label="Merge into", help_text="The LCR ID of the material that stays, e.g. LCR-00012.")
+
+    def __init__(self, *args, duplicate, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.duplicate = duplicate
+
+    def clean_into(self):
+        pk = pk_from_accession(self.cleaned_data["into"])
+        if pk is None:
+            raise ValidationError("Give an LCR ID, e.g. LCR-00012.")
+        target, why = material_with_lcr_id(pk)
+        if target is None:
+            raise ValidationError(why)
+        problems = self.duplicate.merge_problems(target)
+        if problems:
+            raise ValidationError(problems)
+        return target
