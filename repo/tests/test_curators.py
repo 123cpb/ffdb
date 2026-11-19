@@ -70,8 +70,10 @@ class CuratorTests(TestCase):
         page = self.client.get(reverse("repo:materials"))
         self.assertContains(page, f'href="{ADD}"')
         self.assertContains(page, f'action="{LOGOUT}"')
+        self.assertNotContains(page, f'href="{LOGIN}"')  # Log out takes its place
 
         self.assertRedirects(self.client.post(LOGOUT), HOME)
+        self.assertContains(self.client.get(HOME), f'href="{LOGIN}"')
         self.assertRedirects(self.client.get(ADD), f"{LOGIN}?next={ADD}")
 
     def test_wrong_password_stays_on_the_login_page(self):
@@ -86,6 +88,7 @@ class CuratorTests(TestCase):
         page = self.client.get(reverse("repo:materials"))
         self.assertNotContains(page, f'href="{ADD}"')
         self.assertNotContains(page, f'action="{LOGOUT}"')
+        self.assertContains(page, f'href="{LOGIN}"')  # the way back to Add data
 
     def test_logged_in_user_who_is_not_a_curator_is_refused(self):
         self.client.force_login(self.other)
@@ -94,6 +97,7 @@ class CuratorTests(TestCase):
         page = self.client.get(reverse("repo:materials"))
         self.assertNotContains(page, f'href="{ADD}"')
         self.assertContains(page, f'action="{LOGOUT}"')
+        self.assertNotContains(page, f'href="{LOGIN}"')
 
 
 class MaterialDeleteTests(TestCase):
