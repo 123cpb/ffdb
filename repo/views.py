@@ -13,7 +13,9 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 
 from . import charts, chem, crossref, exports
-from .forms import CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, ValueChoiceForm, ValueForm
+from .forms import (
+    CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, MixtureForm, ValueChoiceForm, ValueForm,
+)
 from .models import (
     DOI_PREFIX,
     Material,
@@ -472,8 +474,8 @@ def fill_from_crossref(reference):
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_from_reference(request, pk):
-    """A reference's Add data page: a box for a table of its compounds, and what FFDB already
-    has from it. Its materials are those it gives sequences or values for. A number with no
+    """A reference's Add data page: a box for a table of its compounds, the forms for adding a
+    mixture, a value or a curve, and what FFDB already has from it. Its materials are those it gives sequences or values for. A number with no
     reference gives a 404.
 
     Check reads the table and shows each line, saving nothing. Save (a POST with save in
@@ -513,6 +515,8 @@ def add_from_reference(request, pk):
         # each label still points at its own box.
         "choice": ValueChoiceForm(reference=reference),
         "curve_choice": CurveChoiceForm(reference=reference, auto_id="id_curve_%s"),
+        # The form for adding a mixture, sent to add_mixture.
+        "mixture_form": MixtureForm(),
         **reference_tables(reference),
     }
     return render(request, "repo/add_from_reference.html", context)
@@ -573,3 +577,26 @@ def add_curve(request, pk):
             curve_charts = [drawn] if drawn else []
     context = {"nav": "add", "reference": reference, "choice": choice, "form": form, "charts": curve_charts}
     return render(request, "repo/add_curve.html", context)
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+def add_mixture(request, pk):
+    """Adding a mixture from a reference. The empty form is on the reference's Add data page
+    and posts here. Check reads it and shows each component line with the compound it found,
+    or why it found none, saving nothing. When mixtures with this name are in FFDB, the form
+    lists them and asks whether this is one of them. Save (a POST with save in it) reads it
+    again and adds the mixture, or nothing for one already in FFDB, and sends the curator back
+    to the Add data page with a redirect, so reloading can't save twice. Either way the message
+    gives the mixture's LCR ID. A number with no reference gives a 404."""
+    reference = get_object_or_404(Reference, pk=pk)
+    form = MixtureForm(request.POST if request.method == "POST" else None)
+    if form.is_valid() and "save" in request.POST:
+        mixture, added = form.save()
+        if added:
+            messages.success(request, f"Added the mixture {mixture.name} as {mixture.accession}.")
+        else:
+            messages.info(request, f"{mixture.name} is already in FFDB as {mixture.accession}, so nothing was added.")
+        return redirect("repo:add_from_reference", reference.pk)
+    context = {"nav": "add", "reference": reference, "form": form}
+    return render(request, "repo/add_mixture.html", context)

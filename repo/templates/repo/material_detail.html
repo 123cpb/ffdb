@@ -12,19 +12,7 @@
   <dt>Kind</dt>
   <dd>Mixture</dd>
   <dt>Composition</dt>
-  <dd>
-    {% if material.composition_status == "not_disclosed" %}
-    Not disclosed
-    {% else %}
-    <ul class="composition">
-      {% for row in components %}
-      <li><a href="{% url 'repo:material' row.component.pk %}">{{ row.component.accession }}</a>{% if row.component.name %} {{ row.component.name }}{% endif %}, {{ row.fraction|num }} {{ row.unit }}</li>
-      {% endfor %}
-      {% if material.other_components %}<li>Other components: {{ material.other_components|linebreaksbr }}</li>{% endif %}
-    </ul>
-    {% if material.composition_status == "partly_known" %}<p class="composition__note">Partly known: only what is listed here is known.</p>{% endif %}
-    {% endif %}
-  </dd>
+  <dd>{% include "repo/_composition.html" %}</dd>
 </dl>
 {% else %}
 <figure class="structure">

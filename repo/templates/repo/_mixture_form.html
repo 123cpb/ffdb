@@ -1,0 +1,51 @@
+{% comment %}
+The form for adding a mixture, MixtureForm (as form). It posts to views.add_mixture, which
+shows what Check read. A reference's Add data page and the add-a-mixture page both include it.
+{% endcomment %}
+<form method="post" action="{% url 'repo:add_mixture' reference.pk %}" class="entry-form entry-form--wide">
+  {% csrf_token %}
+  {# Errors that belong to no one box: the rules across the components. #}
+  {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+  {% include "repo/_entry_field.html" with field=form.name %}
+  <fieldset>
+    <legend>{{ form.composition_status.label }}</legend>
+    {% if form.composition_status.errors %}<p class="form-error">{{ form.composition_status.errors|join:" " }}</p>{% endif %}
+    {% for radio in form.composition_status %}
+    <label class="entry-form__choice">{{ radio.tag }} {{ radio.choice_label }}</label>
+    {% endfor %}
+    <p class="entry-form__help">{{ form.composition_status.help_text }}</p>
+  </fieldset>
+  <label for="{{ form.components.id_for_label }}">{{ form.components.label }}</label>
+  {# Django points the box at the errors, by this id, so screen readers read them too. #}
+  {% if form.components.errors %}<p class="form-error" id="{{ form.components.auto_id }}_error">{{ form.components.errors|join:" " }}</p>{% endif %}
+  {{ form.components }}
+  <p class="entry-form__help" id="{{ form.components.auto_id }}_helptext">{{ form.components.help_text }}</p>
+  {% include "repo/_entry_field.html" with field=form.other_components %}
+  {% include "repo/_entry_field.html" with field=form.notes %}
+  {# Only when mixtures with this name are in FFDB: which, with their compositions, and the question. #}
+  {% if form.same_name %}
+  <fieldset>
+    <legend>{{ form.same_as.label }}</legend>
+    <p>FFDB already has {% if form.same_name|length == 1 %}a mixture{% else %}{{ form.same_name|length }} mixtures{% endif %} called {{ form.name.value }}.
+    A mixture has no structure, so FFDB can't tell by itself whether this is the same one, and names such as M5 are
+    reused by different groups.</p>
+    <ul>
+      {% for mixture in form.same_name %}
+      <li>
+        <a href="{% url 'repo:material' mixture.pk %}">{{ mixture.accession }}</a> {{ mixture.name }}{% if mixture.aliases %}, also called {{ mixture.aliases }}{% endif %}
+        {% include "repo/_composition.html" with material=mixture components=mixture.components.all %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% if form.same_as.errors %}<p class="form-error">{{ form.same_as.errors|join:" " }}</p>{% endif %}
+    {% for radio in form.same_as %}
+    <label class="entry-form__choice">{{ radio.tag }} {{ radio.choice_label }}</label>
+    {% endfor %}
+  </fieldset>
+  {% endif %}
+  {# The button's name is sent with the form, so the view can tell Save from Check. #}
+  <div class="entry-form__buttons">
+    <button type="submit" name="check">Check</button>
+    <button type="submit" name="save">Save</button>
+  </div>
+</form>

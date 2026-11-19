@@ -17,6 +17,7 @@ from .models import (
     CONDITION_UNITS,
     Material,
     Measurement,
+    MixtureComponent,
     Phase,
     PhaseSequence,
     Property,
@@ -27,6 +28,7 @@ from .models import (
     clean_doi,
     clean_patent_number,
     group_properties,
+    materials_named,
     must_state,
     pk_from_accession,
 )
@@ -416,6 +418,15 @@ def condition_value(text):
     return int(number) if number.is_integer() else number
 
 
+def check_rules(form, obj, **kwargs):
+    """Check obj with its full_clean(), which runs the model's rules. Each message goes on
+    form's field of the same name, e.g. uncertainty, or above the form when there is none,
+    as with the message that a property's values must state a condition."""
+    try:
+        obj.full_clean(**kwargs)
+    except ValidationError as exc:
+        for field, messages in exc.message_dict.items():
+            form.add_error(field if field in form.fields else None, messages)
 
 
 class SeriesForm(forms.Form):
@@ -509,18 +520,8 @@ class SeriesForm(forms.Form):
         )
         # A box that already has an error isn't checked again, so a blank one isn't refused
         # twice. Series.clean() runs whatever is left out.
-        self.check_rules(self.series, exclude=list(self.errors))
+        check_rules(self, self.series, exclude=list(self.errors))
         return cleaned
-
-    def check_rules(self, obj, **kwargs):
-        """Check obj with its full_clean(), which runs the rules for values. Each message goes
-        on this form's field of the same name, e.g. uncertainty, or above the form when there is
-        none, as with the message that a property's values must state a condition."""
-        try:
-            obj.full_clean(**kwargs)
-        except ValidationError as exc:
-            for field, messages in exc.message_dict.items():
-                self.add_error(field if field in self.fields else None, messages)
 
     def save(self, user):
         """Save the series and its points, recorded as entered by user, in one transaction, so
@@ -564,7 +565,7 @@ class ValueForm(SeriesForm):
                 uncertainty=cleaned["uncertainty"], temperature_c=cleaned.get("temperature_c"),
             )
             # The series has no primary key yet, which is all full_clean() would say about it.
-            self.check_rules(point, exclude=["series"])
+            check_rules(self, point, exclude=["series"])
             self.point_list = [point]
         return cleaned
 
@@ -765,3 +766,189 @@ class CurveForm(SeriesForm):
                 named.append(f"…and {more:,} more line{'' if more == 1 else 's'} with a problem.")
             self.add_error("points", ["Nothing is saved until every line is a point: fix or delete these lines.", *named])
         return cleaned
+
+
+# A mixture from a reference: its components in FFDB, typed or pasted one per line, and the
+# rest of its composition in words.
+
+# The units a component line can give, keyed as they are compared: in lower case, without
+# spaces, so "Mol %" is mol%.
+COMPONENT_UNITS = {unit.lower(): unit for unit in MixtureComponent.Unit.values}
+
+
+@dataclass
+class ComponentLine:
+    """One line of a mixture's components, as read_components() reads it."""
+
+    number: int
+    text: str
+    material: Material | None = None
+    fraction: float | None = None
+    unit: str = ""
+    problem: str = ""  # why the line can't be read, or "" when it can
+
+
+def find_component(text):
+    """The material that text names, by its LCR ID or by a name or alias that fits it alone,
+    as (material, ""), or (None, why none was found). Whether it is a compound is left to
+    MixtureComponent.clean()."""
+    pk = pk_from_accession(text)
+    if pk is not None:
+        material = Material.objects.filter(pk=pk).first()
+        return (material, "") if material else (None, f"No material has the LCR ID {accession(pk)}.")
+    found = materials_named(text)
+    if len(found) == 1:
+        return found[0], ""
+    if found:
+        return None, f"More than one material is called {text} ({', '.join(map(str, found))}): give its LCR ID."
+    return None, (
+        f"Nothing in FFDB is called {text}. Add it first with the compound table, or describe it under Other components."
+    )
+
+
+def read_components(text):
+    """A mixture's component lines, each read as a ComponentLine: the compound, its fraction
+    and its unit. Blank lines are skipped but still counted, so the numbers are the typed
+    text's. Nothing is saved. A line gets one problem, the first found, so each check can
+    rely on those before it."""
+    lines, first_seen = [], {}  # first_seen: a compound's pk -> the number of the line it was first on
+    for number, text_line in enumerate(text.splitlines(), start=1):
+        if not text_line.strip():
+            continue
+        line = ComponentLine(number, text_line.strip())
+        lines.append(line)
+        # On tabs, or else on the last two commas, so a name with a comma in it stays whole.
+        cells = text_line.split("\t") if "\t" in text_line else text_line.rsplit(",", 2)
+        cells = [cell.strip() for cell in cells]
+        if len(cells) != 3 or not cells[0]:
+            line.problem = "Expected an LCR ID or name, a fraction and a unit, e.g. LCR-00128, 30, mol%."
+            continue
+        name, fraction, unit = cells
+        line.unit = COMPONENT_UNITS.get(unit.replace(" ", "").lower(), "")
+        if not line.unit:
+            line.problem = f"“{unit}” isn't a unit: give mol% or wt%."
+            continue
+        try:
+            line.fraction = point_number(fraction)
+        except ValueError as exc:
+            line.problem = str(exc)
+            continue
+        line.material, line.problem = find_component(name)
+        if line.problem:
+            continue
+        try:
+            # The rules for one component on its own: a compound, with a fraction more than 0
+            # and at most 100. It has no mixture yet, which clean() allows.
+            MixtureComponent(component=line.material, fraction=line.fraction, unit=line.unit).clean()
+        except ValidationError as exc:
+            line.problem = " ".join(exc.messages)
+            continue
+        if line.material.pk in first_seen:
+            line.problem = f"Same compound as line {first_seen[line.material.pk]}: give each compound once."
+            continue
+        first_seen[line.material.pk] = number
+    return lines
+
+
+class MixtureForm(forms.Form):
+    """A mixture as a reference gives it: its name, whether its composition is known, its
+    components in FFDB as lines (read_components()), and the rest in words. A mixture has
+    no structure, so FFDB can't tell by itself whether it already has it. When mixtures with
+    this name or alias are in FFDB (same_name), the form asks whether it is one of them,
+    because names such as M5 are reused by different groups.
+
+    clean() reads the lines, builds the mixture, not saved, and checks it by the rules for
+    mixtures, so it is refused with the same messages as in the admin. The form is valid,
+    and can be saved, only when every line reads."""
+
+    DIFFERENT = "different"
+
+    # Not required here: Material.clean() says a mixture needs a name, and why.
+    name = forms.CharField(required=False, max_length=NAME_LENGTH, help_text="As the reference prints it, e.g. F7.")
+    # None is chosen to begin with: a default of Listed would quietly save a partly known
+    # mixture as listed.
+    composition_status = forms.ChoiceField(
+        label="Its composition",
+        choices=Material.CompositionStatus.choices,
+        widget=forms.RadioSelect,
+        help_text="Whether the reference gives every component, only some, or none, as for many commercial mixtures.",
+    )
+    components = forms.CharField(
+        label="Components in FFDB",
+        required=False,  # Not disclosed has none, and Other components can describe them all
+        widget=forms.Textarea(attrs={"rows": 4, "spellcheck": "false"}),
+        strip=False,  # stripping blank lines from the start would change the line numbers
+        help_text="One compound per line: its LCR ID or name, its fraction and the unit (mol% or wt%), separated by "
+        "commas or tabs, e.g. LCR-00128, 30, mol%. A compound that isn't in FFDB yet: add it first with the compound "
+        "table, or describe it under Other components.",
+    )
+    other_components = forms.CharField(
+        required=False,
+        widget=forms.Textarea(attrs={"rows": 2}),
+        help_text="Components that aren't in FFDB, such as a commercial host, with their fractions if known.",
+    )
+    notes = forms.CharField(required=False, widget=forms.Textarea(attrs={"rows": 2}))
+    same_as = forms.ChoiceField(
+        label="Is it one of these?",
+        widget=forms.RadioSelect,
+        error_messages={"required": "Say whether this is one of them or a different mixture."},
+    )  # __init__ gives it its choices, or removes it when no mixture has this name
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # The question's choices depend on the name, so it is read as posted, before it is
+        # cleaned. Cleaning only strips spaces, which name_key() ignores anyway. An unbound
+        # form has no name, which fits no mixture.
+        self.same_name = materials_named(self.data.get("name", ""), Material.Kind.MIXTURE)
+        if self.same_name:
+            self.fields["same_as"].choices = [
+                *[(str(mixture.pk), f"Yes, it's {mixture.accession}") for mixture in self.same_name],
+                (self.DIFFERENT, "No, a different mixture with the same name"),
+            ]
+        else:
+            del self.fields["same_as"]
+        self.lines, self.problem_lines = [], []  # set by clean_components()
+        self.mixture = self.existing = None  # set by clean()
+
+    def clean_components(self):
+        """The component lines, read. One line with a problem refuses the box: each line's
+        problem is shown with the lines."""
+        self.lines = read_components(self.cleaned_data["components"])
+        self.problem_lines = [line for line in self.lines if line.problem]
+        if self.problem_lines:
+            raise ValidationError("Nothing is saved until every line reads: fix or delete the lines marked below.")
+        return self.lines
+
+    def clean(self):
+        cleaned = super().clean()
+        self.mixture = Material(
+            kind=Material.Kind.MIXTURE,
+            name=cleaned.get("name", ""),
+            composition_status=cleaned.get("composition_status", ""),
+            other_components=cleaned.get("other_components", ""),
+            notes=cleaned.get("notes", ""),
+        )
+        # A box that already has an error isn't checked again, so a status not chosen isn't
+        # refused twice.
+        check_rules(self, self.mixture, exclude=list(self.errors))
+        # The rules across the components, once every line reads and the status is chosen.
+        if "components" in cleaned and cleaned.get("composition_status"):
+            for problem in self.mixture.composition_problems([(line.fraction, line.unit) for line in self.lines]):
+                self.add_error(None, problem)
+        # None for a different mixture, or when the question isn't asked or answered.
+        self.existing = next((m for m in self.same_name if str(m.pk) == cleaned.get("same_as")), None)
+        return cleaned
+
+    def save(self):
+        """Add the mixture and its components in one transaction, so a failure partway keeps
+        neither, and return (the mixture, True). For a mixture already in FFDB, return it with
+        False: nothing typed here is saved. Call it only on a valid form."""
+        if self.existing is not None:
+            return self.existing, False
+        with transaction.atomic():
+            self.mixture.save()
+            MixtureComponent.objects.bulk_create(
+                MixtureComponent(mixture=self.mixture, component=line.material, fraction=line.fraction, unit=line.unit)
+                for line in self.lines
+            )
+        return self.mixture, True

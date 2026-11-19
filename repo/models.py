@@ -272,6 +272,21 @@ class Material(models.Model):
         )
 
 
+def materials_named(name, kind=None):
+    """The materials with this name or alias, compared by name_key(), in LCR ID order: only
+    those of kind (one of Material.Kind), if given. Python compares the names, because
+    name_key() drops characters in a way the database can't, using only its ordinary
+    features, so every material is read. A name with no letters or digits fits none."""
+    if not name_key(name):
+        return []
+    # only(): just the fields compared, which is several times quicker than reading every
+    # SMILES too. The few materials found read any other field when it is first used.
+    materials = Material.objects.order_by("pk").only("kind", "name", "aliases")
+    if kind:
+        materials = materials.filter(kind=kind)
+    return [material for material in materials if material.has_name(name)]
+
+
 class MixtureComponent(models.Model):
     """One compound in FFDB that is part of a mixture, with its fraction. Components that
     aren't in FFDB are described in the mixture's other components. The rules across all

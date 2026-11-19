@@ -25,4 +25,5 @@ urlpatterns = [
     path("add/reference/<int:pk>/", views.add_from_reference, name="add_from_reference"),
     path("add/reference/<int:pk>/value/", views.add_value, name="add_value"),
     path("add/reference/<int:pk>/curve/", views.add_curve, name="add_curve"),
+    path("add/reference/<int:pk>/mixture/", views.add_mixture, name="add_mixture"),
 ]

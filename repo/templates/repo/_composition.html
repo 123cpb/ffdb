@@ -1,0 +1,18 @@
+{% comment %}
+A mixture's composition: its components in FFDB, largest first, each linked to its page,
+then its other components, or that it isn't disclosed. Include it with material=the mixture
+and components=its MixtureComponent rows. The material page includes it, and so does the
+mixture form's question about mixtures with the same name.
+{% endcomment %}
+{% load repo_tags %}
+{% if material.composition_status == "not_disclosed" %}
+Not disclosed
+{% else %}
+<ul class="composition">
+  {% for row in components %}
+  <li><a href="{% url 'repo:material' row.component.pk %}">{{ row.component.accession }}</a>{% if row.component.name %} {{ row.component.name }}{% endif %}, {{ row.fraction|num }} {{ row.unit }}</li>
+  {% endfor %}
+  {% if material.other_components %}<li>Other components: {{ material.other_components|linebreaksbr }}</li>{% endif %}
+</ul>
+{% if material.composition_status == "partly_known" %}<p class="composition__note">Partly known: only what is listed here is known.</p>{% endif %}
+{% endif %}

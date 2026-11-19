@@ -10,7 +10,7 @@
   {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
 </p>
 
-<p>Add this reference's compounds, their phase sequences, and its property values and curves here.</p>
+<p>Add this reference's compounds, their phase sequences, its mixtures, and its property values and curves here.</p>
 
 <section>
   <h2>Add compounds</h2>
@@ -80,6 +80,14 @@
     </table>
   </div>
   {% endif %}
+</section>
+
+<section>
+  <h2>Add a mixture</h2>
+  <p>Its components must already be in FFDB as compounds: add any that aren't with the table above, or describe them
+  under Other components. Check shows the compound each line finds, and asks if a mixture with this name is already in
+  FFDB.</p>
+  {% include "repo/_mixture_form.html" with form=mixture_form %}
 </section>
 
 <section>
