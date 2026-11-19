@@ -1,5 +1,6 @@
 import csv
 import io
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from django.db import connection
@@ -8,11 +9,13 @@ from django.urls import reverse
 from django.utils import timezone
 
 from repo import chem
-from repo.models import Material, PhaseSequence, Series
-from repo.tests.test_property_pages import PropertyPagesTestCase
+from repo.models import Material, MixtureComponent, PhaseSequence, Series
+from repo.tests.test_property_pages import PS_CONDITIONS, PropertyPagesTestCase
 from repo.tests.test_values import add
 
 REFERENCE_COLUMNS = ["reference", "reference_kind", "reference_identifier", "reference_link"]
+MIXTURE = Material.Kind.MIXTURE
+MOL, WT = MixtureComponent.Unit.MOL, MixtureComponent.Unit.WT
 
 
 class ExportTestCase(PropertyPagesTestCase):
@@ -64,8 +67,9 @@ class MaterialsFileTests(ExportTestCase):
         header, rows = self.download(self.url)
 
         self.assertEqual(header, [
-            "material_id", "name", "aliases", "smiles", "inchikey", "formula", "molar_mass_g_mol",
-            "lc_phases", "n_references", "exported_at",
+            "material_id", "name", "aliases", "material_kind", "composition_status", "components",
+            "other_components", "smiles", "inchikey", "formula", "molar_mass_g_mol", "lc_phases",
+            "n_references", "exported_at",
         ])
         self.assertEqual([row["name"] for row in rows], ["DIO", "RM734", "5CB"])
 
@@ -76,6 +80,11 @@ class MaterialsFileTests(ExportTestCase):
         formula, mass = chem.formula_and_mass(self.dio.canonical_smiles)
         self.assertEqual(dio["material_id"], self.dio.accession)
         self.assertEqual(dio["aliases"], "DIO-1; Compound 4")
+        # A compound has no composition: its stored status, listed, is the default, not a fact.
+        self.assertEqual(
+            [dio[key] for key in ("material_kind", "composition_status", "components", "other_components")],
+            ["compound", "", "", ""],
+        )
         self.assertEqual((dio["smiles"], dio["inchikey"]), (self.dio.canonical_smiles, self.dio.inchikey))
         self.assertEqual((dio["formula"], dio["molar_mass_g_mol"]), (formula, str(round(mass, 3))))
         self.assertEqual(dio["lc_phases"], "N; NS; NF")  # the vocabulary's order, each once
@@ -111,9 +120,9 @@ class SequencesFileTests(ExportTestCase):
         header, rows = self.download(self.url)
 
         self.assertEqual(header, [
-            "material_id", "material", "sequence_reported", "sequence_standard", "direction",
-            "rate_k_per_min", "method", "lowest_temperature_c", "clearing_point_c", "melting_point_c",
-            *REFERENCE_COLUMNS, "exported_at",
+            "material_id", "material", "material_kind", "sequence_reported", "sequence_standard",
+            "direction", "rate_k_per_min", "method", "lowest_temperature_c", "clearing_point_c",
+            "melting_point_c", *REFERENCE_COLUMNS, "exported_at",
         ])
         # By LCR ID, then by reference identifier: 10.1039/... comes before 10.1080/...
         self.assertEqual([row["material"] for row in rows], ["DIO", "DIO", "RM734", "5CB"])
@@ -122,6 +131,7 @@ class SequencesFileTests(ExportTestCase):
         self.assertEqual(chen, {
             "material_id": self.dio.accession,
             "material": "DIO",
+            "material_kind": "compound",
             "sequence_reported": "K 34.4 NF 68.8 NX 84.5 N 173.6 I",
             "sequence_standard": "Cr 34.4 NF 68.8 NS 84.5 N 173.6 Iso",
             "direction": "summary",
@@ -149,9 +159,9 @@ class ValuesFileTests(ExportTestCase):
         header, rows = self.download(self.ps_url)
 
         self.assertEqual(header, [
-            "material_id", "material", "smiles", "property", "symbol", "series_id", "qualifier",
-            "value", "unit", "uncertainty", "temperature_c", "variable", "x", "x_unit", "kind",
-            "method", "direction", "conditions", "conditions_json", "taken_from", "location",
+            "material_id", "material", "material_kind", "smiles", "property", "symbol", "series_id",
+            "qualifier", "value", "unit", "uncertainty", "temperature_c", "variable", "x", "x_unit",
+            "kind", "method", "direction", "conditions", "conditions_json", "taken_from", "location",
             "digitised", *REFERENCE_COLUMNS, "exported_at",
         ])
         curves = [self.curves[name].pk for name in ("DIO", "RM734", "5CB")]
@@ -163,7 +173,8 @@ class ValuesFileTests(ExportTestCase):
         del row["exported_at"]
 
         self.assertEqual(row, {
-            "material_id": self.dio.accession, "material": "DIO", "smiles": self.dio.canonical_smiles,
+            "material_id": self.dio.accession, "material": "DIO", "material_kind": "compound",
+            "smiles": self.dio.canonical_smiles,
             "property": "Spontaneous polarisation", "symbol": "Ps", "series_id": str(self.curves["DIO"].pk),
             "qualifier": "exact", "value": "6.08", "unit": "µC/cm²", "uncertainty": "",
             "temperature_c": "60.0", "variable": "temperature", "x": "60.0", "x_unit": "°C",
@@ -208,6 +219,96 @@ class ValuesFileTests(ExportTestCase):
         response = self.client.get(reverse("repo:property_values_csv", args=["no-such-property"]))
 
         self.assertEqual(response.status_code, 404)
+
+
+class MixtureFileTests(ExportTestCase):
+    """F7, a mixture of DIO and RM734 at 70 and 30 mol%, with a cooling run and a Ps value
+    from Chen 2022, and M5, whose composition isn't disclosed and which has no data."""
+
+    url = reverse("repo:materials_csv")
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.f7 = Material.objects.create(kind=MIXTURE, name="F7")
+        # The smaller first, so the file's largest-first order isn't just the order added.
+        MixtureComponent.objects.create(mixture=cls.f7, component=cls.rm734, fraction=30, unit=MOL)
+        MixtureComponent.objects.create(mixture=cls.f7, component=cls.dio, fraction=70, unit=MOL)
+        PhaseSequence.objects.create(
+            material=cls.f7, reference=cls.chen, direction=PhaseSequence.Direction.COOLING,
+            sequence="Iso 120 N 95 NF 40 Cr",
+        )
+        add(cls.f7, cls.chen, "ps", **PS_CONDITIONS).points.create(value=4.0, temperature_c=50)
+        cls.m5 = Material.objects.create(
+            kind=MIXTURE, name="M5", composition_status=Material.CompositionStatus.NOT_DISCLOSED
+        )
+
+    def material_row(self, material):
+        """material's row in the materials file."""
+        rows = {row["material_id"]: row for row in self.download(self.url)[1]}
+        return rows[material.accession]
+
+    def test_a_mixtures_row_gives_its_components_largest_first_and_no_structure(self):
+        f7 = self.material_row(self.f7)
+
+        self.assertEqual((f7["material_kind"], f7["composition_status"]), ("mixture", "listed"))
+        self.assertEqual(
+            f7["components"], f"{self.dio.accession} DIO, 70 mol%; {self.rm734.accession} RM734, 30 mol%"
+        )
+        for key in ("other_components", "smiles", "inchikey", "formula", "molar_mass_g_mol"):
+            self.assertEqual(f7[key], "", key)
+        # Its phases and references are found as a compound's are.
+        self.assertEqual((f7["lc_phases"], f7["n_references"]), ("N; NF", "1"))
+
+    def test_a_composition_that_is_not_disclosed_has_no_components(self):
+        m5 = self.material_row(self.m5)
+
+        self.assertEqual(
+            [m5[key] for key in ("composition_status", "components", "other_components")],
+            ["not_disclosed", "", ""],
+        )
+
+    def test_partly_known_gives_the_other_components_too(self):
+        f8 = Material.objects.create(
+            kind=MIXTURE, name="F8", composition_status=Material.CompositionStatus.PARTLY_KNOWN,
+            other_components="A nematic host, 90 wt%",
+        )
+        MixtureComponent.objects.create(mixture=f8, component=self.rm734, fraction=10, unit=WT)
+
+        row = self.material_row(f8)
+
+        self.assertEqual(
+            [row[key] for key in ("composition_status", "components", "other_components")],
+            ["partly_known", f"{self.rm734.accession} RM734, 10 wt%", "A nematic host, 90 wt%"],
+        )
+
+    def test_a_component_with_no_name_is_its_lcr_id(self):
+        unnamed = Material.objects.create(smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
+        f8 = Material.objects.create(kind=MIXTURE, name="F8")
+        MixtureComponent.objects.create(mixture=f8, component=unnamed, fraction=12.5, unit=WT)
+
+        self.assertEqual(self.material_row(f8)["components"], f"{unnamed.accession}, 12.5 wt%")
+
+    def test_every_download_says_which_rows_are_mixtures(self):
+        urls = [reverse(f"repo:{name}") for name in ("materials_csv", "sequences_csv", "values_csv")]
+        for url in [*urls, reverse("repo:property_values_csv", args=["ps"])]:
+            with self.subTest(url=url):
+                kinds = defaultdict(set)  # every kind a material's rows give, each once
+                for row in self.download(url)[1]:
+                    kinds[row["material_id"]].add(row["material_kind"])
+                self.assertEqual(kinds[self.f7.accession], {"mixture"})
+                self.assertEqual(kinds[self.dio.accession], {"compound"})
+
+    def test_more_mixtures_take_no_more_queries(self):
+        with CaptureQueriesContext(connection) as before:
+            self.download(self.url)
+        f8 = Material.objects.create(kind=MIXTURE, name="F8")
+        MixtureComponent.objects.create(mixture=f8, component=self.five_cb, fraction=50, unit=MOL)
+        MixtureComponent.objects.create(mixture=f8, component=self.rm734, fraction=50, unit=MOL)
+        with CaptureQueriesContext(connection) as after:
+            self.download(self.url)
+
+        self.assertEqual(len(after), len(before))
 
 
 class LinkTests(ExportTestCase):
