@@ -211,6 +211,13 @@ class Material(models.Model):
             raise ValidationError(
                 {"smiles": f"This structure is already in FFDB as {clash.accession} ({clash.name})."}
             )
+        # Only when the structure is new to this material. Here self.inchikey is still the
+        # saved one (save() works out the new one): blank for a material being added, or a
+        # mixture being made a compound. So changing a name is never refused.
+        if key != self.inchikey:
+            problem = RetiredID.structure_problem(key)
+            if problem:
+                raise ValidationError({"smiles": problem})
 
     def save(self, *args, **kwargs):
         """Work out a compound's identifiers from its SMILES. A mixture has none."""
@@ -1241,6 +1248,20 @@ class RetiredID(models.Model):
     @property
     def accession(self):
         return accession(self.number)
+
+    @classmethod
+    def structure_problem(cls, inchikey):
+        """Why a compound with this InChIKey can't be added to FFDB, or "" when it can: it was a
+        retired ID's structure, and a structure has one ID. Restoring is the only way a retired
+        ID comes back, and a merged one's data is with the material it went into. Should two
+        records have it, the most recently retired is named (Meta's ordering)."""
+        record = cls.objects.filter(inchikey=inchikey).first() if inchikey else None
+        if record is None:
+            return ""
+        was = f"This structure was {record.accession} ({record.name})"
+        if record.merged_into is not None:
+            return f"{was}, merged into {accession(record.merged_into)}: add the data there."
+        return f"{was}, now retired: an admin can restore {record.accession}."
 
     def restore(self):
         """Put the material back from the snapshot, under its old number, with every row

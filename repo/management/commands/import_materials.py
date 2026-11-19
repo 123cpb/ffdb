@@ -8,7 +8,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
 from repo import chem
-from repo.models import Material, Phase, PhaseSequence, Reference, clean_doi, name_key
+from repo.models import Material, Phase, PhaseSequence, Reference, RetiredID, clean_doi, name_key
 from repo.phases import PhaseSequenceError, parse_summary
 
 # The columns of the merged list that this command reads. Its other columns
@@ -87,6 +87,10 @@ class Command(BaseCommand):
 
         material = Material.objects.filter(inchikey=inchikey).first()
         if material is None:
+            # A retired ID's structure would get a second ID: restoring is the way back.
+            problem = RetiredID.structure_problem(inchikey)
+            if problem:
+                return self.skip(where, name, problem), None
             material = Material.objects.create(name=name, smiles=smiles)
             warning = material.stereo_warning()
             if warning:

@@ -6,7 +6,7 @@ from pathlib import Path
 from django.core.management import CommandError, call_command
 from django.test import SimpleTestCase, TestCase
 
-from repo.models import Material, PhaseSequence, Reference
+from repo.models import Material, PhaseSequence, Reference, accession
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 RM734_RETYPED = "c1c(c(ccc1OC)C(=O)Oc1ccc(cc1)C(=O)Oc1ccc(cc1)[N+](=O)[O-])OC"
@@ -98,6 +98,21 @@ class ImportTests(TestCase):
 
         self.assertIn("NF line 7 (Nonsense): skipped, RDKit could not read", output)
         self.assertIn("LCPROP line 8 (NoSmiles): skipped, no SMILES", output)
+
+    def test_a_retired_ids_structure_is_skipped_naming_the_old_id(self):
+        cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB)
+        number = cb5.pk
+        cb5.retire(None)
+        self.write([SAMPLE[0], ["NF", "3", "5CB", FIVE_CB, "K 22.5 N 35 I", ARXIV, "doi"]])
+
+        output = self.run_import()
+
+        self.assertIn(
+            f"NF line 3 (5CB): skipped, This structure was {accession(number)} (5CB), now retired: an admin "
+            f"can restore {accession(number)}.",
+            output,
+        )
+        self.assertEqual((self.materials(), self.sequences()), ([], []))
 
     def test_running_it_twice_adds_nothing(self):
         self.run_import()

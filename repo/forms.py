@@ -22,6 +22,7 @@ from .models import (
     PhaseSequence,
     Property,
     Reference,
+    RetiredID,
     Series,
     Variable,
     accession,
@@ -206,6 +207,10 @@ def read_lines(rows, reference, direction):
                 line.problem = str(exc)
                 continue
             line.match = Material.objects.filter(inchikey=inchikey).first()
+            if line.match is None:
+                line.problem = RetiredID.structure_problem(inchikey)
+                if line.problem:
+                    continue
         # A pk is a number and an InChIKey is text, so the two can never be mistaken for each other.
         key = line.match.pk if line.match else inchikey
         if key in first_seen:
