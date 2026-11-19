@@ -3,6 +3,10 @@
 {% block content %}
 <p class="reference-kind">{{ reference.get_kind_display }}</p>
 <h1 class="page-title reference-label">{{ reference.label }}</h1>
+{% if reference.kind == "unpublished" %}
+<p>Unpublished: the group's own result, not yet published or peer reviewed. Its label says
+so wherever it appears, and so does the downloads' reference_kind column.</p>
+{% endif %}
 
 <dl class="facts">
   <dt>{% if reference.has_doi %}DOI{% elif reference.kind == "patent" %}Patent number{% else %}Identifier{% endif %}</dt>
@@ -11,9 +15,10 @@
   {% if reference.first_author %}<dt>First author</dt><dd>{{ reference.first_author }}</dd>{% endif %}
   {% if reference.year %}<dt>Year</dt><dd>{{ reference.year }}</dd>{% endif %}
   {% if reference.venue %}
-  <dt>{% if reference.kind == "patent" %}Patent office{% elif reference.kind == "thesis" %}University{% elif reference.kind == "preprint" %}Server{% else %}Journal{% endif %}</dt>
+  <dt>{% if reference.kind == "patent" %}Patent office{% elif reference.kind == "thesis" or reference.kind == "unpublished" %}University{% elif reference.kind == "preprint" %}Server{% else %}Journal{% endif %}</dt>
   <dd>{{ reference.venue }}</dd>
   {% endif %}
+  {% if reference.dataset_url %}<dt>Deposited data</dt><dd><a href="{{ reference.dataset_url }}">{{ reference.dataset_url }}</a></dd>{% endif %}
   {% if reference.notes %}<dt>Notes</dt><dd>{{ reference.notes|linebreaksbr }}</dd>{% endif %}
 </dl>
 

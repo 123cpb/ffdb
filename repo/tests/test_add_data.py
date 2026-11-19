@@ -160,6 +160,19 @@ class FindReferenceTests(AddDataTestCase):
         self.assertRedirects(response, self.add_page(thesis))
         self.assertEqual(Reference.objects.count(), 4)
 
+    def test_an_unpublished_result_is_added_and_found_again_in_other_capitals(self):
+        response = self.give("unpublished", " Mandle group  2026, Computed dipole moments")
+        result = Reference.objects.get(identifier="Mandle group 2026, Computed dipole moments")
+        self.assertEqual(result.kind, Reference.Kind.UNPUBLISHED)
+        self.assertEqual(self.messages(response), ["Added to FFDB: Mandle group 2026, Computed dipole moments (unpublished)"])
+
+        response = self.give("unpublished", "mandle group 2026, computed dipole moments")
+
+        self.assertRedirects(response, self.add_page(result))
+        self.assertEqual(self.messages(response), ["Already in FFDB: Mandle group 2026, Computed dipole moments (unpublished)"])
+        self.assertEqual(Reference.objects.count(), 4)
+        self.assertEqual(self.crossref.requests, [])
+
 
 class AccessTests(AddDataTestCase):
     def test_a_logged_out_visitor_cant_add_anything(self):

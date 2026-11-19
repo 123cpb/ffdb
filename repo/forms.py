@@ -47,7 +47,9 @@ class FindReferenceForm(forms.Form):
 
     DOI = "doi"
     PATENT = "patent"
-    THESIS = "thesis"
+    # The same as their Reference.Kind values, so clean() can keep them as they are.
+    THESIS = Reference.Kind.THESIS
+    UNPUBLISHED = Reference.Kind.UNPUBLISHED
 
     kind = forms.ChoiceField(
         label="The data is from",
@@ -55,6 +57,7 @@ class FindReferenceForm(forms.Form):
             (DOI, "A journal article or preprint, by its DOI"),
             (PATENT, "A patent, by its number"),
             (THESIS, "A thesis"),
+            (UNPUBLISHED, "An unpublished group result"),
         ],
         # DOI is chosen to begin with, because most references are papers. It can't quietly
         # mislabel anything: a patent number or thesis left under DOI fails the DOI check.
@@ -62,11 +65,12 @@ class FindReferenceForm(forms.Form):
         widget=forms.RadioSelect,
     )
     identifier = forms.CharField(
-        label="DOI, patent number, or thesis",
+        label="DOI, patent number, thesis or unpublished result",
         max_length=Reference._meta.get_field("identifier").max_length,
         help_text="A DOI as you have it, e.g. 10.1002/chem.201702742 or https://doi.org/10.1002/chem.201702742; "
         "a patent number, e.g. EP3260450A1; for a thesis, its author, year and title, "
-        "e.g. Parton-Barr 2027, Fluid ferroelectrics.",
+        "e.g. Parton-Barr 2027, Fluid ferroelectrics; for an unpublished group result, who it is "
+        "from (the group or a person), the year and what it is, e.g. Mandle group 2026, Computed dipole moments.",
     )
 
     def clean(self):
@@ -84,7 +88,9 @@ class FindReferenceForm(forms.Form):
         elif kind == self.PATENT:
             cleaned["kind"], cleaned["identifier"] = Reference.Kind.PATENT, clean_patent_number(text)
         else:
-            cleaned["kind"], cleaned["identifier"] = Reference.Kind.THESIS, " ".join(text.split())
+            # A thesis or an unpublished result: the text as typed, with its spaces tidied,
+            # so the same words find it again. add_data ignores capitals when it looks.
+            cleaned["identifier"] = " ".join(text.split())
         return cleaned
 
 

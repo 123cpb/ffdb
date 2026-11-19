@@ -23,6 +23,13 @@ class LabelTests(SimpleTestCase):
         ref = Reference(identifier=DOI, first_author="Mandle", venue="Chem. Eur. J.")
         self.assertEqual(ref.label, DOI)
 
+    def test_an_unpublished_result_says_so_with_or_without_details(self):
+        ref = Reference(kind=Reference.Kind.UNPUBLISHED, identifier="Mandle group 2026, Computed dipole moments")
+        self.assertEqual(ref.label, "Mandle group 2026, Computed dipole moments (unpublished)")
+
+        ref.first_author, ref.year, ref.venue = "Mandle", 2026, "University of Leeds"
+        self.assertEqual(ref.label, "Mandle 2026, University of Leeds (unpublished)")
+
 
 class LinkTests(SimpleTestCase):
     def test_articles_and_preprints_link_to_doi_org(self):
@@ -34,9 +41,10 @@ class LinkTests(SimpleTestCase):
         ref = Reference(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
         self.assertEqual(ref.link, "https://worldwide.espacenet.com/patent/search?q=pn%3DEP3260450A1")
 
-    def test_a_thesis_has_no_link(self):
-        ref = Reference(kind=Reference.Kind.THESIS, identifier="Mandle 2015, PhD thesis")
-        self.assertEqual(ref.link, "")
+    def test_a_thesis_or_an_unpublished_result_has_no_link(self):
+        for kind in (Reference.Kind.THESIS, Reference.Kind.UNPUBLISHED):
+            ref = Reference(kind=kind, identifier="Mandle 2015, PhD thesis")
+            self.assertEqual(ref.link, "")
 
     def test_a_hash_in_a_doi_is_encoded(self):
         ref = Reference(kind=Reference.Kind.ARTICLE, identifier="10.1000/a#b")

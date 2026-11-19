@@ -303,12 +303,14 @@ def find_references(text, kind=""):
     The label is worked out in Python, so the database can't search it. Instead, each word
     of the text must be part of the identifier (a DOI or patent number), first author,
     venue or title, ignoring case, or be the year. So "Mandle 2017" finds the reference
-    labelled "Mandle 2017, Chem. Eur. J.". A pasted https://doi.org/ or doi: is removed
-    first. kind, if given, is one of Reference.Kind and keeps only that kind.
+    labelled "Mandle 2017, Chem. Eur. J.". The word unpublished also finds the unpublished
+    group results, whose labels end "(unpublished)". A pasted https://doi.org/ or doi: is
+    removed first. kind, if given, is one of Reference.Kind and keeps only that kind.
     """
     references = references_with_counts()
-    # Commas count as spaces, so a whole copied label works.
-    for word in DOI_PREFIX.sub("", text.strip()).replace(",", " ").split():
+    # Commas and brackets count as spaces, so a whole copied label works.
+    words = DOI_PREFIX.sub("", text.strip()).translate(str.maketrans(",()", "   ")).split()
+    for word in words:
         found = (
             Q(identifier__icontains=word)
             | Q(first_author__icontains=word)
@@ -317,6 +319,8 @@ def find_references(text, kind=""):
         )
         if word.isdigit():
             found |= Q(year=int(word))
+        if word.lower() == "unpublished":
+            found |= Q(kind=Reference.Kind.UNPUBLISHED)
         # Each filter() narrows the last, so every word has to match.
         references = references.filter(found)
     if kind:

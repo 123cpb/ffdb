@@ -1,8 +1,12 @@
+import csv
+import io
+
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
-from repo.models import Material, PhaseSequence, Reference
+from repo.models import Material, PhaseSequence, Reference, Series
+from repo.tests.test_values import add
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
@@ -166,3 +170,50 @@ class ReferencePageTests(ReferenceTestCase):
 
         self.client.force_login(User.objects.create_user("curator", is_staff=True))
         self.assertContains(self.page(self.article), edit_url)
+
+
+class UnpublishedResultTests(ReferenceTestCase):
+    """An unpublished group result, with a link to its deposited data, gives RM734 a computed
+    dipole moment. Its label says it is unpublished wherever it appears."""
+
+    LABEL = "Mandle group 2026, Computed dipole moments (unpublished)"
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.result = Reference.objects.create(
+            kind=Reference.Kind.UNPUBLISHED, identifier="Mandle group 2026, Computed dipole moments",
+            dataset_url="https://doi.org/10.5518/1234",
+        )
+        dipole = add(
+            cls.rm734, cls.result, "dipole-moment", "none", Series.Kind.COMPUTED,
+            method="DFT", conditions={"conformer_protocol": "lowest", "solvent": "gas phase"},
+        )
+        dipole.points.create(value=11.4)
+
+    def test_its_page_says_it_is_unpublished_and_links_to_the_deposited_data(self):
+        response = self.client.get(reverse("repo:reference", args=[self.result.pk]))
+
+        self.assertContains(response, '<p class="reference-kind">Unpublished group result</p>', html=True)
+        self.assertContains(response, f'<h1 class="page-title reference-label">{self.LABEL}</h1>', html=True)
+        self.assertContains(response, "not yet published or peer reviewed")
+        self.assertContains(response, '<a href="https://doi.org/10.5518/1234">https://doi.org/10.5518/1234</a>', html=True)
+
+    def test_a_reference_without_deposited_data_has_no_line_for_it(self):
+        self.assertNotContains(self.client.get(reverse("repo:reference", args=[self.article.pk])), "Deposited data")
+
+    def test_the_material_page_labels_its_value_unpublished(self):
+        self.assertContains(self.client.get(reverse("repo:material", args=[self.rm734.pk])), self.LABEL)
+
+    def test_the_values_download_says_it_is_unpublished(self):
+        text = self.client.get(reverse("repo:values_csv")).content.decode("utf-8-sig")
+        [row] = csv.DictReader(io.StringIO(text))
+
+        self.assertEqual((row["reference"], row["reference_kind"], row["reference_link"]), (self.LABEL, "unpublished", ""))
+
+    def test_a_whole_copied_label_or_the_word_unpublished_finds_it(self):
+        self.assertEqual(self.found(q=self.LABEL), [self.result])
+        self.assertEqual(self.found(q="Unpublished"), [self.result])
+
+    def test_the_kind_choice_shows_only_unpublished_results(self):
+        self.assertEqual(self.found(kind="unpublished"), [self.result])

@@ -108,8 +108,9 @@ REFERENCE_COLUMNS = ["reference", "reference_kind", "reference_identifier", "ref
 
 
 def reference_cells(reference):
-    """A row's reference: its label, kind (article, preprint, patent or thesis), identifier
-    and link. A thesis has no link."""
+    """A row's reference: its label, kind (article, preprint, patent, thesis or
+    unpublished), identifier and link. A thesis or an unpublished result has no link. An
+    unpublished result's label ends "(unpublished)" too (Reference.label)."""
     return [reference.label, reference.kind, reference.identifier, reference.link]
 
 

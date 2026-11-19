@@ -562,23 +562,26 @@ class Entered(models.Model):
 
 
 class Reference(Entered):
-    """Where data comes from: a journal article, preprint, patent or thesis."""
+    """Where data comes from: a journal article, preprint, patent, thesis, or one of the
+    group's own results that isn't published yet."""
 
     class Kind(models.TextChoices):
         ARTICLE = "article", "Journal article"
         PREPRINT = "preprint", "Preprint"
         PATENT = "patent", "Patent"
         THESIS = "thesis", "Thesis"
+        UNPUBLISHED = "unpublished", "Unpublished group result"
 
     # No default, so the admin makes you choose: a default of article would quietly save
     # an arXiv DOI as an article.
-    kind = models.CharField(max_length=10, choices=Kind.choices)
+    kind = models.CharField(max_length=12, choices=Kind.choices)
     # Unique on its own, so a DOI can't be entered once as an article and again as a preprint.
     identifier = models.CharField(
         max_length=500,
         unique=True,
         help_text="The DOI for an article or preprint, e.g. 10.1002/chem.201702742; the number "
-        "for a patent, e.g. EP3260450A1; for a thesis, its author, year and title.",
+        "for a patent, e.g. EP3260450A1; for a thesis, its author, year and title; for an "
+        "unpublished group result, who it is from, the year and what it is.",
     )
     first_author = models.CharField(max_length=100, blank=True, help_text="Surname only, e.g. Mandle.")
     year = models.PositiveSmallIntegerField(null=True, blank=True)
@@ -595,6 +598,13 @@ class Reference(Entered):
         help_text="As published. Filled in from Crossref when a DOI is added on the Add data page. "
         "Shown only here in the admin until it is decided whether abstracts can be shown publicly.",
     )
+    dataset_url = models.URLField(
+        "deposited data",
+        max_length=300,
+        blank=True,
+        help_text="A link to the data where it is deposited, e.g. a Research Data Leeds DOI: "
+        "https://doi.org/10.5518/1234. Shown on the reference's page.",
+    )
     notes = models.TextField(blank=True)
 
     class Meta:
@@ -606,11 +616,16 @@ class Reference(Entered):
     @property
     def label(self):
         """How the reference is cited: "Mandle 2017, Chem. Eur. J.", or "Mandle 2017" without
-        a venue. Without a first author and a year, the identifier."""
+        a venue. Without a first author and a year, the identifier. An unpublished group
+        result ends "(unpublished)" either way, so every page, chart and download that names
+        it says so."""
         if not (self.first_author and self.year):
-            return self.identifier
-        label = f"{self.first_author} {self.year}"
-        return f"{label}, {self.venue}" if self.venue else label
+            label = self.identifier
+        else:
+            label = f"{self.first_author} {self.year}"
+            if self.venue:
+                label = f"{label}, {self.venue}"
+        return f"{label} (unpublished)" if self.kind == self.Kind.UNPUBLISHED else label
 
     def has_doi(self):
         return self.kind in (self.Kind.ARTICLE, self.Kind.PREPRINT)
@@ -624,7 +639,7 @@ class Reference(Entered):
     @property
     def link(self):
         """Where to read it: doi.org for a DOI, an Espacenet search for a patent number,
-        and "" for a thesis, which has no standard address."""
+        and "" for a thesis or an unpublished result, which have no standard address."""
         if self.has_doi():
             # quote() turns characters that mean something in an address, such as # and ?,
             # into %23 and %3F, so they reach doi.org as part of the DOI.
