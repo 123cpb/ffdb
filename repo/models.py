@@ -1,9 +1,12 @@
 import re
+from collections import defaultdict
 from urllib.parse import quote, urlencode
 
 from django.conf import settings
+from django.contrib.auth import get_user_model
 from django.core import serializers
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
+from django.core.serializers.base import DeserializationError
 from django.db import models, transaction
 from django.db.models import Q
 from django.urls import reverse
@@ -1100,6 +1103,30 @@ class Measurement(models.Model):
         return errors
 
 
+def missing_links(rows):
+    """What the rows read back from a snapshot point to outside it that is no longer in FFDB,
+    as {model: {primary keys}}: their foreign keys, such as a sequence's reference, and their
+    many-to-many links, a sequence's phases. Links between rows in the snapshot, such as a
+    point's series, are left out: those rows come back together."""
+    in_snapshot = {(type(row.object), row.object.pk) for row in rows}
+    wanted = defaultdict(set)  # {model: {primary keys the rows point to}}
+    for row in rows:
+        for field in row.object._meta.concrete_fields:
+            if not field.is_relation:
+                continue
+            pk = getattr(row.object, field.attname)  # e.g. reference_id: read without a query
+            if pk is not None and (field.related_model, pk) not in in_snapshot:
+                wanted[field.related_model].add(pk)
+        for name, pks in row.m2m_data.items():  # {"phases": [primary keys]}
+            wanted[row.object._meta.get_field(name).related_model].update(pks)
+    missing = {}
+    for model, pks in wanted.items():
+        gone = pks - set(model.objects.filter(pk__in=pks).values_list("pk", flat=True))
+        if gone:
+            missing[model] = gone
+    return missing
+
+
 class RetiredID(models.Model):
     """An LCR ID whose material has been deleted (Material.retire()), so that what it was is
     kept, and the material can be put back from the snapshot. PostgreSQL never gives a
@@ -1132,3 +1159,49 @@ class RetiredID(models.Model):
     @property
     def accession(self):
         return accession(self.number)
+
+    def restore(self):
+        """Put the material back from the snapshot, under its old number, with every row
+        deleted with it, then delete this record: all of it or none. What comes back is what
+        would be there had the material never been deleted, so it is refused, raising
+        ValidationError with every reason, when something has changed that would have
+        stopped that. Returns the material."""
+        try:
+            # Each row as a DeserializedObject, which holds the model instance, not yet saved,
+            # as .object. Reading them makes no queries.
+            rows = list(serializers.deserialize("json", self.snapshot))
+        except DeserializationError as exc:
+            # A migration since the delete has changed the tables, e.g. removed a field.
+            raise ValidationError(f"the snapshot no longer fits FFDB's tables ({exc}).")
+        missing = missing_links(rows)
+        # A deleted account doesn't stop it: entered by goes back blank, as SET_NULL would
+        # have left it had the material stayed (see Entered.entered_by).
+        gone_users = missing.pop(get_user_model(), set())
+        problems = []
+        if self.inchikey:  # a compound's: a mixture's is blank
+            clash = Material.objects.filter(inchikey=self.inchikey).first()
+            if clash:
+                problems.append(
+                    f"its structure is now in FFDB as {clash.accession} ({clash.name}), and a structure has one ID."
+                )
+        for model, pks in missing.items():
+            for pk in sorted(pks):
+                name = accession(pk) if model is Material else f"{model._meta.verbose_name} {pk}"
+                problems.append(f"{name} is no longer in FFDB.")
+        # A compound can't be made a mixture while it is a component, but it can once its
+        # mixture has gone.
+        components = [row.object.component_id for row in rows if isinstance(row.object, MixtureComponent)]
+        for component in Material.objects.filter(pk__in=components, kind=Material.Kind.MIXTURE):
+            problems.append(f"its component {component.accession} is now a mixture, and a component must be a compound.")
+        if problems:
+            raise ValidationError(problems)
+        with transaction.atomic():
+            for row in rows:  # each parent before its children, as snapshot() wrote them
+                if isinstance(row.object, Entered) and row.object.entered_by_id in gone_users:
+                    row.object.entered_by = None
+                # A raw save: the model's own save() isn't run, so nothing is worked out again
+                # and each row comes back as it was. force_insert: add the row, never change
+                # one that is already there.
+                row.save(force_insert=True)
+            self.delete()
+        return rows[0].object

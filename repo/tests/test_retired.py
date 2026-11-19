@@ -1,7 +1,9 @@
 import json
+from datetime import UTC, datetime
 
 from django.apps import apps
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
+from django.contrib.messages import get_messages
 from django.db.models import ProtectedError
 from django.test import TestCase
 from django.urls import reverse
@@ -25,9 +27,9 @@ def snapshot_rows(record):
     return {(row["model"], row["pk"]) for row in json.loads(record.snapshot)}
 
 
-class RetiredIDTests(TestCase):
-    """RM734, with a sequence and a series of two points, and F7, a mixture with 5CB as a
-    component. An admin is logged in: only admins delete materials."""
+class RetiredTestCase(TestCase):
+    """RM734, with a sequence and a series of two points from one reference, and F7, a
+    mixture with 5CB as a component. An admin is logged in: only admins delete materials."""
 
     @classmethod
     def setUpTestData(cls):
@@ -37,12 +39,12 @@ class RetiredIDTests(TestCase):
         cls.component = MixtureComponent.objects.create(
             mixture=cls.f7, component=cls.cb5, fraction=30, unit=MixtureComponent.Unit.MOL
         )
-        reference = Reference.objects.create(
+        cls.reference = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
         )
-        PhaseSequence.objects.create(material=cls.rm734, reference=reference, sequence=RM734_SUMMARY)
+        PhaseSequence.objects.create(material=cls.rm734, reference=cls.reference, sequence=RM734_SUMMARY)
         series = Series.objects.create(
-            material=cls.rm734, reference=reference, property=Property.objects.get(code="ps"),
+            material=cls.rm734, reference=cls.reference, property=Property.objects.get(code="ps"),
             variable=Variable.objects.get(code="temperature"), kind=Series.Kind.MEASURED,
         )
         series.points.create(value=6.0, temperature_c=80)
@@ -52,6 +54,8 @@ class RetiredIDTests(TestCase):
     def setUp(self):
         self.client.force_login(self.admin)
 
+
+class RetiredIDTests(RetiredTestCase):
     def test_deleting_a_material_saves_a_record_of_its_id_and_everything_deleted(self):
         before = all_rows()
         self.client.post(reverse("admin:repo_material_delete", args=[self.rm734.pk]), {"post": "yes"})
@@ -131,3 +135,114 @@ class RetiredPageTests(TestCase):
         self.assertContains(response, "the mixture is no longer in FFDB", status_code=410)
         self.assertNotContains(response, "InChIKey", status_code=410)
         self.assertNotContains(response, "Reason", status_code=410)
+
+
+class RestoreTests(RetiredTestCase):
+    """Restore, on a retired ID's admin page. Each test retires a material first, then posts
+    as the page's Restore button would. A restore that is refused must change nothing:
+    all_rows() includes the retired ID records, so it shows the record is still there too."""
+
+    def retire(self, material):
+        """Retire material and return its number, which deleting it takes off the object."""
+        number = material.pk
+        material.retire(self.admin)
+        return number
+
+    def restore(self, number):
+        return self.client.post(reverse("admin:repo_retiredid_restore", args=[number]))
+
+    def messages(self, response):
+        return " ".join(str(message) for message in get_messages(response.wsgi_request))
+
+    def test_a_restore_brings_back_the_same_id_and_rows(self):
+        before = all_rows()
+        number = self.retire(self.rm734)
+        record_url = reverse("admin:repo_retiredid_change", args=[number])
+        restore_url = reverse("admin:repo_retiredid_restore", args=[number])
+        snapshot = RetiredID.objects.get(number=number).snapshot
+        self.assertContains(self.client.get(record_url), f'action="{restore_url}"')  # the button
+
+        response = self.restore(number)
+
+        self.assertRedirects(response, reverse("admin:repo_material_change", args=[number]))
+        self.assertEqual(all_rows(), before)  # every row back, and the record gone
+        self.assertEqual(Material.objects.get(pk=number).snapshot(), snapshot)  # each row as it was
+        self.assertContains(self.client.get(reverse("repo:material", args=[number])), "RM734")
+
+    def test_a_restore_whose_reference_has_gone_is_refused_and_changes_nothing(self):
+        number = self.retire(self.rm734)
+        reference = self.reference.pk
+        self.reference.delete()  # possible now: nothing else cites it
+        before = all_rows()
+
+        response = self.restore(number)
+
+        self.assertRedirects(response, reverse("admin:repo_retiredid_change", args=[number]))
+        self.assertIn(f"reference {reference} is no longer in FFDB.", self.messages(response))
+        self.assertEqual(all_rows(), before)
+
+    def test_a_restore_whose_structure_has_been_added_again_is_refused_and_changes_nothing(self):
+        number = self.retire(self.rm734)
+        again = Material.objects.create(name="RM734 again", smiles=RM734)
+        before = all_rows()
+
+        response = self.restore(number)
+
+        self.assertIn(f"its structure is now in FFDB as {again.accession} (RM734 again)", self.messages(response))
+        self.assertEqual(all_rows(), before)
+
+    def test_a_mixture_whose_component_has_gone_is_refused(self):
+        number = self.retire(self.f7)
+        component = self.cb5.accession
+        self.retire(self.cb5)  # possible now: F7 no longer uses it
+        before = all_rows()
+
+        response = self.restore(number)
+
+        self.assertIn(f"{component} is no longer in FFDB.", self.messages(response))
+        self.assertEqual(all_rows(), before)
+
+    def test_a_mixture_whose_component_is_now_a_mixture_is_refused(self):
+        number = self.retire(self.f7)
+        Material.objects.filter(pk=self.cb5.pk).update(kind=Material.Kind.MIXTURE, smiles="", inchikey="")
+        before = all_rows()
+
+        response = self.restore(number)
+
+        self.assertIn(f"its component {self.cb5.accession} is now a mixture", self.messages(response))
+        self.assertEqual(all_rows(), before)
+
+    def test_a_snapshot_that_no_longer_fits_the_tables_is_refused(self):
+        number = self.retire(self.rm734)
+        record = RetiredID.objects.get(number=number)
+        # As if a migration had since renamed a material's notes field.
+        RetiredID.objects.filter(number=number).update(snapshot=record.snapshot.replace('"notes"', '"remarks"'))
+        before = all_rows()
+
+        response = self.restore(number)
+
+        self.assertIn("the snapshot no longer fits FFDB's tables", self.messages(response))
+        self.assertEqual(all_rows(), before)
+
+    def test_a_deleted_account_leaves_entered_by_blank(self):
+        curator = User.objects.create_user("curator")
+        # Whole seconds: a snapshot keeps times to the millisecond.
+        entered_at = datetime(2026, 11, 1, 12, 0, tzinfo=UTC)
+        PhaseSequence.objects.filter(material=self.rm734).update(entered_by=curator, entered_at=entered_at)
+        number = self.retire(self.rm734)
+        curator.delete()
+
+        self.restore(number)
+
+        sequence = PhaseSequence.objects.get(material_id=number)
+        self.assertEqual((sequence.entered_by, sequence.entered_at), (None, entered_at))
+
+    def test_a_curator_cannot_restore(self):
+        number = self.retire(self.rm734)
+        curator = User.objects.create_user("curator", is_staff=True)
+        curator.groups.add(Group.objects.get(name="Curators"))
+        before = all_rows()
+        self.client.force_login(curator)
+
+        self.assertEqual(self.restore(number).status_code, 403)
+        self.assertEqual(all_rows(), before)

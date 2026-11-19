@@ -1,9 +1,12 @@
 from django.contrib import admin, messages
-from django.core.exceptions import ValidationError
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
 from django.forms import Textarea
 from django.forms.models import BaseInlineFormSet
+from django.shortcuts import get_object_or_404, redirect
+from django.urls import path
 from django.utils.html import format_html
+from django.views.decorators.http import require_POST
 
 from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
@@ -165,7 +168,8 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
 
 @admin.register(RetiredID)
 class RetiredIDAdmin(admin.ModelAdmin):
-    """Records are made only by deleting a material, and kept: only the reason can be changed."""
+    """Records are made only by deleting a material, and go only when it is restored: only
+    the reason can be changed. The Restore button is in this model's own change_form.html."""
 
     list_display = ["accession", "name", "kind", "retired_by", "retired_at"]
     fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "reason", "deleted_rows"]
@@ -185,6 +189,28 @@ class RetiredIDAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def get_urls(self):
+        """Django's addresses for retired IDs, with one more in front: a record's restore/,
+        which its Restore button posts to. In front, because Django's last address takes any
+        <anything>/ and sends it on to that record's page."""
+        restore = self.admin_site.admin_view(require_POST(self.restore_view))
+        return [path("<int:number>/restore/", restore, name="repo_retiredid_restore"), *super().get_urls()]
+
+    def restore_view(self, request, number):
+        """Put the material back (RetiredID.restore()) and go to its page, or say why it can't
+        be and stay on the record's. Only users who may delete materials may restore them."""
+        if not request.user.has_perm("repo.delete_material"):
+            raise PermissionDenied
+        record = get_object_or_404(RetiredID, number=number)
+        try:
+            material = record.restore()
+        except ValidationError as exc:
+            for problem in exc.messages:
+                self.message_user(request, f"{record.accession} can't be restored: {problem}", messages.ERROR)
+            return redirect("admin:repo_retiredid_change", number)
+        self.message_user(request, f"{material} has been restored, with everything deleted with it.", messages.SUCCESS)
+        return redirect("admin:repo_material_change", material.pk)
 
 
 @admin.register(Phase)
