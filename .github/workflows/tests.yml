@@ -40,5 +40,9 @@ jobs:
       - name: Install requirements
         run: pip install -r requirements.txt
 
+      # Ketcher's files aren't in git (see .gitignore), so get and check them as a laptop does.
+      - name: Get Ketcher
+        run: python manage.py fetch_ketcher
+
       - name: Run the tests
         run: python manage.py test
