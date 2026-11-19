@@ -135,6 +135,19 @@ class Material(models.Model):
             # Each InChIKey once. A mixture's is blank, and blanks don't count, so mixtures
             # don't clash with each other.
             models.UniqueConstraint(fields=["inchikey"], condition=~Q(inchikey=""), name="unique_inchikey"),
+            # The next two are CheckConstraints: PostgreSQL refuses a row that breaks them,
+            # however it is written, even by update() or a raw save, which skip save() and
+            # clean(). A kind that is neither compound nor mixture passes neither.
+            models.CheckConstraint(
+                condition=Q(kind="mixture") | (~Q(smiles="") & ~Q(inchikey="")),
+                name="compound_has_structure",
+                violation_error_message="A compound needs a SMILES and an InChIKey.",
+            ),
+            models.CheckConstraint(
+                condition=Q(kind="compound") | Q(smiles="", canonical_smiles="", inchikey=""),
+                name="mixture_has_no_structure",
+                violation_error_message="A mixture has no structure: no SMILES and no InChIKey.",
+            ),
         ]
 
     def __str__(self):
@@ -186,7 +199,9 @@ class Material(models.Model):
 
     def clean(self):
         """Refuse a compound without a readable SMILES or whose structure is already in FFDB,
-        and a mixture with a SMILES, without a name, or that is a component of a mixture."""
+        and a mixture with a SMILES, without a name, or that is a component of a mixture.
+        When nothing is refused, fill in the identifiers as save() will store them, so the
+        constraints that full_clean() checks next see them (see Meta)."""
         if self.kind == self.Kind.MIXTURE:
             errors = {}
             if self.smiles.strip():
@@ -199,11 +214,13 @@ class Material(models.Model):
                 errors["kind"] = f"This is a component of {mixtures}, and a component must be a compound."
             if errors:
                 raise ValidationError(errors)
+            # A compound being made into a mixture still has its identifiers until now.
+            self.canonical_smiles = self.inchikey = ""
             return
         if not self.smiles.strip():
             raise ValidationError({"smiles": "A compound needs a SMILES."})
         try:
-            _, key = chem.standardise(self.smiles)
+            canonical, key = chem.standardise(self.smiles)
         except chem.StructureError as exc:
             raise ValidationError({"smiles": str(exc)})
         clash = Material.objects.filter(inchikey=key).exclude(pk=self.pk).first()
@@ -218,6 +235,9 @@ class Material(models.Model):
             problem = RetiredID.structure_problem(key)
             if problem:
                 raise ValidationError({"smiles": problem})
+        # Last, because the check above needs the saved InChIKey. Without this, a compound
+        # being added would still have a blank one, and compound_has_structure would refuse it.
+        self.canonical_smiles, self.inchikey = canonical, key
 
     def save(self, *args, **kwargs):
         """Work out a compound's identifiers from its SMILES. A mixture has none."""
@@ -417,6 +437,13 @@ class MixtureComponent(models.Model):
         ordering = ["-fraction", "id"]  # the largest component first
         constraints = [
             models.UniqueConstraint(fields=["mixture", "component"], name="each_compound_once_per_mixture"),
+            # clean() gives the same rule, with its message beside the fraction. full_clean()
+            # skips a constraint on a field that already has an error, so it isn't said twice.
+            models.CheckConstraint(
+                condition=Q(fraction__gt=0, fraction__lte=100),
+                name="fraction_more_than_0_at_most_100",
+                violation_error_message="A fraction is more than 0 and at most 100.",
+            ),
         ]
 
     def __str__(self):
@@ -1027,6 +1054,14 @@ class Series(Entered):
     class Meta:
         ordering = ["property__sort_order", "reference__identifier", "id"]
         verbose_name_plural = "series"
+        constraints = [
+            # As in clean(), which says it beside the field. The database holds it for every way in.
+            models.CheckConstraint(
+                condition=Q(digitised=False) | Q(taken_from="figure"),
+                name="digitised_only_from_figure",
+                violation_error_message="Only values read off a figure are digitised.",
+            ),
+        ]
 
     def __str__(self):
         if self.is_against_nothing():
@@ -1118,6 +1153,14 @@ class Measurement(models.Model):
     class Meta:
         # series_id, not series: "series" would sort by Series's own ordering, through a join.
         ordering = ["series_id", "temperature_c", "x", "id"]
+        constraints = [
+            # As in clean(), which says it beside the field. The database holds it for every way in.
+            models.CheckConstraint(
+                condition=Q(qualifier="exact") | Q(uncertainty__isnull=True),
+                name="limit_has_no_uncertainty",
+                violation_error_message="A limit has no ±: enter the limit itself as the value.",
+            ),
+        ]
 
     def __str__(self):
         prop = self.series.property

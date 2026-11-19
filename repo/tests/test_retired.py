@@ -204,7 +204,7 @@ class RestoreTests(RetiredTestCase):
 
     def test_a_mixture_whose_component_is_now_a_mixture_is_refused(self):
         number = self.retire(self.f7)
-        Material.objects.filter(pk=self.cb5.pk).update(kind=Material.Kind.MIXTURE, smiles="", inchikey="")
+        Material.objects.filter(pk=self.cb5.pk).update(kind=Material.Kind.MIXTURE, smiles="", canonical_smiles="", inchikey="")
         before = all_rows()
 
         response = self.restore(number)
