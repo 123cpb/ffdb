@@ -48,6 +48,8 @@ class AdminStructureTests(TestCase):
         """Fill in the admin's Add material form and press Save, with no phase sequence rows."""
         data = {
             "name": name, "aliases": "", "smiles": smiles, "notes": "",
+            "kind": "compound", "composition_status": "listed", "other_components": "",
+            "components-TOTAL_FORMS": "0", "components-INITIAL_FORMS": "0",
             "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
         }
         return self.client.post(self.add_url, data, follow=True)

@@ -1,0 +1,214 @@
+"""Mixtures: materials with no structure, made of components. Each test is one rule."""
+
+from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+from django.db import IntegrityError, transaction
+from django.db.models import ProtectedError
+from django.test import SimpleTestCase, TestCase
+from django.urls import reverse
+
+from repo.models import Material, MixtureComponent
+from repo.tests.test_sequences import RM734
+
+CB5 = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"  # 5CB
+MIXTURE, COMPOUND = Material.Kind.MIXTURE, Material.Kind.COMPOUND
+LISTED = Material.CompositionStatus.LISTED
+PARTLY_KNOWN = Material.CompositionStatus.PARTLY_KNOWN
+NOT_DISCLOSED = Material.CompositionStatus.NOT_DISCLOSED
+MOL, WT = MixtureComponent.Unit.MOL, MixtureComponent.Unit.WT
+
+
+class MixtureTestCase(TestCase):
+    """Two compounds, RM734 and 5CB, and F7, a mixture of them at 70 and 30 mol%."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.cb5 = Material.objects.create(name="5CB", smiles=CB5)
+        cls.f7 = Material.objects.create(kind=MIXTURE, name="F7")
+        MixtureComponent.objects.create(mixture=cls.f7, component=cls.rm734, fraction=70, unit=MOL)
+        MixtureComponent.objects.create(mixture=cls.f7, component=cls.cb5, fraction=30, unit=MOL)
+
+    def assertRefused(self, row, field):
+        """full_clean() refuses row, with a message on field."""
+        with self.assertRaises(ValidationError) as caught:
+            row.full_clean()
+        self.assertIn(field, caught.exception.message_dict)
+
+
+class CompoundOrMixtureTests(MixtureTestCase):
+    def test_a_material_is_a_compound_unless_it_says_otherwise(self):
+        self.assertEqual(self.rm734.kind, COMPOUND)
+
+    def test_a_compound_needs_a_smiles(self):
+        self.assertRefused(Material(name="RM734"), "smiles")
+
+    def test_a_mixture_has_no_smiles(self):
+        self.assertRefused(Material(kind=MIXTURE, name="F8", smiles=CB5), "smiles")
+
+    def test_a_mixture_needs_a_name(self):
+        self.assertRefused(Material(kind=MIXTURE, other_components="A host"), "name")
+
+    def test_a_mixture_is_saved_without_identifiers_and_mixtures_do_not_clash(self):
+        m5 = Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED)
+
+        for mixture in (self.f7, m5):
+            mixture.refresh_from_db()
+            self.assertEqual((mixture.canonical_smiles, mixture.inchikey), ("", ""))
+
+    def test_the_database_still_allows_each_inchikey_once(self):
+        with transaction.atomic(), self.assertRaises(IntegrityError):
+            Material.objects.create(name="RM734 again", smiles=RM734)
+
+    def test_a_compound_in_a_mixture_cannot_become_a_mixture(self):
+        self.cb5.kind, self.cb5.smiles = MIXTURE, ""
+
+        with self.assertRaises(ValidationError) as caught:
+            self.cb5.full_clean()
+        self.assertIn(str(self.f7), caught.exception.message_dict["kind"][0])
+
+
+class ComponentTests(MixtureTestCase):
+    def test_a_component_must_be_a_compound(self):
+        m5 = Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED)
+
+        self.assertRefused(MixtureComponent(mixture=self.f7, component=m5, fraction=10, unit=MOL), "component")
+
+    def test_only_a_mixture_has_components(self):
+        row = MixtureComponent(mixture=self.rm734, component=self.cb5, fraction=10, unit=MOL)
+
+        self.assertRefused(row, "__all__")
+
+    def test_a_fraction_is_more_than_0_and_at_most_100(self):
+        mixture = Material.objects.create(kind=MIXTURE, name="F8")
+        for fraction in (0, -5, 100.1):
+            with self.subTest(fraction=fraction):
+                row = MixtureComponent(mixture=mixture, component=self.cb5, fraction=fraction, unit=MOL)
+                self.assertRefused(row, "fraction")
+        MixtureComponent(mixture=mixture, component=self.cb5, fraction=100, unit=MOL).full_clean()
+
+    def test_each_compound_appears_once_in_a_mixture(self):
+        with transaction.atomic(), self.assertRaises(IntegrityError):
+            MixtureComponent.objects.create(mixture=self.f7, component=self.cb5, fraction=5, unit=MOL)
+
+    def test_a_compound_cannot_be_deleted_while_a_mixture_uses_it(self):
+        with self.assertRaises(ProtectedError):
+            self.cb5.delete()
+
+    def test_deleting_a_mixture_deletes_its_components_but_not_the_compounds(self):
+        self.f7.delete()
+
+        self.assertFalse(MixtureComponent.objects.exists())
+        self.assertEqual(Material.objects.count(), 2)
+
+
+class CompositionTests(SimpleTestCase):
+    """composition_problems() reads only the mixture's own fields, so nothing is saved."""
+
+    def problems(self, fractions, status=LISTED, other=""):
+        mixture = Material(kind=MIXTURE, name="F7", composition_status=status, other_components=other)
+        return mixture.composition_problems(fractions)
+
+    def test_components_in_one_unit_adding_up_to_100_are_fine(self):
+        self.assertEqual(self.problems([(70, MOL), (30, MOL)]), [])
+
+    def test_fractions_must_all_be_in_one_unit(self):
+        [problem] = self.problems([(70, MOL), (30, WT)])
+
+        self.assertIn("same unit", problem)
+
+    def test_fractions_may_add_up_to_half_a_percent_over_100_but_no_more(self):
+        self.assertEqual(self.problems([(70, WT), (30.5, WT)]), [])
+        self.assertEqual(self.problems([(70, WT), (30.6, WT)]), ["The fractions add up to 100.6 wt%, more than 100."])
+
+    def test_not_disclosed_means_no_components_and_no_text(self):
+        self.assertEqual(self.problems([], NOT_DISCLOSED), [])
+        for fractions, other in (([(30, MOL)], ""), ([], "A commercial host")):
+            with self.subTest(fractions=fractions, other=other):
+                [problem] = self.problems(fractions, NOT_DISCLOSED, other)
+                self.assertIn("Not disclosed means", problem)
+
+    def test_listed_and_partly_known_need_components_or_text(self):
+        for status in (LISTED, PARTLY_KNOWN):
+            with self.subTest(status=status):
+                [problem] = self.problems([], status)
+                self.assertIn("choose Not disclosed", problem)
+                self.assertEqual(self.problems([], status, "A commercial host"), [])
+
+
+class AdminTests(MixtureTestCase):
+    add_url = reverse("admin:repo_material_add")
+
+    def setUp(self):
+        self.client.force_login(User.objects.create_superuser("admin", password="pw"))
+
+    def add_mixture(self, name, rows, status=LISTED, other=""):
+        """Fill in the admin's Add material form for a mixture, one component row for each
+        (material, fraction, unit) in rows, and press Save."""
+        data = {
+            "kind": MIXTURE, "name": name, "aliases": "", "smiles": "", "notes": "",
+            "composition_status": status, "other_components": other,
+            "components-TOTAL_FORMS": str(len(rows)), "components-INITIAL_FORMS": "0",
+            "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
+        }
+        for i, (material, fraction, unit) in enumerate(rows):
+            data |= {f"components-{i}-component": material.pk, f"components-{i}-fraction": fraction, f"components-{i}-unit": unit}
+        return self.client.post(self.add_url, data)
+
+    def test_a_mixture_is_saved_with_its_components(self):
+        response = self.add_mixture("F8", [(self.rm734, 60, MOL), (self.cb5, 40, MOL)])
+
+        self.assertEqual(response.status_code, 302)  # saved, and sent back to the list
+        f8 = Material.objects.get(name="F8")
+        self.assertEqual(f8.kind, MIXTURE)
+        self.assertEqual([(c.component, c.fraction) for c in f8.components.all()], [(self.rm734, 60), (self.cb5, 40)])
+
+    def test_a_mixture_whose_composition_is_not_disclosed_is_saved_with_no_components(self):
+        response = self.add_mixture("M5", [], NOT_DISCLOSED)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(Material.objects.get(name="M5").components.exists())
+
+    def test_the_composition_rules_are_checked_and_nothing_is_saved(self):
+        response = self.add_mixture("F8", [(self.rm734, 60, MOL), (self.cb5, 40, WT)])
+
+        self.assertContains(response, "Give every fraction in the same unit")
+        self.assertFalse(Material.objects.filter(name="F8").exists())
+
+    def test_a_compound_given_twice_is_refused(self):
+        response = self.add_mixture("F8", [(self.cb5, 60, MOL), (self.cb5, 40, MOL)])
+
+        self.assertContains(response, "Please correct the duplicate data")
+        self.assertFalse(Material.objects.filter(name="F8").exists())
+
+    def test_a_compound_in_a_mixture_is_not_deleted(self):
+        url = reverse("admin:repo_material_delete", args=[self.cb5.pk])
+
+        self.assertContains(self.client.get(url), "protected related objects")
+        self.client.post(url, {"post": "yes"})
+        self.assertTrue(Material.objects.filter(pk=self.cb5.pk).exists())
+
+    def test_a_mixture_with_components_cannot_become_a_compound(self):
+        rows = list(self.f7.components.all())
+        data = {
+            "kind": COMPOUND, "name": "F7", "aliases": "", "smiles": "CCO", "notes": "",
+            "composition_status": LISTED, "other_components": "",
+            "components-TOTAL_FORMS": "2", "components-INITIAL_FORMS": "2",
+            "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
+        }
+        for i, row in enumerate(rows):
+            data |= {
+                f"components-{i}-id": row.pk, f"components-{i}-mixture": self.f7.pk,
+                f"components-{i}-component": row.component_id, f"components-{i}-fraction": row.fraction,
+                f"components-{i}-unit": row.unit,
+            }
+        response = self.client.post(reverse("admin:repo_material_change", args=[self.f7.pk]), data)
+
+        self.assertContains(response, "Only a mixture has components.")
+        self.f7.refresh_from_db()
+        self.assertEqual(self.f7.kind, MIXTURE)
+
+    def test_a_mixtures_page_says_it_has_no_structure(self):
+        response = self.client.get(reverse("admin:repo_material_change", args=[self.f7.pk]))
+
+        self.assertContains(response, "None: a mixture has no structure.")

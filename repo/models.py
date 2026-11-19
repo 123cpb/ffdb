@@ -73,28 +73,65 @@ def clean_patent_number(text):
 PREPRINT_DOIS = ("10.48550/arxiv.", "10.26434/chemrxiv")
 
 
+# Fractions are printed rounded, so a mixture's can add up to a little over 100:
+# 33.4 + 33.4 + 33.4 = 100.2.
+ROUNDING_ALLOWANCE = 0.5
+
+
 class Material(models.Model):
+    """A compound, identified by its structure, or a mixture, which has no structure and is
+    described by its composition: its components in FFDB (MixtureComponent rows) and the
+    other components, described in words."""
+
+    class Kind(models.TextChoices):
+        COMPOUND = "compound", "Compound"
+        MIXTURE = "mixture", "Mixture"
+
+    class CompositionStatus(models.TextChoices):
+        LISTED = "listed", "Listed"
+        PARTLY_KNOWN = "partly_known", "Partly known"
+        NOT_DISCLOSED = "not_disclosed", "Not disclosed"
+
+    # Compound is the default because every material added before mixtures was one, and the
+    # imports and the compound table add only compounds.
+    kind = models.CharField(max_length=8, choices=Kind.choices, default=Kind.COMPOUND)
     name = models.CharField(
         max_length=200,
         blank=True,
-        help_text="As papers name it, e.g. RM734. Optional, and names can repeat: "
-        "the LCR ID is what identifies a material.",
+        help_text="As papers name it, e.g. RM734. Optional for a compound, needed for a mixture. "
+        "Names can repeat: the LCR ID is what identifies a material.",
     )
     aliases = models.CharField(
         max_length=500,
         blank=True,
         help_text="Other names or codes, comma-separated.",
     )
-    smiles = models.TextField("SMILES", help_text="Stored as typed.")
-    # Worked out from the SMILES on every save (see save()), never typed in.
+    smiles = models.TextField("SMILES", blank=True, help_text="Compounds only, stored as typed. A mixture has none.")
+    # Worked out from the SMILES on every save (see save()), never typed in. Blank for a mixture.
     canonical_smiles = models.TextField("canonical SMILES", blank=True, editable=False)
-    # The full InChIKey identifies a compound, so the database allows each one once.
-    inchikey = models.CharField("InChIKey", max_length=27, unique=True, blank=True, editable=False)
+    # The full InChIKey identifies a compound, so the database allows each one once (see
+    # Meta). Blank for a mixture.
+    inchikey = models.CharField("InChIKey", max_length=27, blank=True, editable=False)
+    composition_status = models.CharField(
+        max_length=13, choices=CompositionStatus.choices, default=CompositionStatus.LISTED,
+        help_text="Mixtures only: whether the reference gives every component, only some, or none, "
+        "as for many commercial mixtures.",
+    )
+    other_components = models.TextField(
+        blank=True,
+        help_text="Mixtures only: components that aren't in FFDB, such as a commercial host, "
+        "with their fractions if known.",
+    )
     notes = models.TextField(blank=True)
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            # Each InChIKey once. A mixture's is blank, and blanks don't count, so mixtures
+            # don't clash with each other.
+            models.UniqueConstraint(fields=["inchikey"], condition=~Q(inchikey=""), name="unique_inchikey"),
+        ]
 
     def __str__(self):
         return f"{self.accession} {self.name}"
@@ -140,9 +177,23 @@ class Material(models.Model):
         return ""
 
     def clean(self):
-        """Refuse an unreadable SMILES, and a structure that is already in FFDB."""
+        """Refuse a compound without a readable SMILES or whose structure is already in FFDB,
+        and a mixture with a SMILES, without a name, or that is a component of a mixture."""
+        if self.kind == self.Kind.MIXTURE:
+            errors = {}
+            if self.smiles.strip():
+                errors["smiles"] = "A mixture has no structure: leave the SMILES blank."
+            if not self.name.strip():
+                errors["name"] = "A mixture needs a name: it has no structure to tell it apart."
+            # A compound being made into a mixture. Without a pk, it is in no mixture yet.
+            if self.pk and self.in_mixtures.exists():
+                mixtures = ", ".join(str(row.mixture) for row in self.in_mixtures.select_related("mixture"))
+                errors["kind"] = f"This is a component of {mixtures}, and a component must be a compound."
+            if errors:
+                raise ValidationError(errors)
+            return
         if not self.smiles.strip():
-            return  # the form's "This field is required" already covers a blank SMILES
+            raise ValidationError({"smiles": "A compound needs a SMILES."})
         try:
             _, key = chem.standardise(self.smiles)
         except chem.StructureError as exc:
@@ -154,8 +205,37 @@ class Material(models.Model):
             )
 
     def save(self, *args, **kwargs):
-        self.canonical_smiles, self.inchikey = chem.standardise(self.smiles)
+        """Work out a compound's identifiers from its SMILES. A mixture has none."""
+        if self.kind == self.Kind.COMPOUND:
+            self.canonical_smiles, self.inchikey = chem.standardise(self.smiles)
+        else:
+            self.canonical_smiles = self.inchikey = ""
         super().save(*args, **kwargs)
+
+    def composition_problems(self, fractions):
+        """What is wrong with this mixture's composition as a whole, as a list of messages,
+        empty when nothing is. fractions is [(fraction, unit), ...], one for each component
+        in FFDB. MixtureComponent.clean() checks each component on its own, and the database
+        allows each compound once in a mixture (MixtureComponent's constraint)."""
+        problems = []
+        given = bool(fractions) or bool(self.other_components.strip())
+        not_disclosed = self.composition_status == self.CompositionStatus.NOT_DISCLOSED
+        if not_disclosed and given:
+            problems.append(
+                "Not disclosed means no components and no other components: remove them, or choose Partly known."
+            )
+        if not not_disclosed and not given:
+            problems.append(
+                "Give the components in FFDB, describe them under Other components, or choose Not disclosed."
+            )
+        units = {unit for _, unit in fractions}
+        if len(units) > 1:
+            problems.append("Give every fraction in the same unit: all mol% or all wt%.")
+        elif units:
+            total = sum(fraction for fraction, _ in fractions)
+            if total > 100 + ROUNDING_ALLOWANCE:
+                problems.append(f"The fractions add up to {total:g} {units.pop()}, more than 100.")
+        return problems
 
     def possible_stereo_variants(self):
         """Other materials with the same connectivity: the same skeleton with different or
@@ -190,6 +270,59 @@ class Material(models.Model):
             .exclude(code__in=NOT_LIQUID_CRYSTAL)
             .distinct()
         )
+
+
+class MixtureComponent(models.Model):
+    """One compound in FFDB that is part of a mixture, with its fraction. Components that
+    aren't in FFDB are described in the mixture's other components. The rules across all
+    of a mixture's components are in Material.composition_problems()."""
+
+    class Unit(models.TextChoices):
+        MOL = "mol%", "mol%"
+        WT = "wt%", "wt%"
+
+    # Deleting a mixture deletes its components. A compound can't be deleted while a mixture
+    # uses it: the mixture would quietly become a different mixture.
+    mixture = models.ForeignKey(Material, on_delete=models.CASCADE, related_name="components")
+    component = models.ForeignKey(
+        Material, on_delete=models.PROTECT, related_name="in_mixtures", help_text="A compound already in FFDB."
+    )
+    fraction = models.FloatField(help_text="More than 0 and at most 100.")
+    # No default, so the admin makes you choose: a default of mol% would quietly save a
+    # wt% fraction as mol%.
+    unit = models.CharField(max_length=4, choices=Unit.choices)
+
+    class Meta:
+        ordering = ["-fraction", "id"]  # the largest component first
+        constraints = [
+            models.UniqueConstraint(fields=["mixture", "component"], name="each_compound_once_per_mixture"),
+        ]
+
+    def __str__(self):
+        # Django's page refusing to delete a compound lists these, so it names the mixture.
+        return f"{self.component} in {self.mixture}: {self.fraction:g} {self.unit}"
+
+    def clean(self):
+        """Refuse a component that breaks a rule on its own, saying what is wrong. Every
+        problem is reported at once, each on the field to fix where there is one."""
+        errors = {}
+        if self.fraction is not None and not 0 < self.fraction <= 100:
+            errors["fraction"] = "A fraction is more than 0 and at most 100."
+        # Compounds only, so a mixture can never contain itself, or a mixture that contains it.
+        if self.component_id and self.component.kind != Material.Kind.COMPOUND:
+            errors["component"] = (
+                f"{self.component} is a mixture, and a component must be a compound: describe a "
+                "mixture used as a host under Other components."
+            )
+        try:
+            # On the admin's Add page this is the material being added, not saved yet.
+            mixture = self.mixture
+        except Material.DoesNotExist:
+            mixture = None  # the form already says a component needs a mixture
+        if mixture is not None and mixture.kind != Material.Kind.MIXTURE:
+            errors[NON_FIELD_ERRORS] = "Only a mixture has components."
+        if errors:
+            raise ValidationError(errors)
 
 
 class Phase(models.Model):

@@ -1,11 +1,13 @@
 from django.contrib import admin, messages
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.forms import Textarea
 from django.forms.models import BaseInlineFormSet
 from django.utils.html import format_html
 
 from .models import (
-    Entered, Material, Measurement, Phase, PhaseSequence, Property, PropertyGroup, Reference, Series, Variable,
+    Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
+    Series, Variable,
 )
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
@@ -74,14 +76,58 @@ class ReferenceSequenceInline(PhaseSequenceInline):
     autocomplete_fields = ["material"]
 
 
+class ComponentFormSet(BaseInlineFormSet):
+    """A mixture's component rows, checked together with what the page says of its
+    composition (Material.composition_problems()). Each row has been checked on its own
+    first, by MixtureComponent.clean()."""
+
+    def clean(self):
+        super().clean()  # Django's own checks, including each compound once in the mixture
+        # The material with the values just typed on its page: Django checks the material's
+        # form before its rows.
+        mixture = self.instance
+        rows = [form for form in self.forms if not self._should_delete_form(form)]
+        # A compound's rows are refused one by one. A row with errors shows those first.
+        if mixture.kind != Material.Kind.MIXTURE or any(form.errors for form in rows):
+            return
+        # An empty extra row has no cleaned data, so it is left out.
+        fractions = [(form.cleaned_data["fraction"], form.cleaned_data["unit"]) for form in rows if form.cleaned_data]
+        problems = mixture.composition_problems(fractions)
+        if problems:
+            raise ValidationError(problems)
+
+
+class ComponentInline(admin.TabularInline):
+    """A mixture's components that are compounds in FFDB, as rows beneath it. Others are
+    described in its Other components box."""
+
+    model = MixtureComponent
+    fk_name = "mixture"  # component points to Material too, so say which is the row's material
+    formset = ComponentFormSet
+    fields = ["component", "fraction", "unit"]
+    autocomplete_fields = ["component"]
+    verbose_name = "component in FFDB"
+    verbose_name_plural = "components in FFDB"
+
+    def get_extra(self, request, obj=None, **kwargs):
+        """Two empty rows for a mixture, or a material being added, and none for a compound.
+        A compound's page still sends its rows, none, so making it a mixture is checked too."""
+        return 0 if obj is not None and obj.kind == Material.Kind.COMPOUND else 2
+
+
 @admin.register(Material)
 class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't record it
-    list_display = ["accession", "name"]
-    # Also what the autocomplete box searches when a sequence's material is chosen.
+    list_display = ["accession", "name", "kind"]
+    list_filter = ["kind"]
+    # Also what the autocomplete box searches when a sequence's material, or a mixture's
+    # component, is chosen.
     search_fields = ["name", "aliases", "inchikey"]
-    fields = ["name", "aliases", "smiles", "structure", "canonical_smiles", "inchikey", "notes"]
+    fields = [
+        "kind", "name", "aliases", "smiles", "structure", "canonical_smiles", "inchikey",
+        "composition_status", "other_components", "notes",
+    ]
     readonly_fields = ["structure", "canonical_smiles", "inchikey"]
-    inlines = [MaterialSequenceInline]
+    inlines = [ComponentInline, MaterialSequenceInline]
 
     @admin.display(description="ID", ordering="pk")
     def accession(self, obj):
@@ -91,6 +137,8 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
     def structure(self, obj):
         if not obj.pk:
             return "Shown after saving."
+        if obj.kind == Material.Kind.MIXTURE:
+            return "None: a mixture has no structure."
         return format_html(
             '<img src="{}" alt="Structure of {}" width="360" height="220">',
             obj.structure_url,

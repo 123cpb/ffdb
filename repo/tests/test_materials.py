@@ -28,6 +28,8 @@ class MaterialAdminTests(TestCase):
         self.client.force_login(User.objects.create_superuser("admin", password="pw"))
         data = {
             "name": "", "aliases": "", "smiles": "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1", "notes": "",
+            "kind": "compound", "composition_status": "listed", "other_components": "",
+            "components-TOTAL_FORMS": "0", "components-INITIAL_FORMS": "0",
             "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
         }
 

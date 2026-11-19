@@ -60,6 +60,8 @@ class AdminTests(EnteredTestCase):
         url = reverse("admin:repo_material_change", args=[self.material.pk])
         data = {
             "name": "RM734", "aliases": "", "smiles": RM734, "notes": "",
+            "kind": "compound", "composition_status": "listed", "other_components": "",
+            "components-TOTAL_FORMS": "0", "components-INITIAL_FORMS": "0",
             "phase_sequences-TOTAL_FORMS": "2", "phase_sequences-INITIAL_FORMS": "1",
             "phase_sequences-0-id": str(self.imported.pk),
             "phase_sequences-0-material": str(self.material.pk),
