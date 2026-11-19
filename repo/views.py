@@ -24,6 +24,7 @@ from .models import (
     PhaseTransition,
     Property,
     Reference,
+    RetiredID,
     Series,
     group_properties,
     pk_from_accession,
@@ -189,9 +190,15 @@ def value_sections(series, with_charts=False):
 
 
 def material_detail(request, pk):
-    """One material's public page. A number with no material gives a 404. A compound's
-    page shows its structure and the mixtures it is in; a mixture's, its composition."""
-    material = get_object_or_404(Material, pk=pk)
+    """One material's public page. A compound's page shows its structure and the mixtures it
+    is in; a mixture's, its composition. A retired ID gives a page saying what it was, and
+    a number never given out gives a 404."""
+    material = Material.objects.filter(pk=pk).first()
+    if material is None:
+        # 410 Gone, not 404 Not Found: the address did name a material, and never will again,
+        # so search engines can drop it. The snapshot isn't shown: what was deleted may be wrong.
+        record = get_object_or_404(RetiredID, number=pk)
+        return render(request, "repo/retired_material.html", {"nav": "materials", "record": record}, status=410)
     formula, mass = "", None  # a mixture has no structure to work them out from
     if material.kind == Material.Kind.COMPOUND:
         formula, mass = chem.formula_and_mass(material.canonical_smiles)

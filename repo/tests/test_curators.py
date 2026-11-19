@@ -4,6 +4,9 @@ from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import reverse
 
+from repo.models import Material, PhaseSequence, Reference
+from repo.tests.test_sequences import RM734, RM734_SUMMARY
+
 ACTIONS = ["add", "change", "delete"]
 ADD = reverse("repo:add")
 LOGIN = reverse("login")
@@ -22,13 +25,13 @@ class CuratorTests(TestCase):
         cls.curator.groups.add(cls.curators)
         cls.other = User.objects.create_user("other", password="a-test-password")
 
-    def test_curators_can_add_change_and_delete_the_data(self):
+    def test_curators_can_add_change_and_delete_the_data_but_not_delete_materials(self):
         codenames = set(self.curators.permissions.values_list("codename", flat=True))
         expected = {
             f"{action}_{model}"
             for action in ACTIONS
             for model in ["material", "reference", "phasesequence", "series", "measurement", "mixturecomponent"]
-        }
+        } - {"delete_material"}  # only admins delete materials (migration 0021)
         self.assertEqual(codenames, expected)
 
     def test_curators_can_work_on_every_section_of_rows_on_their_admin_pages(self):
@@ -91,3 +94,69 @@ class CuratorTests(TestCase):
         page = self.client.get(reverse("repo:materials"))
         self.assertNotContains(page, f'href="{ADD}"')
         self.assertContains(page, f'action="{LOGOUT}"')
+
+
+class MaterialDeleteTests(TestCase):
+    """Only admins delete materials: deleting one deletes its sequences and values too.
+    A curator can still delete a single sequence."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.material = Material.objects.create(name="RM734", smiles=RM734)
+        cls.reference = Reference.objects.create(
+            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
+        )
+        cls.sequence = PhaseSequence.objects.create(material=cls.material, reference=cls.reference, sequence=RM734_SUMMARY)
+        cls.curator = User.objects.create_user("curator", password="a-test-password", is_staff=True)
+        cls.curator.groups.add(Group.objects.get(name="Curators"))
+        cls.admin = User.objects.create_superuser("admin", password="a-test-password")
+        cls.change_url = reverse("admin:repo_material_change", args=[cls.material.pk])
+        cls.delete_url = reverse("admin:repo_material_delete", args=[cls.material.pk])
+
+    def test_a_curator_is_offered_no_way_to_delete_a_material(self):
+        self.client.force_login(self.curator)
+
+        self.assertNotContains(self.client.get(self.change_url), self.delete_url)  # no Delete button
+        self.assertNotContains(self.client.get(reverse("admin:repo_material_changelist")), "delete_selected")
+
+    def test_a_curator_who_sends_the_delete_form_is_refused(self):
+        self.client.force_login(self.curator)
+
+        self.assertEqual(self.client.get(self.delete_url).status_code, 403)
+        self.assertEqual(self.client.post(self.delete_url, {"post": "yes"}).status_code, 403)
+        # The list's Delete selected, sent as its confirmation page would send it.
+        self.client.post(
+            reverse("admin:repo_material_changelist"),
+            {"action": "delete_selected", "_selected_action": [self.material.pk], "post": "yes"},
+        )
+        self.assertTrue(Material.objects.filter(pk=self.material.pk).exists())
+
+    def test_a_curator_can_still_delete_a_sequence(self):
+        """Tick Delete on the sequence's row on the material's page, and save. Every field is
+        sent as the page would send it; the row's other fields aren't checked once it is ticked."""
+        self.client.force_login(self.curator)
+        data = {
+            "kind": "compound", "name": "RM734", "aliases": "", "smiles": RM734, "notes": "",
+            "composition_status": "listed", "other_components": "",
+            "components-TOTAL_FORMS": "0", "components-INITIAL_FORMS": "0",
+            "phase_sequences-TOTAL_FORMS": "1", "phase_sequences-INITIAL_FORMS": "1",
+            "phase_sequences-0-id": str(self.sequence.pk),
+            "phase_sequences-0-material": str(self.material.pk),
+            "phase_sequences-0-reference": str(self.reference.pk),
+            "phase_sequences-0-direction": "summary",
+            "phase_sequences-0-sequence": RM734_SUMMARY,
+            "phase_sequences-0-DELETE": "on",
+        }
+
+        response = self.client.post(self.change_url, data)
+
+        self.assertEqual(response.status_code, 302)  # saved, and sent back to the list
+        self.assertFalse(PhaseSequence.objects.filter(pk=self.sequence.pk).exists())
+        self.assertTrue(Material.objects.filter(pk=self.material.pk).exists())
+
+    def test_an_admin_can_delete_a_material(self):
+        self.client.force_login(self.admin)
+
+        self.assertContains(self.client.get(self.change_url), self.delete_url)
+        self.client.post(self.delete_url, {"post": "yes"})
+        self.assertFalse(Material.objects.filter(pk=self.material.pk).exists())

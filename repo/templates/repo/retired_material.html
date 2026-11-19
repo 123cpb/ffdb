@@ -1,0 +1,20 @@
+{% extends "repo/base.html" %}
+{% block title %}{{ record.accession }} (retired){% endblock %}
+{% block content %}
+<h1 class="material-id">{{ record.accession }}</h1>
+{% if record.name %}<p class="material-name">{{ record.name }}</p>{% endif %}
+<p>This ID has been retired: the {{ record.get_kind_display|lower }} is no longer in FFDB. LCR IDs are never reused, so {{ record.accession }} will never name anything else.</p>
+
+<dl class="facts">
+  {% if record.inchikey %}
+  <dt>InChIKey</dt>
+  <dd><code>{{ record.inchikey }}</code></dd>
+  {% endif %}
+  <dt>Retired</dt>
+  <dd>{{ record.retired_at|date:"j F Y" }}</dd>
+  {% if record.reason %}
+  <dt>Reason</dt>
+  <dd>{{ record.reason|linebreaksbr }}</dd>
+  {% endif %}
+</dl>
+{% endblock %}

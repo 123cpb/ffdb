@@ -2,8 +2,9 @@ import re
 from urllib.parse import quote, urlencode
 
 from django.conf import settings
+from django.core import serializers
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.urls import reverse
 from django.utils import timezone
@@ -270,6 +271,29 @@ class Material(models.Model):
             .exclude(code__in=NOT_LIQUID_CRYSTAL)
             .distinct()
         )
+
+    def snapshot(self):
+        """This material and every row that deleting it deletes too, as JSON written by Django's
+        serializers: its components (a mixture's), its sequences and their transitions, and its
+        series and their points, each parent before its children. A sequence's phases are listed
+        in its own row. Rows elsewhere, such as its references, are named by primary key."""
+        rows = [self, *self.components.all()]
+        for sequence in self.phase_sequences.all():
+            rows += [sequence, *sequence.transitions.all()]
+        for series in self.series.all():
+            rows += [series, *series.points.all()]
+        return serializers.serialize("json", rows, indent=2)
+
+    def retire(self, user):
+        """Delete this material, first saving a RetiredID record of its ID, retired by user,
+        with a snapshot of everything deleted. Both happen or neither: if the delete fails,
+        the record is undone too."""
+        with transaction.atomic():
+            RetiredID.objects.create(
+                number=self.pk, kind=self.kind, name=self.name, inchikey=self.inchikey, retired_by=user,
+                snapshot=self.snapshot(),
+            )
+            self.delete()
 
 
 def materials_named(name, kind=None):
@@ -1074,3 +1098,37 @@ class Measurement(models.Model):
                     "for a value with nothing to plot it against (e.g. a gas-phase calculation)."
                 )
         return errors
+
+
+class RetiredID(models.Model):
+    """An LCR ID whose material has been deleted (Material.retire()), so that what it was is
+    kept, and the material can be put back from the snapshot. PostgreSQL never gives a
+    number out twice, so only retired IDs need a table: while a material exists, its ID is
+    its primary key."""
+
+    number = models.PositiveIntegerField(primary_key=True, help_text="The material's primary key: LCR-00012 is 12.")
+    kind = models.CharField(max_length=8, choices=Material.Kind.choices)
+    name = models.CharField(max_length=200, blank=True)
+    inchikey = models.CharField("InChIKey", max_length=27, blank=True)
+    # SET_NULL, as for Entered.entered_by: deleting the account keeps the record.
+    retired_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    retired_at = models.DateTimeField(auto_now_add=True)
+    reason = models.TextField(
+        blank=True,
+        help_text="Why it was deleted, e.g. entered twice, or not a liquid crystal. Shown on the ID's public page.",
+    )
+    # The JSON text from Material.snapshot(), as serializers.deserialize("json", ...) reads it back.
+    snapshot = models.TextField(editable=False)
+
+    class Meta:
+        ordering = ["-retired_at"]
+        verbose_name = "retired ID"
+
+    def __str__(self):
+        return f"{self.accession} {self.name}"
+
+    @property
+    def accession(self):
+        return accession(self.number)

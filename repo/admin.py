@@ -1,13 +1,13 @@
 from django.contrib import admin, messages
 from django.core.exceptions import ValidationError
-from django.db import models
+from django.db import models, transaction
 from django.forms import Textarea
 from django.forms.models import BaseInlineFormSet
 from django.utils.html import format_html
 
 from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
-    Series, Variable,
+    RetiredID, Series, Variable,
 )
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
@@ -151,6 +151,40 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
         warning = obj.stereo_warning()
         if warning:
             self.message_user(request, warning, messages.WARNING)
+
+    def delete_model(self, request, obj):
+        """The Delete button: retire the material rather than only delete it (Material.retire())."""
+        obj.retire(request.user)
+
+    def delete_queryset(self, request, queryset):
+        """Delete selected: each material retired as on its own page, all of them or none."""
+        with transaction.atomic():
+            for material in queryset:
+                material.retire(request.user)
+
+
+@admin.register(RetiredID)
+class RetiredIDAdmin(admin.ModelAdmin):
+    """Records are made only by deleting a material, and kept: only the reason can be changed."""
+
+    list_display = ["accession", "name", "kind", "retired_by", "retired_at"]
+    fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "reason", "deleted_rows"]
+    readonly_fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "deleted_rows"]
+
+    @admin.display(description="ID", ordering="number")
+    def accession(self, obj):
+        return obj.accession
+
+    @admin.display(description="snapshot")
+    def deleted_rows(self, obj):
+        # <pre> keeps the JSON's line breaks and indents, which a read-only field would lose.
+        return format_html("<pre>{}</pre>", obj.snapshot)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Phase)

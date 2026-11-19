@@ -204,6 +204,8 @@ class AdminTests(MixtureTestCase):
         self.assertFalse(Material.objects.filter(name="F8").exists())
 
     def test_a_compound_in_a_mixture_is_not_deleted(self):
+        # Only admins delete materials (migration 0021), so a superuser rather than the curator.
+        self.client.force_login(User.objects.create_superuser("admin", password="pw"))
         url = reverse("admin:repo_material_delete", args=[self.cb5.pk])
 
         self.assertContains(self.client.get(url), "protected related objects")
