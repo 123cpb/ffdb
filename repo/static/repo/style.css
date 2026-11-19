@@ -61,6 +61,8 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .entry-form--wide { max-width: 900px; }
 .entry-form textarea { width: 100%; padding: 7px 10px; font: 13.5px/1.5 var(--mono); background: var(--surface); border: 1px solid var(--hairline); border-radius: 6px; resize: vertical; }
 .entry-form__buttons { display: flex; gap: 8px; }
+/* A button beside the main ones, outlined so it doesn't look like Check or Save: Draw and Cancel. */
+.entry-form .secondary-button { color: var(--link); background: var(--surface); border: 1px solid var(--link); }
 /* Fields side by side, such as the compound table's direction, rate and method. They wrap on a phone. */
 .entry-form__row { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
 .entry-form__field { display: grid; gap: 4px; align-content: start; }
@@ -161,6 +163,15 @@ ul.form-error { padding-left: 32px; }
 .property-description { max-width: 720px; }
 .table-note { font-size: 13.5px; color: var(--muted); }
 
+/* The Draw button's dialog (draw.js), with Ketcher's page in a frame. The body is an entry form as wide as the dialog. */
+.draw-dialog { width: min(1000px, calc(100vw - 32px)); max-height: calc(100vh - 32px); padding: 16px 18px; border: 1px solid var(--hairline); border-radius: 6px; }
+.draw-dialog::backdrop { background: rgba(20, 28, 36, 0.45); }
+.draw-dialog__body { max-width: none; margin: 0; }
+.draw-dialog__body h2 { margin: 0 0 8px; }
+.draw-dialog__body input[type="text"] { max-width: 320px; }
+.draw-dialog__status { margin: 8px 0 4px; font-size: 13.5px; color: var(--ink-2); }
+.draw-dialog__editor iframe { display: block; width: 100%; height: 540px; border: 1px solid var(--hairline); }
+
 .reference-kind { margin: 0 0 4px; font-size: 13.5px; color: var(--muted); }
 .reference-label { overflow-wrap: anywhere; }
 
@@ -168,4 +179,6 @@ ul.form-error { padding-left: 32px; }
   .wrap { padding: 0 16px; }
   .material-id { font-size: 34px; }
   .result { grid-template-columns: 120px minmax(0, 1fr); gap: 12px; }
+  .draw-dialog { padding: 12px; }
+  .draw-dialog__editor iframe { height: 420px; }
 }

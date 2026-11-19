@@ -12,6 +12,7 @@ from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
 from repo.management.commands import fetch_ketcher
+from repo.tests.test_add_data import AddDataTestCase
 
 COMMAND = "repo.management.commands.fetch_ketcher"
 
@@ -97,6 +98,10 @@ class EditorFilesTests(SimpleTestCase):
                 finders.find(path), f"{path} is missing: run .venv/bin/python manage.py fetch_ketcher"
             )
 
+    def test_the_draw_script_is_in_the_static_files(self):
+        # {% static %} writes the address whether or not the file is there, so this checks it is.
+        self.assertTrue(finders.find("repo/draw.js"))
+
 
 class CreditTests(TestCase):
     def test_pages_credit_ketcher(self):
@@ -105,3 +110,21 @@ class CreditTests(TestCase):
         self.assertContains(
             response, 'Structure editor: <a href="https://github.com/epam/ketcher">Ketcher</a>'
         )
+
+
+class DrawButtonTests(AddDataTestCase):
+    """What Django can see of the Draw button. Drawing itself is checked in a browser."""
+
+    def test_curators_get_a_hidden_draw_button_its_dialog_and_its_script(self):
+        response = self.client.get(self.add_page(self.article))
+
+        # hidden until draw.js shows it, so without JavaScript the page is as it was.
+        self.assertContains(
+            response,
+            '<button type="button" class="secondary-button" data-draw data-table="id_table" hidden>'
+            "Draw a compound</button>",
+            html=True,
+        )
+        self.assertContains(response, '<dialog class="draw-dialog" id="draw-dialog"')
+        self.assertContains(response, 'data-src="/static/repo/ketcher/index.html"')
+        self.assertContains(response, '<script src="/static/repo/draw.js" defer></script>', html=True)

@@ -1,4 +1,5 @@
 {% extends "repo/base.html" %}
+{% load static %}
 {% block title %}Add data from {{ reference.label }}{% endblock %}
 {% block content %}
 <p class="reference-kind">{{ reference.get_kind_display }}</p>
@@ -25,6 +26,9 @@
     <label for="{{ form.table.id_for_label }}">{{ form.table.label }}</label>
     {% if form.table.errors %}<p class="form-error">{{ form.table.errors|join:" " }}</p>{% endif %}
     {{ form.table }}
+    {# draw.js shows this button and opens the dialog below. hidden: without JavaScript it is never shown. #}
+    {# type="button": it doesn't send the form. data-table is the id of the box it adds a line to. #}
+    <button type="button" class="secondary-button" data-draw data-table="{{ form.table.id_for_label }}" hidden>Draw a compound</button>
     <p class="entry-form__help" id="{{ form.table.auto_id }}_helptext">{{ form.table.help_text }}</p>
     {# The button's name is sent with the form, so the view can tell Save from Check. #}
     <div class="entry-form__buttons">
@@ -32,6 +36,24 @@
       <button type="submit" name="save">Save</button>
     </div>
   </form>
+
+  {# The Draw button's dialog. A closed dialog isn't shown, so without JavaScript the page is as before. #}
+  {# Outside the form: a form can't hold another, and nothing here is sent. The label box has no name for the same reason. #}
+  {# draw.js puts Ketcher's page, data-src, in the empty box when Draw is first pressed. #}
+  {# entry-form is on the div, not the dialog: its display: grid would show the dialog while closed. #}
+  <dialog class="draw-dialog" id="draw-dialog" aria-labelledby="draw-dialog-title">
+    <div class="entry-form draw-dialog__body">
+      <h2 id="draw-dialog-title">Draw a compound</h2>
+      <label for="draw-label">Label, as the reference prints it</label>
+      <input type="text" id="draw-label" autocomplete="off" spellcheck="false">
+      <p class="draw-dialog__status" role="status"></p>
+      <div class="draw-dialog__editor" data-src="{% static 'repo/ketcher/index.html' %}"></div>
+      <div class="entry-form__buttons">
+        <button type="button" data-use>Use this structure</button>
+        <button type="button" class="secondary-button" data-cancel>Cancel</button>
+      </div>
+    </div>
+  </dialog>
 
   {% if lines %}
   {% if form.header %}<p class="table-note">Line {{ form.header }} has no digits, so it was read as a header.</p>{% endif %}
@@ -123,4 +145,7 @@
 {% include "repo/_reference_sequences.html" %}
 
 {% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
+
+{# The Draw button's script. defer: it runs once the page is read, so the button and dialog are there. #}
+<script src="{% static 'repo/draw.js' %}" defer></script>
 {% endblock %}
