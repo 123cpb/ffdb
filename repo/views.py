@@ -15,10 +15,7 @@ from django.template.defaultfilters import pluralize
 from django.views.decorators.http import require_POST
 
 from . import charts, chem, crossref, exports, ribbons
-from .forms import (
-    MAX_CARDS, CompoundCard, CompoundCards, CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm,
-    MixtureForm, ValueChoiceForm, ValueForm,
-)
+from .forms import MAX_CARDS, CompoundCard, CompoundCards, CompoundTableForm, FindReferenceForm
 from .models import (
     DOI_PREFIX,
     Material,
@@ -624,20 +621,16 @@ def fill_from_crossref(reference):
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_from_reference(request, pk):
-    """A reference's Add data page: a box for a table of its compounds, the forms for adding a
-    mixture, a value or a curve, and what FFDB already has from it. Its materials are those it gives sequences or values for. A number with no
-    reference gives a 404.
+    """A reference's Add data page: its compound cards, a box for a table of its compounds that
+    makes cards, and what FFDB already has from it. Its materials are those it gives sequences or
+    values for. A number with no reference gives a 404. The cards are the one way to add data
+    here; the table only fills them.
 
-    Check reads the table and shows each line, saving nothing. Save (a POST with save in
-    it) reads the table again and saves the lines without a problem. Then it sends the
-    curator back here with a redirect, so reloading the page can't save twice. The messages
-    say what was saved and list the lines that weren't, with their text, to fix and paste
-    again.
-
-    Make cards (a POST with cards in it) is the page without JavaScript's: with cards.js,
-    make_cards() answers it. Once every line reads, the page comes back with a card for each
-    line in place of its cards, nothing saved, and the table emptied, as the cards hold its
-    lines now. Otherwise it comes back with no cards made, and why, above the table's lines."""
+    Check reads the table and shows each line, saving nothing. Make cards (a POST with cards in
+    it) is the page without JavaScript's: with cards.js, make_cards() answers it. Once every line
+    reads, the page comes back with a card for each line in place of its cards, nothing saved,
+    and the table emptied, as the cards hold its lines now. Otherwise it comes back with no cards
+    made, and why, above the table's lines."""
     reference = get_object_or_404(references_with_counts(), pk=pk)
     form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference)
     # A page of one empty compound card, sent to add_compound, unless the table makes cards.
@@ -653,20 +646,6 @@ def add_from_reference(request, pk):
                 request, f"Made {n} card{pluralize(n)} from the table: add their values, then Check and Save the cards."
             )
             form = CompoundTableForm(reference=reference)
-    if form.is_valid() and "save" in request.POST:
-        counts, warnings = form.save(request.user)
-        compounds, sequences, aliases = counts["compounds"], counts["sequences"], counts["aliases"]
-        messages.success(
-            request,
-            f"Saved from the table: {compounds} new compound{pluralize(compounds)}, "
-            f"{sequences} sequence{pluralize(sequences)}, {aliases} alias{pluralize(aliases, 'es')}.",
-        )
-        for warning in warnings:
-            messages.warning(request, warning)
-        for line in form.cleaned_data["table"]:
-            if line.problem:
-                messages.error(request, f"Line {line.number} not saved: {line.problem} The line: {line.text}")
-        return redirect("repo:add_from_reference", reference.pk)
     context = {
         "nav": "add",
         "reference": reference,
@@ -674,13 +653,6 @@ def add_from_reference(request, pk):
         **table_reading(form),
         "cards_problems": cards_problems,
         "materials": reference.materials(),
-        # The first forms for adding a single value and a curve, sent to add_value and
-        # add_curve. Both have a material box: auto_id gives the curve's boxes other ids, so
-        # each label still points at its own box.
-        "choice": ValueChoiceForm(reference=reference),
-        "curve_choice": CurveChoiceForm(reference=reference, auto_id="id_curve_%s"),
-        # The form for adding a mixture, sent to add_mixture.
-        "mixture_form": MixtureForm(),
         "cards": cards,
         **reference_tables(reference),
     }
@@ -904,79 +876,3 @@ def add_compound(request, pk):
     show_runs(cards.cards)
     context = {"nav": "add", "reference": reference, "cards": cards}
     return render(request, "repo/add_compound.html", context)
-
-
-@login_required
-@permission_required("repo.add_reference", raise_exception=True)
-def add_value(request, pk):
-    """Adding a single value from a reference, in two forms. The first, ValueChoiceForm, is
-    sent with GET, so this page's address holds its choices, e.g. ?material=12&property=ps&
-    kind=measured&temperature=yes. Once they are valid the page also shows the second,
-    ValueForm, which asks for what that property needs for that kind. It posts to this same
-    address, so the choices come with it. Saving sends the curator back to the reference's
-    Add data page with a redirect, so reloading can't save twice. A number with no reference
-    gives a 404."""
-    reference = get_object_or_404(Reference, pk=pk)
-    # A visit with no choices has an empty request.GET, which counts as false, so the first
-    # form is shown empty, without errors.
-    choice = ValueChoiceForm(request.GET or None, reference=reference)
-    form = None
-    if choice.is_valid():
-        data = request.POST if request.method == "POST" else None
-        form = ValueForm(data, reference=reference, choice=choice.cleaned_data)
-        if form.is_valid():
-            series = form.save(request.user)
-            messages.success(request, f"Saved a {series.property.symbol} value for {series.material.accession}.")
-            return redirect("repo:add_from_reference", reference.pk)
-    context = {"nav": "add", "reference": reference, "choice": choice, "form": form}
-    return render(request, "repo/add_value.html", context)
-
-
-@login_required
-@permission_required("repo.add_reference", raise_exception=True)
-def add_curve(request, pk):
-    """Adding a curve from a reference, in two forms, as add_value() adds a single value. The
-    first, CurveChoiceForm, also chooses what the curve is against, e.g. ?material=12&
-    property=ps&kind=measured&variable=temperature. The second, CurveForm, has a box for the
-    points. Check reads them and shows how many points were read, the lines that weren't, and
-    the chart the curve will make, saving nothing. Save (a POST with save in it) saves the
-    curve, but only once every line is a point. A number with no reference gives a 404."""
-    reference = get_object_or_404(Reference, pk=pk)
-    choice = CurveChoiceForm(request.GET or None, reference=reference)
-    form = None
-    if choice.is_valid():
-        data = request.POST if request.method == "POST" else None
-        form = CurveForm(data, reference=reference, choice=choice.cleaned_data)
-        if form.is_valid() and "save" in request.POST:
-            series = form.save(request.user)
-            n = len(form.point_list)
-            messages.success(
-                request, f"Saved a {series.property.symbol} curve of {n} point{pluralize(n)} for {series.material.accession}."
-            )
-            return redirect("repo:add_from_reference", reference.pk)
-    # What Check read, and the chart (form.curve_charts()), are in _curve_reading.html.
-    context = {"nav": "add", "reference": reference, "choice": choice, "form": form}
-    return render(request, "repo/add_curve.html", context)
-
-
-@login_required
-@permission_required("repo.add_reference", raise_exception=True)
-def add_mixture(request, pk):
-    """Adding a mixture from a reference. The empty form is on the reference's Add data page
-    and posts here. Check reads it and shows each component line with the compound it found,
-    or why it found none, saving nothing. When mixtures with this name are in FFDB, the form
-    lists them and asks whether this is one of them. Save (a POST with save in it) reads it
-    again and adds the mixture, or nothing for one already in FFDB, and sends the curator back
-    to the Add data page with a redirect, so reloading can't save twice. Either way the message
-    gives the mixture's LCR ID. A number with no reference gives a 404."""
-    reference = get_object_or_404(Reference, pk=pk)
-    form = MixtureForm(request.POST if request.method == "POST" else None)
-    if form.is_valid() and "save" in request.POST:
-        mixture, added = form.save()
-        if added:
-            messages.success(request, f"Added the mixture {mixture.name} as {mixture.accession}.")
-        else:
-            messages.info(request, f"{mixture.name} is already in FFDB as {mixture.accession}, so nothing was added.")
-        return redirect("repo:add_from_reference", reference.pk)
-    context = {"nav": "add", "reference": reference, "form": form}
-    return render(request, "repo/add_mixture.html", context)

@@ -2,7 +2,6 @@
 
 import math
 import re
-from collections import Counter
 from dataclasses import dataclass
 
 from django import forms
@@ -30,7 +29,6 @@ from .models import (
     clean_patent_number,
     group_properties,
     materials_named,
-    must_state,
     name_key,
     pk_from_accession,
 )
@@ -312,46 +310,6 @@ class CompoundTableForm(forms.Form):
             raise ValidationError(self.NO_DIRECTION)
         return read_lines(rows, self.reference, direction)
 
-    def save(self, user):
-        """Save the lines without a problem, in one transaction, so a failure partway keeps
-        none of them. A new structure becomes a material named by its label. A material already
-        in FFDB keeps the label as an alias, unless Material.alias_problem() says why not. Each
-        sequence is added under the reference, with the table's direction, rate and method, as
-        entered by user, unless it is already there. Returns (counts, the stereochemistry
-        warnings for the new materials)."""
-        counts, warnings = Counter(), []
-        observed = {
-            "direction": self.cleaned_data["direction"],
-            "rate_k_per_min": self.cleaned_data["rate"],
-            "method": self.cleaned_data["method"],
-        }
-        with transaction.atomic():
-            for line in self.cleaned_data["table"]:
-                if line.problem:
-                    continue
-                material = line.match
-                if material is None:
-                    # Only a SMILES line finds no match: an LCR ID line without one is a problem.
-                    material = Material.objects.create(name=line.label, smiles=line.identifier)
-                    counts["compounds"] += 1
-                    # Asked again now it is saved: it has its LCR ID, and it sees the
-                    # materials that earlier lines added.
-                    warning = material.stereo_warning()
-                    if warning:
-                        warnings.append(warning)
-                elif not line.alias_problem:
-                    material.aliases = ", ".join(material.alias_list() + [line.label])
-                    material.save()
-                    counts["aliases"] += 1
-                if line.sequence and not line.sequence_already_there:
-                    sequence = PhaseSequence(
-                        material=material, reference=self.reference, sequence=line.sequence, **observed
-                    )
-                    sequence.mark_entered(user)
-                    sequence.save()
-                    counts["sequences"] += 1
-        return counts, warnings
-
     # Make cards: the table's lines as compound cards. The runs and the cards are further down.
     NO_CARDS = "No cards made: fix the table, then press Make cards again."
     NO_CARDS_LINES = "No cards made: fix these lines, then press Make cards again."
@@ -360,8 +318,10 @@ class CompoundTableForm(forms.Form):
         """The compound cards this table makes, one per line, as the data a page of cards sends
         (CompoundCards), so they read exactly as cards typed in would. Each has the line's
         material, by its LCR ID or SMILES as the line gives it, its label, and its sequence as
-        its first run, with the table's direction, rate and method. Their indexes start at
-        start, so they can follow the cards already on a page, and card-TOTAL counts them all.
+        its first run, with the table's direction, rate and method. A sequence FFDB already has
+        from this reference is left off its card, so saving the cards adds it only once; the
+        table's Check says so. Their indexes start at start, so they can follow the cards
+        already on a page, and card-TOTAL counts them all.
 
         Nothing is made while anything is wrong. Raises ValidationError, whose messages say why,
         when the table can't be read, the page would have more than MAX_CARDS cards, or a line
@@ -389,7 +349,7 @@ class CompoundTableForm(forms.Form):
                 data.update({f"{prefix}-{formset}-TOTAL_FORMS": str(extra), f"{prefix}-{formset}-INITIAL_FORMS": "0"})
             # A run left as the page shows it still sends its top phase, Iso (RunForm's phase_0).
             data.update({f"{prefix}-run-{i}-phase_0": ISOTROPIC for i in range(RunFormSet.extra)})
-            if line.sequence:
+            if line.sequence and not line.sequence_already_there:
                 run, problem = self.card_run(line, synonyms)
                 if problem:
                     problems.append(f"Line {line.number}: {problem}")
@@ -622,8 +582,7 @@ class CardMaterialForm(forms.Form):
     mixture, and is kept as an alias of a material in FFDB unless Material.alias_problem() says
     why not.
 
-    A new mixture is read by Add a mixture's form, MixtureForm, in mixture, with its rules and
-    messages. Its boxes have the card's prefix too, so its name box is the card's label box. When
+    A new mixture is read by MixtureForm, in mixture, with its rules and messages. Its boxes have the card's prefix too, so its name box is the card's label box. When
     FFDB has mixtures of that name, it asks whether this is one of them, and "Yes" finds that one.
 
     A valid form has found, the material in FFDB, or None for a new compound or mixture, which is
@@ -665,7 +624,7 @@ class CardMaterialForm(forms.Form):
         self.alias_problem = self.stereo_warning = self.canonical_smiles = ""
 
     def mixture_form(self, data):
-        """Add a mixture's form for this card's mixture, with data, or None for empty boxes.
+        """A MixtureForm for this card's mixture, with data, or None for empty boxes.
         use_required_attribute=False, as for the card's own boxes: a card for a compound leaves the
         mixture's empty, which the browser mustn't refuse. Its name box is the card's label box, so
         it takes that box's label, which its problems then name. The label is set before anything
@@ -708,7 +667,7 @@ class CardMaterialForm(forms.Form):
         return cleaned
 
     def read_mixture(self):
-        """Read a new mixture as Add a mixture reads one: is_valid() asks for its problems. A
+        """Read a new mixture by MixtureForm's rules: is_valid() asks for its problems. A
         mixture FFDB already has, chosen in answer to the same-name question, is found; otherwise
         the new one is built, not saved."""
         if self.mixture.is_valid():
@@ -826,7 +785,7 @@ class CompoundCard:
         with transaction.atomic():
             material, added, kept = form.found or form.new, form.found is None, False
             if form.is_mixture:
-                # Add a mixture's save: the mixture and its components, or the one in FFDB it is.
+                # MixtureForm's save: the mixture and its components, or the one in FFDB it is.
                 material, added = form.mixture.save()
             elif added:
                 material.save()
@@ -917,10 +876,6 @@ class CompoundCards:
             return [(card, *card.save(user)) for card in self.filled]
 
 
-# Adding a single value or a curve takes two short forms. The first says what the values are
-# of; the second asks for what that property needs for that kind of value.
-
-
 def property_choices(field):
     """A property menu's choices, in the Properties page's order: each group's members under
     its name (an optgroup), and each property in no group on its own. The values are codes,
@@ -931,89 +886,6 @@ def property_choices(field):
         options = [(p.code, f"{p.name} ({p.symbol}, {p.unit})") for p in members]
         choices += [(group.name, options)] if group else options
     return choices
-
-
-class SeriesChoiceForm(forms.Form):
-    """What both first forms ask: the material, the property and the kind of value. A first
-    form is sent with GET, because it changes nothing: the next page's address holds the
-    choices. A valid form's cleaned_data has material (a Material, from either box), property,
-    kind and variable, what the values are against. Pass the reference they are from."""
-
-    material = forms.ModelChoiceField(
-        queryset=Material.objects.none(),  # __init__ sets the reference's materials
-        required=False,  # clean() needs this or an LCR ID
-        empty_label="Choose…",
-        help_text="One of this reference's materials.",
-    )
-    lcr_id = forms.CharField(label="or its LCR ID", required=False, max_length=20, help_text="Any material, e.g. LCR-00012.")
-    # to_field_name: the address and the menu use the property's code, e.g. property=ps.
-    property = forms.ModelChoiceField(queryset=Property.objects.all(), to_field_name="code", empty_label="Choose…")
-    # No default: a default of measured would quietly save a computed value as measured.
-    kind = forms.ChoiceField(choices=[("", "Choose…"), *Series.Kind.choices])
-
-    def __init__(self, *args, reference, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["material"].queryset = reference.materials()
-        self.fields["property"].choices = property_choices(self.fields["property"])
-
-    def clean(self):
-        cleaned = super().clean()
-        material, lcr_id = cleaned.get("material"), cleaned.get("lcr_id")
-        if material and lcr_id:
-            self.add_error("lcr_id", "Choose a material or give an LCR ID, not both.")
-        elif lcr_id:
-            pk = pk_from_accession(lcr_id)
-            found = Material.objects.filter(pk=pk).first() if pk is not None else None
-            if pk is None:
-                self.add_error("lcr_id", "This isn't an LCR ID: an LCR ID looks like LCR-00012.")
-            elif found is None:
-                self.add_error("lcr_id", f"No material has the LCR ID {accession(pk)}.")
-            else:
-                cleaned["material"] = found
-        elif not material:
-            self.add_error("material", "Choose one of this reference's materials, or give an LCR ID.")
-        return cleaned
-
-
-class ValueChoiceForm(SeriesChoiceForm):
-    """The first form for adding a single value: what SeriesChoiceForm asks, and whether the
-    value has a temperature. The answer gives the variable: one way to store each value is
-    against temperature with a temperature, and against nothing without one (see
-    Measurement.position_errors()). cleaned_data's temperature is True or False."""
-
-    YES, NO = "yes", "no"
-
-    temperature = forms.ChoiceField(
-        label="Does the value have a temperature?",
-        choices=[(YES, "Yes: measured or computed at a temperature"), (NO, "No, e.g. a gas-phase calculation")],
-        widget=forms.RadioSelect,
-    )
-
-    def clean_temperature(self):
-        return self.cleaned_data["temperature"] == self.YES
-
-    def clean(self):
-        cleaned = super().clean()
-        if "temperature" not in cleaned:
-            return cleaned  # the field's error already says to answer it
-        cleaned["variable"] = Variable.objects.get(code=Variable.TEMPERATURE if cleaned["temperature"] else Variable.NONE)
-        prop, kind = cleaned.get("property"), cleaned.get("kind")
-        # The second form has no temperature box for a value without one, so this rule is
-        # checked here, with the message the rules for values give.
-        if prop and kind and cleaned["temperature"] is False and "temperature" in prop.conditions_for(kind):
-            self.add_error("temperature", must_state(prop, ["temperature"]))
-        return cleaned
-
-
-class CurveChoiceForm(SeriesChoiceForm):
-    """The first form for adding a curve: what SeriesChoiceForm asks, and what the curve is
-    against. Nothing isn't offered: a value against nothing is one value, added as a single
-    value."""
-
-    # to_field_name: the address uses the variable's code, e.g. variable=frequency.
-    variable = forms.ModelChoiceField(
-        label="Against", queryset=Variable.objects.exclude(code=Variable.NONE), to_field_name="code", empty_label="Choose…"
-    )
 
 
 def condition_value(text):
@@ -1041,13 +913,13 @@ def check_rules(form, obj, **kwargs):
 
 
 class SeriesForm(forms.Form):
-    """What both second forms ask: the method and conditions, and where in the reference the
-    values are. Pass the reference and the first form's cleaned_data as choice, or no choice
-    for a form that reads its own (ValueBlockForm), which asks for no conditions until it calls
-    choose(). There is a box for each of the property's required conditions for the kind, apart
-    from three given another way: temperature and method, which have boxes of their own, and
-    the condition the series' variable stands for, which its points give (a frequency sweep
-    gives its frequencies). Other conditions are typed as key: value lines.
+    """What a block of values on a card asks besides its points: the method and conditions, and
+    where in the reference the values are. Pass the reference. It asks for no conditions until
+    choose() says what the values are of. Then there is a box for each of the property's
+    required conditions for the kind, apart from three given another way: temperature and
+    method, which have boxes of their own, and the condition the series' variable stands for,
+    which its points give (a frequency sweep gives its frequencies). Other conditions are typed
+    as key: value lines.
 
     clean() builds the series, not saved, and checks it by the rules for values
     (Series.clean()), so it is refused with the same messages as an import. Each subclass
@@ -1070,18 +942,15 @@ class SeriesForm(forms.Form):
         help_text="e.g. Table 2, Fig. 3b or [0129].",
     )
 
-    def __init__(self, *args, reference, choice=None, **kwargs):
+    def __init__(self, *args, reference, **kwargs):
         super().__init__(*args, **kwargs)
         self.reference = reference
-        self.material = choice["material"] if choice else None  # a block's comes from its card
         self.prop = self.kind = self.variable = None  # set by choose()
         self.required, self.condition_keys = [], []
         # The id of the page's <datalist> of the property's methods. With the form's prefix, so
         # each block on a card has its own: block-0-method-suggestions.
         self.method_list = self.add_prefix("method-suggestions")
         self.series, self.point_list = None, []  # built by clean()
-        if choice:
-            self.choose(choice["property"], choice["kind"], choice["variable"])
 
     def choose(self, prop, kind, variable):
         """Ask for what values of prop, of this kind, against variable need: a box for each
@@ -1122,8 +991,8 @@ class SeriesForm(forms.Form):
         return conditions
 
     def series_fields(self, cleaned):
-        """The series' fields that differ between the forms, as {name: value}. A single value
-        is no temperature sweep."""
+        """The series' fields a subclass sets from boxes of its own, as {name: value}. Here, only
+        that it is no temperature sweep."""
         return {"direction": Series.Direction.NOT_APPLICABLE}
 
     def clean(self):
@@ -1138,17 +1007,17 @@ class SeriesForm(forms.Form):
             if cleaned.get(f"condition_{key}")
         }
         conditions.update(cleaned.get("other_conditions") or {})
+        # No material: the card gives it at Save.
         self.series = Series(
-            material=self.material, reference=self.reference, property=self.prop, variable=self.variable,
+            reference=self.reference, property=self.prop, variable=self.variable,
             kind=self.kind, method=cleaned.get("method", ""), conditions=conditions,
             taken_from=cleaned.get("taken_from", ""), location=cleaned.get("location", ""),
             **self.series_fields(cleaned),
         )
         # A box that already has an error isn't checked again, so a blank one isn't refused
-        # twice. Series.clean() runs whatever is left out. A block's material is left out too:
-        # its card gives it at Save.
-        exclude = list(self.errors) + (["material"] if self.material is None else [])
-        check_rules(self, self.series, exclude=exclude)
+        # twice. Series.clean() runs whatever is left out. The material is left out too, as it
+        # has none yet.
+        check_rules(self, self.series, exclude=[*self.errors, "material"])
         return cleaned
 
     def save(self, user):
@@ -1162,40 +1031,6 @@ class SeriesForm(forms.Form):
                 point.series = self.series  # again, now the series has its primary key
             Measurement.objects.bulk_create(self.point_list)
         return self.series
-
-
-class ValueForm(SeriesForm):
-    """The second form for adding a single value: the value, and what SeriesForm asks. Only a
-    value with a temperature has a box for it. clean() builds the value as a series of one
-    point."""
-
-    qualifier = forms.ChoiceField(
-        label="The value is", choices=Measurement.Qualifier.choices, initial=Measurement.Qualifier.EXACT,
-        help_text=Measurement._meta.get_field("qualifier").help_text,
-    )
-    value = forms.FloatField()  # __init__ adds the unit to the label
-    uncertainty = forms.FloatField(label="±", required=False)
-    temperature_c = forms.FloatField(label="T (°C)")  # __init__ removes it for a value without one
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.has_temperature = self.variable.code == Variable.TEMPERATURE
-        self.fields["value"].label = f"Value ({self.prop.unit})"
-        if not self.has_temperature:
-            del self.fields["temperature_c"]
-
-    def clean(self):
-        cleaned = super().clean()
-        # The point can be built only from boxes that were read: a blank value has nothing to check.
-        if not any(self.has_error(name) for name in ["qualifier", "value", "uncertainty", "temperature_c"]):
-            point = Measurement(
-                series=self.series, qualifier=cleaned["qualifier"], value=cleaned["value"],
-                uncertainty=cleaned["uncertainty"], temperature_c=cleaned.get("temperature_c"),
-            )
-            # The series has no primary key yet, which is all full_clean() would say about it.
-            check_rules(self, point, exclude=["series"])
-            self.point_list = [point]
-        return cleaned
 
 
 # A curve's points, pasted into one box. The most lines it can have, as in the prototype. FFDB
@@ -1301,9 +1136,10 @@ def read_points(text, has_x=True):
 
 
 class CurveForm(SeriesForm):
-    """The second form for adding a curve: what SeriesForm asks, and its points, pasted into
-    one box and read by read_points(). A curve against temperature asks which way it was
-    taken; one against anything else asks the temperature every point was measured at.
+    """What SeriesForm asks, and the points, pasted into one box and read by read_points(): the
+    part of a block of values (ValueBlockForm) that reads its lines. Points against temperature
+    ask which way they were taken; against anything else but nothing, the temperature every
+    point was measured at.
 
     clean() builds a point from every line that reads, in point_list, for Check to count and
     draw. A line that can't be read, or whose point the rules for values refuse, goes in
@@ -1333,7 +1169,7 @@ class CurveForm(SeriesForm):
     )  # choose() gives it its label and help, with the units
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)  # which calls choose(), given a choice
+        super().__init__(*args, **kwargs)
         self.header, self.problem_lines = None, []  # set by clean_points() and clean()
 
     @property
@@ -1348,7 +1184,7 @@ class CurveForm(SeriesForm):
     def choose(self, prop, kind, variable):
         """What SeriesForm.choose() asks, and for the points: against temperature, which way
         they were taken; against anything else, the temperature of every point; against
-        nothing, which only a block on a card can be, neither. The points box's label and help
+        nothing, neither. The points box's label and help
         name what each line gives, with the units."""
         super().choose(prop, kind, variable)
         if not self.against_temperature:
@@ -1439,24 +1275,24 @@ class CurveForm(SeriesForm):
 
 
 class ValueBlockForm(CurveForm):
-    """One block of values on a compound card, for the card's material: what the forms for a
-    single value and a curve ask, on one form. One line is a single value and several are a
-    curve, with CurveForm's columns: x, the value and optionally ±, and no x against nothing.
+    """One block of values on a compound card, for the card's material. One line is a single
+    value and several are a curve, with CurveForm's columns: x, the value and optionally ±, and
+    no x against nothing.
 
-    Its first three boxes say what the values are of and against, as the first forms do. Once
-    all three read, __init__ adds the boxes they need with choose(): the conditions, the
-    direction or T, and the method's suggestions. So without JavaScript those appear after
-    Check; with it, views.check_block_boxes draws them as soon as the choice changes. The rest
-    is CurveForm's and SeriesForm's, so a block is refused by the same rules,
-    with the same messages. Its series has no material until the card gives it at Save. Pass
-    the reference."""
+    Its first three boxes say what the values are of and against. Once all three read,
+    __init__ adds the boxes they need with choose(): the conditions, the direction or T, and the
+    method's suggestions. So without JavaScript those appear after Check; with it,
+    views.check_block_boxes draws them as soon as the choice changes. The rest is CurveForm's
+    and SeriesForm's, which check it by the rules for values, so a block is refused with the
+    same messages as an import. Its series has no material until the card gives it at Save.
+    Pass the reference."""
 
     ONE_LINE_HAS_NO_DIRECTION = (
         "One line is a single value, which has no direction: leave this empty, or give the curve's lines."
     )
 
     property = forms.ModelChoiceField(queryset=Property.objects.all(), to_field_name="code", empty_label="Choose…")
-    # No default, as in the first forms: a default of measured would quietly save a computed value as measured.
+    # No default, as for a run's direction: a default of measured would quietly save a computed value as measured.
     kind = forms.ChoiceField(choices=[("", "Choose…"), *Series.Kind.choices])
     variable = forms.ModelChoiceField(
         label="Against", queryset=Variable.objects.all(), to_field_name="code", empty_label="Choose…"
@@ -1504,7 +1340,7 @@ class ValueBlockForm(CurveForm):
 
     def series_fields(self, cleaned):
         """CurveForm's, but one line is a single value, which is no temperature sweep, as
-        ValueForm stores it. So is a box refused as a whole, which has no lines to count."""
+        SeriesForm has it. So is a box refused as a whole, which has no lines to count."""
         fields = super().series_fields(cleaned)
         if len(cleaned.get("points", [])) <= 1:
             fields["direction"] = Series.Direction.NOT_APPLICABLE
@@ -1585,7 +1421,8 @@ def read_components(text):
             continue
         # Whether it is a compound is left to MixtureComponent.clean(), below.
         line.material, line.problem = find_material(
-            name, "Add it first with the compound table, or describe it under Other components."
+            name, "Add it first on a card of its own, with its data from this reference, or describe it under Other "
+            "components."
         )
         if line.problem:
             continue
@@ -1612,7 +1449,8 @@ class MixtureForm(forms.Form):
 
     clean() reads the lines, builds the mixture, not saved, and checks it by the rules for
     mixtures, so it is refused with the same messages as in the admin. The form is valid,
-    and can be saved, only when every line reads."""
+    and can be saved, only when every line reads. A compound card's new mixture is read by it
+    (CardMaterialForm), with the card's prefix."""
 
     DIFFERENT = "different"
 
@@ -1632,8 +1470,8 @@ class MixtureForm(forms.Form):
         widget=forms.Textarea(attrs={"rows": 4, "spellcheck": "false"}),
         strip=False,  # stripping blank lines from the start would change the line numbers
         help_text="One compound per line: its LCR ID or name, its fraction and the unit (mol% or wt%), separated by "
-        "commas or tabs, e.g. LCR-00128, 30, mol%. A compound that isn't in FFDB yet: add it first with the compound "
-        "table, or describe it under Other components.",
+        "commas or tabs, e.g. LCR-00128, 30, mol%. A compound that isn't in FFDB yet: add it first on a card of its "
+        "own, with its data from this reference, or describe it under Other components.",
     )
     other_components = forms.CharField(
         required=False,

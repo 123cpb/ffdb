@@ -73,19 +73,13 @@ class AddingAgainTests(CompoundTableTestCase):
         again.refresh_from_db()
         self.assertEqual(again.name, "5CB, added again")
 
-    def test_the_table_makes_a_retired_or_merged_structure_a_problem_line_and_saves_neither(self):
+    def test_the_table_makes_a_retired_or_merged_structure_a_problem_line(self):
         table = f"5CB\t{FIVE_CB}\nRM-734\t{WRONG_RM734}\nDIO\t{DIO}"
 
         lines = self.send(table).context["lines"]
 
         self.assertEqual([line.status for line in lines], ["problem", "problem", "new"])
         self.assertEqual([lines[0].problem, lines[1].problem], [self.retired_message, self.merged_message])
-
-        before = Material.objects.count()
-        self.send(table, "save")
-
-        self.assertEqual(Material.objects.count(), before + 1)  # DIO only
-        self.assertFalse(Material.objects.filter(name__in=["5CB", "RM-734"]).exists())
 
     def test_once_restored_the_structure_is_found_in_ffdb_under_its_old_id(self):
         RetiredID.objects.get(number=self.retired_number).restore()

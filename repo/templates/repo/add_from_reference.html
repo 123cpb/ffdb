@@ -11,7 +11,8 @@
   {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
 </p>
 
-<p>Add this reference's compounds, their phase sequences, its mixtures, and its property values and curves here.</p>
+<p>Add this reference's compounds and mixtures, their phase sequences, and its property values and curves here, on
+cards. A table of its compounds can make the cards.</p>
 
 <section>
   <h2>Add compounds on cards</h2>
@@ -22,7 +23,7 @@
 </section>
 
 <section>
-  <h2>Add compounds</h2>
+  <h2>Make cards from a table</h2>
   {# views.add_from_reference gives the form, CompoundTableForm. No action: it posts to this page. #}
   {# data-check names the box checks.js puts what the server makes of the form in, after a pause in typing. #}
   <form method="post" class="entry-form entry-form--wide" data-check="table-result">
@@ -40,13 +41,12 @@
     <button type="button" class="secondary-button" data-draw data-table="{{ form.table.id_for_label }}" hidden>Draw a compound</button>
     <p class="entry-form__help" id="{{ form.table.auto_id }}_helptext">{{ form.table.help_text }}</p>
     <p class="entry-form__help">Make cards turns each line into a card above, with its compound and its sequence as a
-    run, once every line reads. Add their values there, then Check and Save the cards.</p>
-    {# The button's name is sent with the form, so the view can tell Save, Check and Make cards apart. #}
+    run, once every line reads. Add their values there, then Check and Save the cards. The table saves nothing itself.</p>
+    {# The button's name is sent with the form, so the view can tell Check and Make cards apart. #}
     {# cards.js sends Make cards to data-url instead, and puts the cards in the page without a reload. #}
     <div class="entry-form__buttons">
       <button type="submit" name="check">Check</button>
-      <button type="submit" name="save">Save</button>
-      <button type="submit" name="cards" class="secondary-button" data-make-cards data-url="{% url 'repo:make_cards' reference.pk %}">Make cards</button>
+      <button type="submit" name="cards" data-make-cards data-url="{% url 'repo:make_cards' reference.pk %}">Make cards</button>
     </div>
   </form>
 
@@ -58,27 +58,6 @@
   <div id="table-result" aria-live="polite" data-check-url="{% url 'repo:check_table' reference.pk %}">
     {% include "repo/_table_lines.html" %}
   </div>
-</section>
-
-<section>
-  <h2>Add a mixture</h2>
-  <p>Its components must already be in FFDB as compounds: add any that aren't with the table above, or describe them
-  under Other components. Check shows the compound each line finds, and asks if a mixture with this name is already in
-  FFDB. Once it is in FFDB, add its phase sequences with the table above, giving its LCR ID in place of a SMILES, and
-  its values and curves with the forms below.</p>
-  {% include "repo/_mixture_form.html" with form=mixture_form %}
-</section>
-
-<section>
-  <h2>Add a single value</h2>
-  <p>Say what the value is of. The next page asks for the value and what its property needs for that kind.</p>
-  {% include "repo/_value_choice.html" %}
-</section>
-
-<section>
-  <h2>Add a curve</h2>
-  <p>Say what the curve is of and what it is against. The next page has a box for its points.</p>
-  {% include "repo/_curve_choice.html" with choice=curve_choice %}
 </section>
 
 <section>

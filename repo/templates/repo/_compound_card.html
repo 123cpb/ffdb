@@ -39,7 +39,7 @@ Each box is a live region (aria-live), so a screen reader reads each new answer.
     {% include "repo/_entry_field.html" with field=form.name %}
     {# The label box is a new mixture's name too (forms.CardMaterialForm), so the mixture's problems with its name go here. #}
     {% if form.mixture.name.errors %}<p class="form-error">{{ form.mixture.name.errors|join:" " }}</p>{% endif %}
-    {# A new mixture's boxes, Add a mixture's. <details> opens and closes without JavaScript; it comes back open for a mixture. #}
+    {# A new mixture's boxes (_mixture_boxes.html). <details> opens and closes without JavaScript; it comes back open for a mixture. #}
     <details class="card-mixture"{% if form.is_mixture %} open{% endif %}>
       <summary>Or a new mixture</summary>
       {# Errors that belong to no one box: the rules across the components. #}

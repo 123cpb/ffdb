@@ -1,15 +1,13 @@
 """A reference's Add data page reads a pasted table of compounds, where a material already in
 FFDB, such as a mixture, can be given by its LCR ID: Check shows what each line would add and
-saves nothing; Save adds the lines without a problem and lists the others."""
-
-from urllib.parse import urlencode
+saves nothing. The table adds nothing itself: it makes cards (test_table_cards.py)."""
 
 from django.test import SimpleTestCase
 from django.urls import reverse
 
-from repo.forms import table_cells, table_rows
+from repo.forms import CompoundTableForm, table_cells, table_rows
 from repo.models import Material, PhaseSequence, is_compound_number
-from repo.tests.test_add_data import FIVE_CB, LOGIN, AddDataTestCase
+from repo.tests.test_add_data import FIVE_CB, AddDataTestCase
 from repo.tests.test_values import DIO, RM734
 
 SEQUENCE = "K 139.8 NF 132.7 N 187.9 I"
@@ -74,7 +72,8 @@ class CompoundTableTestCase(AddDataTestCase):
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
 
     def send(self, table, button="check", follow=False, direction="summary", rate="", method=""):
-        """Post the table with the Check or Save button, as summaries unless direction says otherwise."""
+        """Post the table with the Check button, or the one button names, as summaries unless
+        direction says otherwise."""
         data = {"table": table, "direction": direction, "rate": rate, "method": method, button: ""}
         return self.client.post(self.add_page(self.article), data, follow=follow)
 
@@ -135,7 +134,7 @@ class CheckTests(CompoundTableTestCase):
         response = self.send(f"RM734\t{RM734}\tK 139.8 Nf 132.7 N 187.9 I")  # Nf is NF
 
         self.assertTrue(response.context["lines"][0].sequence_already_there)
-        self.assertContains(response, "Already in FFDB from this reference: not added again.")
+        self.assertContains(response, "Already in FFDB from this reference: Make cards leaves it off the card.")
         self.assertContains(response, "RM734 won't be kept as an alias: it is already one of its names.")
 
     def test_a_run_that_goes_up_and_down_is_a_problem_line(self):
@@ -184,80 +183,6 @@ class CheckTests(CompoundTableTestCase):
         self.assertEqual(self.rm734.aliases, "")
 
 
-class SaveTests(CompoundTableTestCase):
-    def test_save_adds_the_lines_without_a_problem_and_lists_the_others(self):
-        response = self.send(THREE_LINES, "save", follow=True)
-
-        self.assertRedirects(response, self.add_page(self.article))
-        five_cb = Material.objects.get(name="5CB")
-        self.assertFalse(Material.objects.filter(name="10b").exists())
-        self.rm734.refresh_from_db()
-        self.assertEqual(self.rm734.aliases, "MB-1")
-        sequences = PhaseSequence.objects.order_by("material_id")
-        self.assertEqual(
-            [(s.material, s.reference, s.standard_sequence, s.entered_by) for s in sequences],
-            [
-                (self.rm734, self.article, "Cr 139.8 NF 132.7 N 187.9 Iso", self.curator),
-                (five_cb, self.article, "Cr 24 N 35.3 Iso", self.curator),
-            ],
-        )
-        self.assertEqual(self.messages(response), [
-            "Saved from the table: 1 new compound, 2 sequences, 1 alias.",
-            f"Line 4 not saved: Phase sequence: Unknown phase label: NFF. Use a label from the phase "
-            f"vocabulary, or add it there first. The line: 10b\t{DIO}\tK 80 NFF 120 I",
-        ])
-
-    def test_saving_the_same_table_again_adds_nothing(self):
-        self.send(THREE_LINES, "save")
-
-        response = self.send(THREE_LINES, "save", follow=True)
-
-        self.assertEqual(Material.objects.count(), 2)
-        self.assertEqual(PhaseSequence.objects.count(), 2)
-        self.rm734.refresh_from_db()
-        self.assertEqual(self.rm734.aliases, "MB-1")
-        self.assertIn("Saved from the table: 0 new compounds, 0 sequences, 0 aliases.", self.messages(response))
-
-    def test_a_cooling_run_and_a_heating_run_are_saved_as_they_were_observed(self):
-        self.send(f"RM734\t{RM734}\tIso 187.9 N 132.7 NF 70 K", "save", direction="cooling", rate="5", method="DSC")
-        self.send(f"RM734\t{RM734}\tK 75 NF 133 N 188 I", "save", direction="heating", rate="10", method="DSC")
-
-        runs = self.rm734.phase_sequences.order_by("pk")
-        self.assertEqual(
-            [(run.direction, run.standard_sequence, run.rate_k_per_min, run.method) for run in runs],
-            [("cooling", "Iso 187.9 N 132.7 NF 70 Cr", 5, "DSC"), ("heating", "Cr 75 NF 133 N 188 Iso", 10, "DSC")],
-        )
-        page = self.client.get(reverse("repo:material", args=[self.rm734.pk]))
-        self.assertContains(page, '<span class="ribbon-row__run">Cooling, 5 K/min, DSC</span>', html=True)
-        self.assertContains(page, '<span class="ribbon-row__run">Heating, 10 K/min, DSC</span>', html=True)
-
-    def test_a_bare_compound_number_names_a_new_compound_but_isnt_kept_as_an_alias(self):
-        self.send(f"10a\t{FIVE_CB}\n10b\t{RM734}", "save")
-
-        self.assertTrue(Material.objects.filter(name="10a", smiles=FIVE_CB).exists())
-        self.rm734.refresh_from_db()
-        self.assertEqual(self.rm734.aliases, "")
-
-    def test_the_stereochemistry_warning_names_the_new_material_once_saved(self):
-        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
-
-        response = self.send("rac-2-octanol\tCC(O)CCCCCC", "save", follow=True)
-
-        new = Material.objects.get(name="rac-2-octanol")
-        self.assertTrue(self.messages(response)[1].startswith(
-            f"{new.accession} has the same connectivity as {s_octanol.accession}"
-        ))
-
-    def test_a_logged_out_visitor_cant_save(self):
-        self.client.logout()
-
-        response = self.send(THREE_LINES, "save")
-
-        self.assertRedirects(response, f"{LOGIN}?next={self.add_page(self.article)}")
-        self.assertEqual(Material.objects.count(), 1)
-        self.assertFalse(PhaseSequence.objects.exists())
-
-
 class LcrIdLineTests(CompoundTableTestCase):
     """RM734 is in FFDB, and so is F7, a mixture whose composition isn't disclosed. Nothing is
     from the article yet."""
@@ -290,35 +215,19 @@ class LcrIdLineTests(CompoundTableTestCase):
 
                 self.assertEqual(line.problem, "Same material as line 1: give each material once.")
 
-    def test_a_mixtures_run_goes_in_by_its_lcr_id_and_makes_it_one_of_the_references_materials(self):
-        response = self.send(f"F7, {self.f7.accession}, Iso 120 N 95 NF 40 Cr", "save", follow=True, direction="cooling")
+    def test_a_mixtures_line_makes_a_card_whose_run_makes_it_one_of_the_references_materials(self):
+        table = {"table": f"F7, {self.f7.accession}, Iso 120 N 95 NF 40 Cr", "direction": "cooling", "rate": "", "method": ""}
+        cards = CompoundTableForm(table, reference=self.article).cards_data()  # the cards, as Make cards sends them back
 
-        self.assertIn("Saved from the table: 0 new compounds, 1 sequence, 0 aliases.", self.messages(response))
+        response = self.client.post(reverse("repo:add_compound", args=[self.article.pk]), {**cards, "save": ""}, follow=True)
+
+        self.assertEqual(self.messages(response), [f"Saved 1 run for {self.f7}."])
         [run] = self.f7.phase_sequences.all()
         self.assertEqual(
             (run.reference, run.direction, run.standard_sequence), (self.article, "cooling", "Iso 120 N 95 NF 40 Cr")
         )
-        # Back on the Add data page, F7 is listed, and both menus offer it.
+        # Back on the Add data page, F7 is listed.
         self.assertEqual(list(response.context["materials"]), [self.f7])
-        self.assertEqual(list(response.context["choice"].fields["material"].queryset), [self.f7])
-        self.assertEqual(list(response.context["curve_choice"].fields["material"].queryset), [self.f7])
         page = self.client.get(reverse("repo:material", args=[self.f7.pk]))
         self.assertContains(page, '<p class="ribbon-row__text">Iso 120 N 95 N<sub>F</sub> 40 Cr</p>', html=True)
         self.assertContains(page, '<span class="ribbon-row__run">Cooling</span>', html=True)
-
-    def test_a_ps_value_for_the_mixture_shows_on_the_ps_page_under_its_name(self):
-        PhaseSequence.objects.create(
-            material=self.f7, reference=self.article, sequence="Iso 120 N 95 NF 40 Cr", direction="cooling"
-        )
-        # Chosen from the menu (material=), which offers F7 now it has a run from the article.
-        query = urlencode({"material": self.f7.pk, "property": "ps", "kind": "measured", "temperature": "yes"})
-        boxes = {"qualifier": "exact", "value": "4.4", "temperature_c": "30", "method": "current reversal",
-                 "condition_frequency_Hz": "50", "condition_cell_gap_um": "8", "taken_from": "table", "location": "Table 1"}
-
-        response = self.client.post(f"{reverse('repo:add_value', args=[self.article.pk])}?{query}", boxes, follow=True)
-
-        self.assertEqual(self.messages(response), [f"Saved a Ps value for {self.f7.accession}."])
-        page = self.client.get(reverse("repo:property", args=["ps"]))
-        link = reverse("repo:material", args=[self.f7.pk])
-        self.assertContains(page, f'<a href="{link}">{self.f7.accession}</a>', html=True)
-        self.assertContains(page, '<span class="result__name">F7</span>', html=True)

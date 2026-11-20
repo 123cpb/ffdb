@@ -1,16 +1,18 @@
 """A compound card's material can be a new mixture: its name in the card's label box, its
-composition and its components, read by Add a mixture's form with its rules and messages, and the
-question whether it is one of the mixtures FFDB already has with that name. Its runs and values go
-on the card as a compound's do, and one Save adds every card."""
+composition and its components, typed one per line, read by MixtureForm with its rules and
+messages, and the question whether it is one of the mixtures FFDB already has with that name. Its
+runs and values go on the card as a compound's do, and one Save adds every card."""
 
 from django.contrib.staticfiles import finders
+from django.test import TestCase
 from django.urls import reverse
 
-from repo.forms import CardMaterialForm, MixtureForm
-from repo.models import Material, PhaseSequence
+from repo.forms import CardMaterialForm, MixtureForm, read_components
+from repo.models import Material, PhaseSequence, Series
 from repo.tests.test_add_data import FIVE_CB
 from repo.tests.test_compound_card import FIVE_CB_HEATING, visible
 from repo.tests.test_several_cards import DIO_HEATING, CardsTestCase
+from repo.tests.test_values import DIO, RM734
 
 MIXTURE = Material.Kind.MIXTURE
 LISTED = Material.CompositionStatus.LISTED
@@ -19,6 +21,75 @@ NOT_DISCLOSED = Material.CompositionStatus.NOT_DISCLOSED
 F7_LINES = "Aya_5B, 70, mol%\nRM734, 30, mol%"
 # A card's boxes for F7 as a new mixture: its label is its name.
 F7 = {"name": "F7", "composition_status": LISTED, "components": F7_LINES}
+# A block for a measured Ps of 4.4 µC/cm² at 30 °C: one line, so a single value.
+PS_VALUE = {
+    "property": "ps", "kind": "measured", "variable": "temperature", "method": "current reversal",
+    "condition_frequency_Hz": "50", "condition_cell_gap_um": "8", "taken_from": "table", "location": "Table 1",
+    "points": "30, 4.4",
+}
+
+
+class ReadingTests(TestCase):
+    """read_components(), on its own. DIO (also called Aya_5B), RM734 and 5CB are compounds in
+    FFDB."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.dio = Material.objects.create(name="DIO", aliases="Aya_5B", smiles=DIO)
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
+
+    def test_a_line_finds_its_compound_by_lcr_id_or_by_a_name_or_alias_as_names_are_compared(self):
+        lines = read_components(f"{self.five_cb.accession}, 70, mol%\nrm-734\t20\tmol%\naya 5b, 10, Mol %")
+
+        self.assertEqual(
+            [(line.material, line.fraction, line.unit, line.problem) for line in lines],
+            [(self.five_cb, 70, "mol%", ""), (self.rm734, 20, "mol%", ""), (self.dio, 10, "mol%", "")],
+        )
+
+    def test_a_name_with_a_comma_in_it_stays_whole(self):
+        form_b = Material.objects.create(name="DIO, form B", smiles="CCO")
+
+        [line] = read_components("DIO, form B, 30, wt%")
+
+        self.assertEqual((line.material, line.fraction, line.unit), (form_b, 30, "wt%"))
+
+    def test_each_kind_of_problem_line_says_why(self):
+        for bad, problem in [
+            ("DIO, 70 mol%", "Expected an LCR ID or name, a fraction and a unit, e.g. LCR-00128, 30, mol%."),
+            (", 70, mol%", "Expected an LCR ID or name"),
+            ("DIO, 70, %", "“%” isn't a unit: give mol% or wt%."),
+            ("DIO, seventy, mol%", "“seventy” isn't a number."),
+            ("LCR-09999, 70, mol%", "No material has the LCR ID LCR-09999."),
+            ("RM2914, 30, mol%", "Nothing in FFDB is called RM2914. Add it first on a card of its own"),
+            ("DIO, 0, mol%", "A fraction is more than 0 and at most 100."),
+            ("DIO, 100.1, mol%", "A fraction is more than 0 and at most 100."),
+        ]:
+            with self.subTest(bad):
+                [line] = read_components(bad)
+
+                self.assertIn(problem, line.problem)
+
+    def test_a_name_that_fits_two_materials_asks_for_the_lcr_id(self):
+        other = Material.objects.create(name="DIO-F", aliases="DIO", smiles="CCO")
+
+        [line] = read_components("DIO, 70, mol%")
+
+        self.assertEqual(line.problem, f"More than one material is called DIO ({self.dio}, {other}): give its LCR ID.")
+        self.assertEqual(read_components(f"{other.accession}, 70, mol%")[0].material, other)
+
+    def test_a_mixture_is_not_a_component(self):
+        Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED)
+
+        [line] = read_components("M5, 10, wt%")
+
+        self.assertIn("is a mixture, and a component must be a compound", line.problem)
+
+    def test_each_compound_is_given_once(self):
+        lines = read_components(f"DIO, 60, mol%\n\n{self.dio.accession}, 40, mol%")
+
+        self.assertEqual(lines[1].number, 3)  # the blank line is counted
+        self.assertEqual(lines[1].problem, "Same compound as line 1: give each compound once.")
 
 
 class MixtureCardTestCase(CardsTestCase):
@@ -69,6 +140,17 @@ class SaveTests(MixtureCardTestCase):
         [mixture] = self.mixtures()
         self.assertEqual((mixture.name, mixture.notes, mixture.components.count()), ("MLC-2132", "Commercial.", 0))
 
+    def test_a_ps_value_for_a_mixture_in_ffdb_by_its_lcr_id_shows_on_the_ps_page_under_its_name(self):
+        f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED)
+
+        self.send_cards({"blocks": [PS_VALUE], "material": f7.accession}, button="save")
+
+        self.assertEqual(Series.objects.get().material, f7)
+        page = self.client.get(reverse("repo:property", args=["ps"]))
+        link = reverse("repo:material", args=[f7.pk])
+        self.assertContains(page, f'<a href="{link}">{f7.accession}</a>', html=True)
+        self.assertContains(page, '<span class="result__name">F7</span>', html=True)
+
 
 class CheckTests(MixtureCardTestCase):
     def test_check_shows_the_new_mixture_and_its_component_lines(self):
@@ -83,7 +165,7 @@ class CheckTests(MixtureCardTestCase):
         self.assertContains(page, '<details class="card-mixture" open>')
         self.assertEqual(self.mixtures(), [])
 
-    def test_a_mixture_is_read_by_add_a_mixtures_rules_with_its_messages(self):
+    def test_a_mixture_is_read_by_mixture_forms_rules_with_its_messages(self):
         for boxes, box, problem in [
             ({**F7, "components": "Aya_5B, 70, mol%\nRM-734X, 30, mol%"}, "components",
              "Nothing is saved until every line reads: fix or delete the lines marked below."),
@@ -154,7 +236,7 @@ class SameNameTests(MixtureCardTestCase):
         super().setUpTestData()
         cls.old_f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED)
 
-    def test_add_a_mixtures_form_finds_mixtures_of_its_name_with_a_prefix(self):
+    def test_mixture_form_finds_mixtures_of_its_name_with_a_prefix(self):
         self.assertEqual(MixtureForm({"card-0-name": "f-7"}, prefix="card-0").same_name, [self.old_f7])
 
     def test_check_asks_whether_it_is_the_mixture_ffdb_has(self):
@@ -188,6 +270,20 @@ class SameNameTests(MixtureCardTestCase):
         self.assertEqual(PhaseSequence.objects.get().material, self.old_f7)
         self.assertEqual(self.messages(response), [f"Saved 1 run for {self.old_f7}."])
 
+    def test_an_alias_still_asks(self):
+        Material.objects.filter(pk=self.old_f7.pk).update(aliases="FMix-7")
+
+        response = self.send_cards({"runs": [DIO_HEATING], **F7, "name": "FMIX7"})
+
+        self.assertEqual(self.material_form(response).mixture.same_name, [self.old_f7])
+
+    def test_a_compound_with_the_name_doesnt_ask(self):
+        Material.objects.create(name="M5", smiles="CCO")
+
+        self.send_cards({"runs": [DIO_HEATING], "name": "M5", "composition_status": NOT_DISCLOSED}, button="save")
+
+        self.assertTrue(Material.objects.filter(kind=MIXTURE, name="M5").exists())
+
     def test_the_question_is_asked_as_the_curator_types_and_keeps_its_answer(self):
         answer = self.check_material(**F7, same_as=str(self.old_f7.pk))
 
@@ -206,11 +302,7 @@ class PageTests(MixtureCardTestCase):
         self.assertNotContains(page, 'name="card-0-same_as"')
 
     def test_the_composition_script_is_on_every_page_with_a_mixtures_boxes(self):
-        pages = [
-            self.add_page(self.article),
-            reverse("repo:add_compound", args=[self.article.pk]),
-            reverse("repo:add_mixture", args=[self.article.pk]),
-        ]
+        pages = [self.add_page(self.article), reverse("repo:add_compound", args=[self.article.pk])]
         for address in pages:
             with self.subTest(address):
                 response = self.client.get(address)

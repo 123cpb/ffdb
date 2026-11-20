@@ -1,7 +1,7 @@
 {% comment %}
-The box for a curve's points (forms.CurveForm, as form): its label, the problems, a message for
-each line with one, then the box and its help. The add-a-curve page and each block of values on
-a compound card (_value_block.html) include it.
+The box for a block of values' points (forms.ValueBlockForm, as form): its label, the problems,
+a message for each line with one, then the box and its help. Each block of values on a compound
+card includes it (_block_boxes.html).
 {% endcomment %}
 <label for="{{ form.points.id_for_label }}">{{ form.points.label }}</label>
 {# A list, because there is a message for each line with a problem. #}

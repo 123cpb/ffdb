@@ -1,8 +1,8 @@
 {% comment %}
 The question a new mixture's form, MixtureForm (as form), asks when mixtures with its name are in
 FFDB: which, with their compositions, and whether it is one of them. Nothing when there are none.
-Add a mixture's form (_mixture_form.html) includes it, and so does a compound card's material
-answer (_card_material_result.html), which is inside the cards' form, so the answer is sent too.
+A compound card's material answer (_card_material_result.html) includes it. That answer is inside
+the cards' form, so the answer to the question is sent too.
 {% endcomment %}
 {% if form.same_name %}
 <fieldset>

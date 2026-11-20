@@ -96,7 +96,7 @@ class Material(models.Model):
         NOT_DISCLOSED = "not_disclosed", "Not disclosed"
 
     # Compound is the default because every material added before mixtures was one, and the
-    # imports and the compound table add only compounds.
+    # imports add only compounds.
     kind = models.CharField(max_length=8, choices=Kind.choices, default=Kind.COMPOUND)
     name = models.CharField(
         max_length=200,

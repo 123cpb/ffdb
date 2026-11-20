@@ -1,5 +1,4 @@
-/* A new mixture's composition boxes (_mixture_boxes.html), on a compound card or Add a mixture's
-   form. Not disclosed has no components to fill in, so while it is chosen the boxes for them are
+/* A new mixture's composition boxes (_mixture_boxes.html), on a compound card. Not disclosed has no components to fill in, so while it is chosen the boxes for them are
    hidden, unless something is typed in them: Check refuses that, and the curator must see what to
    clear. Without JavaScript they are always shown.
 

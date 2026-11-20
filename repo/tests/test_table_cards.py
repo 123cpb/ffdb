@@ -179,6 +179,19 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(Series.objects.get().material, self.rm734)
         self.assertEqual(Material.objects.get(pk=self.aya.pk).aliases, "DIO")
 
+    def test_a_sequence_ffdb_already_has_from_this_reference_is_left_off_the_card(self):
+        PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence="K 139.8 NF 132.7 N 187.9 I")
+        data = CompoundTableForm(self.table_data(self.three_lines()), reference=self.article).cards_data()
+
+        self.assertNotIn("card-1-run-0-direction", data)  # RM734's card: its material and label, but no run
+        self.assertEqual((data["card-1-material"], data["card-1-name"]), (self.rm734.accession, "RM734"))
+
+        data.update({f"card-1-block-0-{name}": value for name, value in PS_BLOCK.items()})
+        self.client.post(self.page, {**data, "save": ""})
+
+        self.assertEqual(self.rm734.phase_sequences.count(), 1)  # not added again
+        self.assertEqual(Series.objects.get().material, self.rm734)
+
     def test_a_line_without_a_sequence_makes_a_card_with_no_run_yet(self):
         response = self.make(f"5CB\t{FIVE_CB}", direction="")
 
@@ -209,7 +222,7 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(response.context["form"].errors["table"], [CompoundTableForm.NO_DIRECTION])
         self.assert_no_cards(response)
 
-    def test_a_sequence_a_cards_run_cant_hold_makes_no_cards_though_the_tables_save_could_save_it(self):
+    def test_a_sequence_a_cards_run_cant_hold_makes_no_cards(self):
         table = f"5CB\t{FIVE_CB}\t{NINE_PHASES}"
 
         response = self.make(table, direction="cooling")
@@ -225,7 +238,7 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         response = self.client.get(self.add_page(self.article))
 
         self.assertContains(
-            response, f'<button type="submit" name="cards" class="secondary-button" data-make-cards data-url="{self.make_cards}">'
+            response, f'<button type="submit" name="cards" data-make-cards data-url="{self.make_cards}">'
         )
 
 
@@ -248,7 +261,7 @@ class WithJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(response.status_code, 422)
         self.assertContains(response, CompoundTableForm.NO_CARDS_LINES, status_code=422)
         self.assertContains(response, "Line 3: Phase sequence: Unknown phase label: NFF.", status_code=422)
-        self.assertContains(response, "Not saved: Phase sequence", status_code=422)  # the table's lines, as Check shows them
+        self.assertContains(response, "Problem: Phase sequence", status_code=422)  # the table's lines, as Check shows them
 
     def test_more_cards_than_a_page_can_have_are_refused(self):
         response = self.make_here(self.three_lines(), start=99)

@@ -6,7 +6,7 @@ from unittest import mock
 
 from django.contrib.auth.models import Group, User
 from django.test import TestCase, override_settings
-from django.urls import reverse
+from django.urls import NoReverseMatch, reverse
 
 from repo.models import Material, PhaseSequence, Reference
 from repo.tests.test_reference_details import BCSJ, CHEMRXIV, PCCP, UNKNOWN, URLOPEN, FakeCrossref
@@ -215,6 +215,18 @@ class ReferenceAddPageTests(AddDataTestCase):
         self.assertNotContains(response, self.five_cb.accession)
         self.assertContains(response, "Cr 139.8 N<sub>F</sub> 132.7 N 187.9 Iso")
         self.assertContains(response, "Spontaneous polarisation, Ps")
+
+    def test_the_cards_are_the_one_way_to_add_data_and_the_table_only_makes_them(self):
+        response = self.client.get(self.add_page(self.article))
+
+        self.assertContains(response, '<button type="submit" name="save">Save</button>', count=1, html=True)  # the cards'
+        self.assertContains(response, 'name="cards"')  # the table's Make cards
+        # The forms the cards replaced, gone with their addresses.
+        for removed in ["value", "curve", "mixture"]:
+            with self.subTest(removed):
+                with self.assertRaises(NoReverseMatch):
+                    reverse(f"repo:add_{removed}", args=[self.article.pk])
+                self.assertEqual(self.client.get(f"{self.add_page(self.article)}{removed}/").status_code, 404)
 
     def test_a_reference_with_nothing_yet_says_so(self):
         response = self.client.get(self.add_page(self.thesis))

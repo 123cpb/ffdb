@@ -16,8 +16,7 @@ from repo.models import Material, PhaseSequence, Property, Series, must_state
 from repo.tests.test_add_data import FIVE_CB, LOGIN
 from repo.tests.test_compound_card import RM734_COOLING, CardTestCase, run_fields, visible
 from repo.tests.test_compound_table import THREE_LINES
-from repo.tests.test_curves import CHART, WITH_A_BAD_LINE
-from repo.tests.test_value_blocks import DELTA_EPSILON, PS_BLOCK
+from repo.tests.test_value_blocks import CHART, DELTA_EPSILON, PS_BLOCK, WITH_A_BAD_LINE
 from repo.tests.test_values import RM734
 
 # Each check's address, by its name, with what it takes after it: a card's index from 0, and a
@@ -206,7 +205,7 @@ class TableTests(ChecksTestCase):
 
         self.assertEqual(answer.context["status_counts"], {"new": 1, "in_ffdb": 1, "problem": 1})
         self.assertContains(answer, "Line 1 has no digits, so it was read as a header.")
-        self.assertContains(answer, "Not saved: Phase sequence: Unknown phase label: NFF.")
+        self.assertContains(answer, "Problem: Phase sequence: Unknown phase label: NFF.")
         self.assertInHTML(answer.content.decode(), self.check_table(THREE_LINES).content.decode())
 
     def test_a_table_with_sequences_and_no_direction_says_so(self):
