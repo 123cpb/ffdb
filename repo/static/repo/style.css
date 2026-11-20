@@ -40,10 +40,12 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .site-nav a { color: var(--ink-2); text-decoration: none; }
 .site-nav a:hover { text-decoration: underline; }
 .site-nav a[aria-current] { color: var(--ink); font-weight: 600; }
-/* Log out is a button in a form, made to look like the links beside it. */
-.site-nav__logout { display: inline; margin: 0; }
-.site-nav__logout button { padding: 0; font: inherit; color: var(--ink-2); background: none; border: 0; cursor: pointer; }
-.site-nav__logout button:hover { text-decoration: underline; }
+/* Log in / Log out: margin-left: auto takes up the row's spare space, which pushes it to the right.
+   Log in is a link and Log out a button in a form; the one class makes them look the same. */
+.site-account { margin-left: auto; }
+.site-account form { margin: 0; }
+.site-account__button { display: inline-block; padding: 5px 14px; font: inherit; font-size: 14px; color: var(--link); text-decoration: none; background: var(--surface); border: 1px solid var(--link); border-radius: 6px; cursor: pointer; }
+.site-account__button:hover { color: #fff; background: var(--link); }
 
 .site-footer { background: var(--surface); border-top: 1px solid var(--hairline); }
 .site-footer p { margin: 0 auto; padding-top: 14px; padding-bottom: 18px; font-size: 12.5px; color: var(--muted); }

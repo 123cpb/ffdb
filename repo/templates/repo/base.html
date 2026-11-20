@@ -17,14 +17,17 @@
         <a href="{% url 'repo:properties' %}"{% if nav == "properties" %} aria-current="page"{% endif %}>Properties</a>
         {# perms and user come from the auth context processor in settings. Add data needs the permission its view checks. #}
         {% if perms.repo.add_reference %}<a href="{% url 'repo:add' %}"{% if nav == "add" %} aria-current="page"{% endif %}>Add data</a>{% endif %}
-        {# Log out is a form, because Django logs out only on a POST, which a link can't send. #}
-        {# Log in is a link: opening the login page is a GET, and the page has its own form. #}
-        {% if user.is_authenticated %}
-        <form method="post" action="{% url 'logout' %}" class="site-nav__logout">{% csrf_token %}<button type="submit">Log out</button></form>
-        {% else %}
-        <a href="{% url 'login' %}">Log in</a>
-        {% endif %}
       </nav>
+      {# Outside the nav: logging in or out isn't a section of the site. The CSS puts it on the right. #}
+      {# Log out is a form, because Django logs out only on a POST, which a link can't send. #}
+      {# Log in is a link: opening the login page is a GET, and the page has its own form. #}
+      <div class="site-account">
+        {% if user.is_authenticated %}
+        <form method="post" action="{% url 'logout' %}">{% csrf_token %}<button type="submit" class="site-account__button">Log out</button></form>
+        {% else %}
+        <a href="{% url 'login' %}" class="site-account__button">Log in</a>
+        {% endif %}
+      </div>
     </div>
   </header>
   <main class="wrap">
