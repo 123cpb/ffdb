@@ -39,10 +39,14 @@
     {# type="button": it doesn't send the form. data-table is the id of the box it adds a line to. #}
     <button type="button" class="secondary-button" data-draw data-table="{{ form.table.id_for_label }}" hidden>Draw a compound</button>
     <p class="entry-form__help" id="{{ form.table.auto_id }}_helptext">{{ form.table.help_text }}</p>
-    {# The button's name is sent with the form, so the view can tell Save from Check. #}
+    <p class="entry-form__help">Make cards turns each line into a card above, with its compound and its sequence as a
+    run, once every line reads. Add their values there, then Check and Save the cards.</p>
+    {# The button's name is sent with the form, so the view can tell Save, Check and Make cards apart. #}
+    {# cards.js sends Make cards to data-url instead, and puts the cards in the page without a reload. #}
     <div class="entry-form__buttons">
       <button type="submit" name="check">Check</button>
       <button type="submit" name="save">Save</button>
+      <button type="submit" name="cards" class="secondary-button" data-make-cards data-url="{% url 'repo:make_cards' reference.pk %}">Make cards</button>
     </div>
   </form>
 

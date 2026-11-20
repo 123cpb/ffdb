@@ -33,7 +33,9 @@ from .models import (
     must_state,
     pk_from_accession,
 )
-from .phases import ISOTROPIC, SOLIDS, PhaseSequenceError, tokenise
+from .phases import (
+    ISOTROPIC, SOLIDS, PhaseSequenceError, is_unknown_temperature, normalise_label, run_falls, tokenise,
+)
 
 # What every DOI looks like once cleaned: 10., a number of four or more digits, /, then the
 # rest, e.g. 10.1002/chem.201702742.
@@ -349,6 +351,71 @@ class CompoundTableForm(forms.Form):
                     counts["sequences"] += 1
         return counts, warnings
 
+    # Make cards: the table's lines as compound cards. The runs and the cards are further down.
+    NO_CARDS = "No cards made: fix the table, then press Make cards again."
+    NO_CARDS_LINES = "No cards made: fix these lines, then press Make cards again."
+
+    def cards_data(self, start=0):
+        """The compound cards this table makes, one per line, as the data a page of cards sends
+        (CompoundCards), so they read exactly as cards typed in would. Each has the line's
+        material, by its LCR ID or SMILES as the line gives it, its label, and its sequence as
+        its first run, with the table's direction, rate and method. Their indexes start at
+        start, so they can follow the cards already on a page, and card-TOTAL counts them all.
+
+        Nothing is made while anything is wrong. Raises ValidationError, whose messages say why,
+        when the table can't be read, the page would have more than MAX_CARDS cards, or a line
+        has a problem or a run a card can't hold."""
+        if not self.is_valid():
+            raise ValidationError(self.NO_CARDS)  # the table's own errors say what is wrong
+        lines = self.cleaned_data["table"]
+        total = start + len(lines)
+        if total > MAX_CARDS:
+            raise ValidationError(
+                f"No cards made: a page can have at most {MAX_CARDS} cards, and these {len(lines)} would make it "
+                f"{total}. Save the cards on the page first, or split the table."
+            )
+        problems = [f"Line {line.number}: {line.problem}" for line in lines if line.problem]
+        data = {CompoundCards.TOTAL: str(total)}
+        synonyms = Phase.synonym_map()  # read once, for every line's run
+        for index, line in enumerate(lines, start=start):
+            if line.problem:
+                continue
+            prefix = f"card-{index}"
+            box = "material" if pk_from_accession(line.identifier) is not None else "smiles"
+            data.update({f"{prefix}-{box}": line.identifier, f"{prefix}-name": line.label})
+            # The room a card has without JavaScript: as many runs and blocks as an empty one.
+            for formset, extra in (("run", RunFormSet.extra), ("block", ValueBlockFormSet.extra)):
+                data.update({f"{prefix}-{formset}-TOTAL_FORMS": str(extra), f"{prefix}-{formset}-INITIAL_FORMS": "0"})
+            # A run left as the page shows it still sends its top phase, Iso (RunForm's phase_0).
+            data.update({f"{prefix}-run-{i}-phase_0": ISOTROPIC for i in range(RunFormSet.extra)})
+            if line.sequence:
+                run, problem = self.card_run(line, synonyms)
+                if problem:
+                    problems.append(f"Line {line.number}: {problem}")
+                    continue
+                data.update({f"{prefix}-run-0-{name}": value for name, value in run.items()})
+        if problems:
+            raise ValidationError([self.NO_CARDS_LINES, *problems])
+        return data
+
+    def card_run(self, line, synonyms):
+        """A line's sequence as the boxes of its card's first run, as (boxes, ""), or (None, why
+        a card's run can't hold it). The run is read by RunForm, as the card will read it. Ask
+        only for a line without a problem: its sequence has read."""
+        direction = self.cleaned_data["direction"]
+        parsed = read_sequence(line.sequence, direction, synonyms)
+        try:
+            boxes = sequence_steps(line.sequence, direction, parsed, synonyms)
+        except PhaseSequenceError as exc:
+            return None, str(exc)
+        # The rate as typed, as the run's boxes keep it.
+        boxes.update(direction=direction, rate=self["rate"].value() or "", method=self.cleaned_data["method"])
+        run = RunForm(boxes, reference=self.reference)
+        if not run.is_valid():
+            messages = [message for errors in run.errors.values() for message in errors]
+            return None, f"A card's run can't hold this sequence: {' '.join(messages)}"
+        return boxes, ""
+
 
 # A compound card: one compound's material, in FFDB or new, and its runs, each built from phase
 # steps. Check shows what Save would add, and Save adds all of it or nothing.
@@ -378,6 +445,48 @@ def steps_text(direction, steps, solid="", t_solid=""):
     if direction in (PhaseSequence.Direction.SUMMARY, PhaseSequence.Direction.HEATING):
         return " ".join(([solid, t_solid or "?"] if solid else []) + words[::-1])
     return " ".join(words + ([t_solid or "?", solid] if solid else []))
+
+
+def sequence_steps(text, direction, parsed, synonyms):
+    """The reverse of steps_text(): a sequence that reads, as the boxes of a card's run
+    (RunForm) would hold it. text is the sequence as typed, in the notation of direction (one of
+    PhaseSequence.Direction), parsed what read_sequence() made of it, and synonyms is
+    Phase.synonym_map(). Returns {"phase_0": "Iso", "t_1": "187.9", "phase_1": "N", ...,
+    "solid": "Cr", "t_solid": "70"}, hottest first, with each label and temperature as typed,
+    so 143.0 keeps its zero. The solid is the exception: its box takes it by its code. It is
+    the one a summary starts with, or the one at the cold end of a run. Raises
+    PhaseSequenceError when there are more phases than a card's run has steps."""
+    tokens = tokenise(text)  # the words the parser read: a label, then a temperature, in turn
+
+    def code(label):
+        return synonyms.get(normalise_label(label))
+
+    solid = t_solid = ""
+    if direction == PhaseSequence.Direction.SUMMARY and code(tokens[0]) in SOLIDS:
+        # Then its melting point, ? for one not given, or nothing, as parse_summary() reads it.
+        solid, tokens = code(tokens[0]), tokens[1:]
+        if code(tokens[0]) is None:
+            t_solid = "" if is_unknown_temperature(tokens[0]) else tokens[0]
+            tokens = tokens[1:]
+    labels, temperatures = tokens[::2], tokens[1::2]
+    # A summary is written from the solid up. A run is written in the order observed, which the
+    # parser reads from its temperatures; a run of one phase has none, and no order.
+    if direction == PhaseSequence.Direction.SUMMARY:
+        coldest_first = True
+    else:
+        coldest_first = bool(parsed.temperatures) and not run_falls(parsed.phases, parsed.temperatures, direction)
+    if coldest_first:
+        labels, temperatures = labels[::-1], temperatures[::-1]
+    if not solid and len(labels) > 1 and code(labels[-1]) in SOLIDS:
+        solid, t_solid = code(labels.pop()), temperatures.pop()
+    if len(labels) > RUN_PHASES:
+        raise PhaseSequenceError(
+            f"The sequence has {len(labels)} phases, not counting the solid, and a card's run has room for {RUN_PHASES}."
+        )
+    boxes = {"phase_0": labels[0], "solid": solid, "t_solid": t_solid}
+    for i, (temperature, label) in enumerate(zip(temperatures, labels[1:]), start=1):
+        boxes[f"t_{i}"], boxes[f"phase_{i}"] = temperature, label
+    return boxes
 
 
 class RunForm(forms.Form):

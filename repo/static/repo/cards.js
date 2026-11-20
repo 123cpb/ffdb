@@ -15,7 +15,12 @@
 
    A new card, run or block is announced with a card-part-added event, which phase_steps.js and
    draw.js listen for, to set it up as they set up those in the page when it loads. checks.js
-   needs nothing: it listens on the whole page. */
+   needs nothing: it listens on the whole page.
+
+   Make cards, under the compound table on a reference's Add data page, adds a card for each line
+   of the table without a reload. The server reads the table and draws the cards, filled in
+   (views.make_cards), or says why it made none. Without JavaScript the button sends the table's
+   form, and the page comes back with the cards. */
 
 "use strict";
 
@@ -35,11 +40,25 @@ function showButtons(part) {
   part.querySelectorAll("[data-add-row], [data-remove-row]").forEach((button) => { button.hidden = false; });
 }
 
-// Say part was added, and put the cursor in its first box.
-function added(part) {
+// Show part's buttons, and say it was added, so the other scripts set it up.
+function announce(part) {
   showButtons(part);
   part.dispatchEvent(new CustomEvent("card-part-added", { bubbles: true }));
+}
+
+// Say part was added, and put the cursor in its first box.
+function added(part) {
+  announce(part);
   part.querySelector("input:not([type=hidden]), select, textarea").focus();
+}
+
+// Whether nothing has been typed or chosen on card: every box still holds what the server sent.
+function isEmpty(card) {
+  return [...card.querySelectorAll("input:not([type=hidden]), select, textarea")].every((box) => {
+    if (box.tagName === "SELECT") return [...box.options].every((option) => option.selected === option.defaultSelected);
+    if (box.type === "checkbox") return box.checked === box.defaultChecked;
+    return box.value === box.defaultValue;
+  });
 }
 
 function setUpCards(list) {
@@ -74,6 +93,46 @@ function setUpCards(list) {
     card.hidden = true;
     update();
     addButton.focus();  // the Remove pressed is hidden now, so the focus goes somewhere near
+  });
+
+  // Make cards. When every card shown is empty, the new cards take the place of the page's cards,
+  // numbered from 1, as without JavaScript; otherwise they come after them. The table's answer
+  // box says how it went.
+  const makeButton = document.querySelector("[data-make-cards]");  // only on the Add data page
+  const tableAnswer = document.getElementById("table-result");
+  makeButton?.addEventListener("click", async (event) => {
+    event.preventDefault();  // so the table's form isn't sent
+    const shown = [...list.querySelectorAll("[data-card]")].filter((card) => !card.hidden);
+    const start = shown.every(isEmpty) ? 0 : Number(total.value);
+    let response = null;
+    let html = "";
+    try {
+      const url = `${makeButton.dataset.url}?start=${start}`;
+      response = await fetch(url, { method: "POST", body: new FormData(makeButton.form), redirect: "error" });
+      html = await response.text();
+    } catch {
+      // No answer: the message below says so.
+    }
+    if (response?.status === 422) {
+      tableAnswer.innerHTML = html;  // why no card was made, from the server's templates, which escape what was typed
+      return;
+    }
+    if (!response?.ok) {
+      tableAnswer.innerHTML = '<p class="form-error">The cards couldn\'t be made here. Press Make cards again.</p>';
+      return;
+    }
+    const holder = document.createElement("div");
+    holder.innerHTML = html;  // the server's cards, from its templates
+    const cards = [...holder.children];
+    if (start === 0) list.replaceChildren();  // the empty cards go, and any removed ones
+    list.append(...cards);
+    total.value = start + cards.length;
+    update();
+    cards.forEach(announce);
+    makeButton.form.elements.table.value = "";  // the cards hold its lines now
+    const s = cards.length === 1 ? "" : "s";
+    tableAnswer.innerHTML = `<p>Made ${cards.length} card${s} above: add their values, then Check and Save the cards.</p>`;
+    cards[0].querySelector("input:not([type=hidden]), select, textarea").focus();
   });
 
   update();

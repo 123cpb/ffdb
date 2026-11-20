@@ -1,0 +1,6 @@
+{% comment %}
+The compound cards Make cards made from a pasted table, each as Check shows it, for cards.js to
+put in the page's form (_compound_cards.html). views.make_cards sends it, with the new cards
+(forms.CompoundCard, as cards) and the reference.
+{% endcomment %}
+{% for card in cards %}{% include "repo/_compound_card.html" %}{% endfor %}

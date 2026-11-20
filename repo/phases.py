@@ -190,10 +190,12 @@ def parse_summary(text, synonyms):
     return ParsedSequence(phases, temperatures, transitions)
 
 
-def _run_falls(phases, temperatures, direction):
+def run_falls(phases, temperatures, direction):
     """Whether a run was observed falling (cooling) rather than rising (heating), read from
     its temperatures where they show it. Raises PhaseSequenceError when they don't, or when
-    they disagree with the stated direction."""
+    they disagree with the stated direction. phases are codes and temperatures numbers, as
+    parse_run() reads them, in the order written; there must be at least one temperature. The
+    compound table's cards ask it too, to write a run hottest first (forms.sequence_steps())."""
     steps = [later - earlier for earlier, later in zip(temperatures, temperatures[1:])]
     if steps:
         if all(step < 0 for step in steps):
@@ -247,7 +249,7 @@ def parse_run(text, synonyms, direction=None):
     if not temperatures:
         return ParsedSequence(phases, [], [])  # one phase on its own: no transitions to read
 
-    falls = _run_falls(phases, temperatures, direction)
+    falls = run_falls(phases, temperatures, direction)
     hottest = phases[0] if falls else phases[-1]
     if ISOTROPIC in phases and (hottest != ISOTROPIC or phases.count(ISOTROPIC) > 1):
         raise PhaseSequenceError(

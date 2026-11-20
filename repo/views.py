@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db.models import Count, F, Min, Q
 from django.http import Http404, HttpResponse
@@ -631,9 +632,27 @@ def add_from_reference(request, pk):
     it) reads the table again and saves the lines without a problem. Then it sends the
     curator back here with a redirect, so reloading the page can't save twice. The messages
     say what was saved and list the lines that weren't, with their text, to fix and paste
-    again."""
+    again.
+
+    Make cards (a POST with cards in it) is the page without JavaScript's: with cards.js,
+    make_cards() answers it. Once every line reads, the page comes back with a card for each
+    line in place of its cards, nothing saved, and the table emptied, as the cards hold its
+    lines now. Otherwise it comes back with no cards made, and why, above the table's lines."""
     reference = get_object_or_404(references_with_counts(), pk=pk)
     form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference)
+    # A page of one empty compound card, sent to add_compound, unless the table makes cards.
+    cards, cards_problems = CompoundCards(None, reference), []
+    if "cards" in request.POST:
+        try:
+            cards = cards_from_table(form)
+        except ValidationError as exc:
+            cards_problems = exc.messages
+        else:
+            n = cards.total
+            messages.success(
+                request, f"Made {n} card{pluralize(n)} from the table: add their values, then Check and Save the cards."
+            )
+            form = CompoundTableForm(reference=reference)
     if form.is_valid() and "save" in request.POST:
         counts, warnings = form.save(request.user)
         compounds, sequences, aliases = counts["compounds"], counts["sequences"], counts["aliases"]
@@ -653,16 +672,16 @@ def add_from_reference(request, pk):
         "reference": reference,
         "form": form,
         **table_reading(form),
+        "cards_problems": cards_problems,
         "materials": reference.materials(),
         # The first forms for adding a single value and a curve, sent to add_value and
         # add_curve. Both have a material box: auto_id gives the curve's boxes other ids, so
         # each label still points at its own box.
         "choice": ValueChoiceForm(reference=reference),
         "curve_choice": CurveChoiceForm(reference=reference, auto_id="id_curve_%s"),
-        # The form for adding a mixture, sent to add_mixture, and a page of one empty compound
-        # card, sent to add_compound.
+        # The form for adding a mixture, sent to add_mixture.
         "mixture_form": MixtureForm(),
-        "cards": CompoundCards(None, reference),
+        "cards": cards,
         **reference_tables(reference),
     }
     return render(request, "repo/add_from_reference.html", context)
@@ -675,6 +694,26 @@ def table_reading(form):
     no line has. The Add data page and the table's check as the curator types both use it."""
     lines = form.cleaned_data["table"] if form.is_valid() else []
     return {"lines": lines, "status_counts": Counter(line.status for line in lines)}
+
+
+def show_runs(cards):
+    """Keep what Check read of each card's runs on it, on an axis of the card's own, for
+    _card_runs_result.html. Ask once each card has been checked (CompoundCard.is_valid())."""
+    for card in cards:
+        card.sequence_rows, card.axis = sequence_ribbons(card.runs, card.ribbon_data)
+
+
+def cards_from_table(form, start=0):
+    """The page of compound cards a pasted table makes (a CompoundTableForm, form): a card for each
+    line, from index start, each as Check shows it, with any problem it would have at Save, such
+    as a card with no run yet. Raises ValidationError, saying why, when the table can't make
+    them (CompoundTableForm.cards_data())."""
+    cards = CompoundCards(form.cards_data(start), form.reference)
+    made = cards.cards[start:]
+    for card in made:
+        card.is_valid()
+    show_runs(made)
+    return cards
 
 
 # Checks as the curator types (checks.js). Each reads one part of a form with the code its Check
@@ -764,6 +803,29 @@ def check_table(request, pk):
     return check_answer(request, [("", form)], "repo/_table_lines.html", {"form": form, **table_reading(form)})
 
 
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+@require_POST
+def make_cards(request, pk):
+    """Make cards without a reload (cards.js): the compound table is sent as Check sends it, and
+    ?start= is the index the new cards start at, after the cards on the page. The answer is the
+    new cards, each as Check shows it, to go in the page. Nothing is saved. A table that can't
+    make them gets the table's answer as Check shows it, with why no card was made, and status
+    422 (Unprocessable Content: the request is understood, but can't be done), so the script can
+    tell the two apart."""
+    reference = get_object_or_404(Reference, pk=pk)
+    form = CompoundTableForm(request.POST, reference=reference)
+    start = number_param(request, "start", MAX_CARDS + 1)  # a page already full gets cards_data()'s message
+    try:
+        cards = cards_from_table(form, start)
+    except ValidationError as exc:
+        context = {"form": form, **table_reading(form), "cards_problems": exc.messages}
+        response = check_answer(request, [("", form)], "repo/_table_lines.html", context)
+        response.status_code = 422
+        return response
+    return render(request, "repo/_made_cards.html", {"reference": reference, "cards": cards.cards[start:]})
+
+
 def checked_block(request, pk):
     """Block ?block= (its index from 0, as in its prefix, card-0-block-0) of card ?card= of the
     compound cards sent, built exactly as views.add_compound's Check builds it, with its index. It
@@ -837,9 +899,7 @@ def add_compound(request, pk):
         for saved in cards.save(request.user):
             card_saved(request, *saved)
         return redirect("repo:add_from_reference", reference.pk)
-    # What Check read of each card's runs, on an axis of the card's own (_card_runs_result.html).
-    for card in cards.cards:
-        card.sequence_rows, card.axis = sequence_ribbons(card.runs, card.ribbon_data)
+    show_runs(cards.cards)
     context = {"nav": "add", "reference": reference, "cards": cards}
     return render(request, "repo/add_compound.html", context)
 

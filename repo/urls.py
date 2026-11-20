@@ -32,6 +32,8 @@ urlpatterns = [
     path("add/reference/<int:pk>/check/material/", views.check_card_material, name="check_card_material"),
     path("add/reference/<int:pk>/check/runs/", views.check_card_runs, name="check_card_runs"),
     path("add/reference/<int:pk>/check/table/", views.check_table, name="check_table"),
+    # Make cards from the compound table (cards.js), after the page's cards, e.g. cards/?start=3.
+    path("add/reference/<int:pk>/cards/", views.make_cards, name="make_cards"),
     # A card's block of values, by the card's index and its own, e.g. block/?card=2&block=0: what
     # it reads as, and the boxes its choice needs.
     path("add/reference/<int:pk>/check/block/", views.check_block, name="check_block"),

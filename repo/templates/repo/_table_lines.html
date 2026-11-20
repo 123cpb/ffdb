@@ -3,9 +3,12 @@ What the server makes of a pasted compound table: each line read, with its drawi
 new or in FFDB, and its standard sequence, or why it can't be saved. form is CompoundTableForm,
 and lines and status_counts come from views.table_reading(). A reference's Add data page shows
 it under the table: Check fills it when the page comes back, and views.check_table as the curator
-types or pastes.
+types or pastes. After Make cards, cards_problems says why no card was made, if none was.
 {% endcomment %}
 {% load repo_tags %}
+{% if cards_problems %}
+<ul class="form-error">{% for problem in cards_problems %}<li>{{ problem }}</li>{% endfor %}</ul>
+{% endif %}
 {% if lines %}
 {% if form.header %}<p class="table-note">Line {{ form.header }} has no digits, so it was read as a header.</p>{% endif %}
 <p>{{ lines|length }} line{{ lines|length|pluralize }}: {{ status_counts.new }} new, {{ status_counts.in_ffdb }} in FFDB,
