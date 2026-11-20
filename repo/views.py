@@ -21,6 +21,7 @@ from .models import (
     Material,
     Measurement,
     Phase,
+    PhaseSequence,
     PhaseTransition,
     Property,
     Reference,
@@ -31,20 +32,41 @@ from .models import (
 )
 
 
+def matching_sequences(phase="", t_min=None, t_max=None):
+    """The phase sequences the search's phase and temperature boxes find, or None when all
+    three are blank. find_materials() lists the materials that have one, and the Materials list
+    draws one of them in each row (ribbon_sequence()), so the two can't disagree.
+
+    A sequence is found when it has the phase (a code, e.g. NF). With t_min or t_max (°C;
+    either can be None), the phase must form on cooling in that range, ends included: the
+    sequence has a transition into it there. With no phase, a transition into any phase counts.
+    The transitions are stored the same way whatever the sequence's direction, so a heating
+    run's counts too: NF giving way to N on heating at 132.7 °C counts as NF forming at 132.7 °C.
+    """
+    if t_min is None and t_max is None:
+        return PhaseSequence.objects.filter(phases__code=phase) if phase else None
+    # Find the transitions first. Every condition is on the one table, so each filter() narrows
+    # the same rows, and a transition has to meet them all: NF forming at 120 °C, not NF
+    # somewhere and some other phase forming at 120 °C.
+    transitions = PhaseTransition.objects.all()
+    if phase:
+        transitions = transitions.filter(lower__code=phase)
+    if t_min is not None:
+        transitions = transitions.filter(temperature_c__gte=t_min)
+    if t_max is not None:
+        transitions = transitions.filter(temperature_c__lte=t_max)
+    return PhaseSequence.objects.filter(transitions__in=transitions)
+
+
 def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
     """The materials a search finds, in LCR ID order. A blank search finds them all.
 
     A material is found when the text is part of its name or an alias (ignoring case),
     is its InChIKey (ignoring case), or is its LCR ID; when at least one of its sequences
-    has the phase (a code, e.g. NF); and when its structure contains the substructure
-    (SMILES or SMARTS). A substructure finds compounds only, because a mixture has no
-    structure. Raises chem.StructureError when RDKit can't read the substructure.
-
-    With t_min or t_max (°C; either can be None), the phase must form on cooling in that
-    range, ends included: some sequence has a transition into it there. With no phase,
-    a transition into any phase counts. The transitions are stored the same way whatever
-    the sequence's direction, so a heating run's counts too: NF giving way to N on heating
-    at 132.7 °C counts as NF forming at 132.7 °C.
+    meets the phase and temperature boxes (matching_sequences()); and when its structure
+    contains the substructure (SMILES or SMARTS). A substructure finds compounds only,
+    because a mixture has no structure. Raises chem.StructureError when RDKit can't read
+    the substructure.
     """
     materials = Material.objects.order_by("pk")
     text = text.strip()
@@ -54,24 +76,12 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
         if pk is not None:
             found |= Q(pk=pk)
         materials = materials.filter(found)
-    if t_min is not None or t_max is not None:
-        # Find the transitions first. Every condition is on the one table, so each filter()
-        # narrows the same rows, and a transition has to meet them all: NF forming at 120 °C,
-        # not NF somewhere and some other phase forming at 120 °C.
-        transitions = PhaseTransition.objects.all()
-        if phase:
-            transitions = transitions.filter(lower__code=phase)
-        if t_min is not None:
-            transitions = transitions.filter(temperature_c__gte=t_min)
-        if t_max is not None:
-            transitions = transitions.filter(temperature_c__lte=t_max)
-        materials = materials.filter(phase_sequences__transitions__in=transitions).distinct()
-    elif phase:
-        # The database follows Material -> its sequences -> their phases. That gives one row
-        # per matching sequence, so a material with the phase in two sequences would come
-        # back twice: distinct() keeps one. This comes before the substructure, so RDKit
-        # checks fewer structures.
-        materials = materials.filter(phase_sequences__phases__code=phase).distinct()
+    sequences = matching_sequences(phase, t_min, t_max)
+    if sequences is not None:
+        # The database follows Material -> its sequences. That gives one row per matching
+        # sequence, so a material with two would come back twice: distinct() keeps one. This
+        # comes before the substructure, so RDKit checks fewer structures.
+        materials = materials.filter(phase_sequences__in=sequences).distinct()
     if substructure.strip():
         pattern = chem.substructure_pattern(substructure)
         # The database can't compare structures, so RDKit checks each compound found so far.
@@ -118,12 +128,13 @@ def range_text(tmin, tmax):
 
 def search_results(request):
     """The Materials page's search, read the same way by the page and its downloads, so a
-    download holds the materials the page lists. Returns (terms, found, error).
+    download holds the materials the page lists. Returns (terms, found, matched, error).
 
     terms is what ?q=, ?sub=, ?phase=, ?tmin= and ?tmax= hold, as typed, in that order. A
     ?phase= that isn't in the vocabulary is ignored, and so is a ?tmin= or ?tmax= that isn't
-    a number. found is what find_materials() finds. A substructure RDKit can't read finds
-    nothing, and error says why; otherwise error is ""."""
+    a number. found is what find_materials() finds, and matched what matching_sequences()
+    finds, for the ribbons. A substructure RDKit can't read finds nothing, and error says why;
+    otherwise error is ""."""
     phase = request.GET.get("phase", "")
     if phase and not Phase.objects.filter(code=phase).exists():
         phase = ""
@@ -136,10 +147,11 @@ def search_results(request):
         "tmin": tmin,
         "tmax": tmax,
     }
+    matched = matching_sequences(phase, t_min, t_max)
     try:
-        return terms, find_materials(terms["q"], terms["sub"], phase, t_min, t_max), ""
+        return terms, find_materials(terms["q"], terms["sub"], phase, t_min, t_max), matched, ""
     except chem.StructureError as exc:
-        return terms, Material.objects.none(), str(exc)
+        return terms, Material.objects.none(), matched, str(exc)
 
 
 # How ?sort= orders the Materials and References pages. The first, newest added first, is
@@ -170,17 +182,74 @@ def paging_query(kept, sort):
     return urlencode({**kept, "sort": sort} if sort != "newest" else kept)
 
 
+# The Materials list's ribbons are narrower than a material page's (ribbons.ribbon_svg()), to
+# leave room for the drawing beside them.
+LIST_RIBBON_WIDTH = 600
+
+
+def ribbon_label(sequence):
+    """What a screen reader says for a sequence's ribbon: the sequence, how it was observed
+    and its reference, "Cr 139.8 NF 132.7 N 187.9 Iso (°C), Summary, Mandle 2017, Chem. Eur. J."."""
+    return f"{sequence.standard_sequence} (°C), {sequence.run_text()}, {sequence.reference.label}"
+
+
+def ribbon_sequence(sequences, preferred=frozenset()):
+    """The one sequence the Materials list draws for a material, from its sequences, or None
+    when it has none. First a sequence the search found (preferred, a set of their primary
+    keys), so a search for NF forming at 100 to 110 °C shows the run with NF forming there.
+    Then anything but a heating run, because a phase seen only on cooling (monotropic) doesn't
+    show on heating. Then the first entered: the lowest primary key.
+
+    min() compares the keys in order, and False comes before True."""
+    return min(
+        sequences,
+        key=lambda s: (s.pk not in preferred, s.direction == PhaseSequence.Direction.HEATING, s.pk),
+        default=None,
+    )
+
+
+def list_ribbons(materials, preferred=frozenset()):
+    """Each material with its ribbon (ribbon_sequence()), or None when it has no sequence, all
+    on one temperature axis: ([(material, ribbon), ...], axis). The axis is "" when no material
+    has a ribbon. Pass materials with their sequences prefetched, with each sequence's reference
+    and transitions and the phases either side, or each row costs queries."""
+    chosen = [(material, ribbon_sequence(material.phase_sequences.all(), preferred)) for material in materials]
+    data = {sequence.pk: ribbons.ribbon_data(sequence) for _, sequence in chosen if sequence}
+    lo, hi = ribbons.temperature_range(data.values())
+    rows = [
+        (
+            material,
+            ribbons.ribbon_svg(
+                data[sequence.pk], lo, hi, label=ribbon_label(sequence),
+                width=LIST_RIBBON_WIDTH, height=22, temperatures=False, block_ends=True,
+            ) if sequence else None,
+        )
+        for material, sequence in chosen
+    ]
+    return rows, ribbons.axis_svg(lo, hi, width=LIST_RIBBON_WIDTH) if data else ""
+
+
 def materials(request):
     """The Materials page, and for now the home page: every material, or those that the
     search finds (search_results()), 25 to a page, in the order ?sort= chooses
-    (MATERIAL_SORTS). get_page() turns a missing, bad or too-high ?page= into a real page.
-    A substructure RDKit can't read lists nothing and says why."""
-    terms, found, error = search_results(request)
+    (MATERIAL_SORTS), each with a ribbon (list_ribbons()). get_page() turns a missing, bad or
+    too-high ?page= into a real page. A substructure RDKit can't read lists nothing and says why."""
+    terms, found, matched, error = search_results(request)
     sort = sort_param(request, MATERIAL_SORTS)
     # order_by() replaces the LCR ID order that find_materials() gives. The downloads keep that
     # order, because they use search_results() themselves, so a file is the same whichever
-    # order the page shows.
-    page = Paginator(found.order_by(*MATERIAL_SORTS[sort]), 25).get_page(request.GET.get("page"))
+    # order the page shows. prefetch_related() fetches the sequences of the page's 25 materials
+    # in one query, and their references, transitions and phases in one query each, for the
+    # ribbons, instead of queries for every row.
+    found = found.order_by(*MATERIAL_SORTS[sort]).prefetch_related(
+        "phase_sequences__reference", "phase_sequences__transitions__upper", "phase_sequences__transitions__lower"
+    )
+    page = Paginator(found, 25).get_page(request.GET.get("page"))
+    preferred = set()
+    if matched is not None:
+        # The sequences the search found, of this page's materials only: one more query.
+        preferred = set(matched.filter(material__in=[m.pk for m in page]).values_list("pk", flat=True))
+    rows, axis = list_ribbons(page, preferred)
     kept = {key: value for key, value in terms.items() if value}
     # The search as it goes in an address, so the order links and the downloads keep it.
     # urlencode() turns characters such as # into %23: a bare # would end the address there.
@@ -196,6 +265,8 @@ def materials(request):
         "range_text": range_text(terms["tmin"], terms["tmax"]),
         "error": error,
         "page": page,
+        "rows": rows,
+        "axis": axis,
         "search": search,
         "sort": sort,
         "paging": paging_query(kept, sort),
@@ -226,17 +297,12 @@ def value_sections(series, with_charts=False):
 
 def sequence_ribbons(sequences):
     """Each sequence with its ribbon, all on one temperature axis, for the material page's
-    table: ([(sequence, ribbon), ...], axis). A screen reader reads each ribbon as its
-    sequence, how it was observed and its reference."""
+    rows: ([(sequence, ribbon), ...], axis). A screen reader reads each ribbon as its
+    sequence, how it was observed and its reference (ribbon_label())."""
     data = [ribbons.ribbon_data(sequence) for sequence in sequences]
     lo, hi = ribbons.temperature_range(data)
     rows = [
-        (
-            sequence,
-            ribbons.ribbon_svg(
-                one, lo, hi, label=f"{sequence.standard_sequence} (°C), {sequence.run_text()}, {sequence.reference.label}"
-            ),
-        )
+        (sequence, ribbons.ribbon_svg(one, lo, hi, label=ribbon_label(sequence)))
         for sequence, one in zip(sequences, data)
     ]
     return rows, ribbons.axis_svg(lo, hi)

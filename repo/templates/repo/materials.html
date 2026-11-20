@@ -1,4 +1,5 @@
 {% extends "repo/base.html" %}
+{% load repo_tags %}
 {% block title %}Materials{% endblock %}
 {% block content %}
 <h1 class="page-title">Materials</h1>
@@ -58,8 +59,17 @@
   <a href="{% url 'repo:sequences_csv' %}{% if search %}?{{ search }}{% endif %}">phase sequences</a>,
   <a href="{% url 'repo:values_csv' %}{% if search %}?{{ search }}{% endif %}">property values</a>
 </p>
+{# The ribbons (views.list_ribbons()) share the axis above the list. Shown when a row on this page has one. #}
+{% if axis %}
+{% phase_key block_ends=True %}
+<p class="ribbon-note">A material with several sequences shows one: a run that meets the search, then a summary or cooling run before a heating run, because a phase seen only on cooling doesn't show on heating.</p>
+<div class="results__axis" aria-hidden="true">
+  <span class="results__axis-label">Phases against temperature (°C)</span>
+  {{ axis }}
+</div>
+{% endif %}
 <ol class="result-list">
-  {% for material in page %}
+  {% for material, ribbon in rows %}
   <li class="result">
     {% if material.kind == "mixture" %}
     {# No drawing for a mixture. The box isn't a link and isn't hidden, so screen readers say it is a mixture. #}
@@ -70,9 +80,12 @@
       <img src="{{ material.thumbnail_url }}" alt="" width="200" height="128" loading="lazy">
     </a>
     {% endif %}
-    <div>
-      <a class="result__id" href="{% url 'repo:material' material.pk %}">{{ material.accession }}</a>
-      {% if material.name %}<span class="result__name">{{ material.name }}</span>{% endif %}
+    <div class="result__main">
+      <div>
+        <a class="result__id" href="{% url 'repo:material' material.pk %}">{{ material.accession }}</a>
+        {% if material.name %}<span class="result__name">{{ material.name }}</span>{% endif %}
+      </div>
+      <div class="result__ribbon">{% if ribbon %}{{ ribbon }}{% else %}<span class="result__no-ribbon">No phase sequence</span>{% endif %}</div>
     </div>
   </li>
   {% endfor %}

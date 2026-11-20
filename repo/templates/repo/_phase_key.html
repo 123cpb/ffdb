@@ -1,0 +1,11 @@
+{% comment %}
+The key to the phase ribbons, from repo_tags.phase_key(): each colour with its phases, then
+how a ribbon shows an open end, a melting point and where a reference didn't look. The
+swatches are hidden from screen readers, which get each ribbon's sequence as text instead.
+{% endcomment %}
+<ul class="phase-key" aria-label="Key to the phase ribbons">
+  {% for item in items %}<li><span class="phase-key__swatch{% if item.outlined %} phase-key__swatch--outlined{% endif %}" style="background:{{ item.fill }}" aria-hidden="true"></span><span>{{ item.label }}</span></li>
+  {% endfor %}<li><span class="phase-key__stub" aria-hidden="true">{% if block_ends %}{% for opacity in fade %}<i style="background:{{ stub_fill }};opacity:{{ opacity }}"></i>{% endfor %}<i class="phase-key__block" style="background:{{ stub_fill }}"></i>{% else %}{% for opacity in steps %}<i style="background:{{ stub_fill }};opacity:{{ opacity }}"></i>{% endfor %}{% endif %}</span>limit not reported</li>
+  <li><svg class="phase-key__melting" viewBox="0 0 8 14" aria-hidden="true"><line x1="4" x2="4" y1="0" y2="14" stroke="{{ ink }}" stroke-width="1.5" stroke-dasharray="3 2"/></svg>melting point</li>
+  <li><span class="phase-key__not-examined" aria-hidden="true"></span>not examined</li>
+</ul>

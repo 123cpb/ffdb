@@ -19,6 +19,21 @@ ISOTROPIC = "Iso"
 # Every other phase in the vocabulary is a liquid crystal.
 NOT_LIQUID_CRYSTAL = SOLIDS + (ISOTROPIC,)
 
+# How the pages write a code that has a subscript, as (main text, subscript): NF is written
+# N with a subscript F. The ribbons, their key and the sequences on the pages use this; the
+# downloads keep the plain codes. A code added to the vocabulary needs a line here to get one.
+SUBSCRIPTS = {
+    "NF": ("N", "F"),
+    "NS": ("N", "S"),
+    "NTB": ("N", "TB"),
+    "NTBF": ("N", "TBF"),
+    "SmAF": ("SmA", "F"),
+    "SmAAF": ("SmA", "AF"),
+    "SmCP": ("SmC", "P"),
+    "SmCF": ("SmC", "F"),
+    "SmCPH": ("SmC", "PH"),
+}
+
 # A run's direction, as parse_run() takes it. PhaseSequence.Direction stores the same values.
 COOLING = "cooling"
 HEATING = "heating"

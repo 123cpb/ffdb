@@ -228,8 +228,8 @@ class SaveTests(CompoundTableTestCase):
             [("cooling", "Iso 187.9 N 132.7 NF 70 Cr", 5, "DSC"), ("heating", "Cr 75 NF 133 N 188 Iso", 10, "DSC")],
         )
         page = self.client.get(reverse("repo:material", args=[self.rm734.pk]))
-        self.assertContains(page, "<td>Cooling, 5 K/min, DSC</td>", html=True)
-        self.assertContains(page, "<td>Heating, 10 K/min, DSC</td>", html=True)
+        self.assertContains(page, '<span class="ribbon-row__run">Cooling, 5 K/min, DSC</span>', html=True)
+        self.assertContains(page, '<span class="ribbon-row__run">Heating, 10 K/min, DSC</span>', html=True)
 
     def test_a_bare_compound_number_names_a_new_compound_but_isnt_kept_as_an_alias(self):
         self.send(f"10a\t{FIVE_CB}\n10b\t{RM734}", "save")
@@ -303,8 +303,8 @@ class LcrIdLineTests(CompoundTableTestCase):
         self.assertEqual(list(response.context["choice"].fields["material"].queryset), [self.f7])
         self.assertEqual(list(response.context["curve_choice"].fields["material"].queryset), [self.f7])
         page = self.client.get(reverse("repo:material", args=[self.f7.pk]))
-        self.assertContains(page, "<td>Iso 120 N 95 NF 40 Cr</td>", html=True)
-        self.assertContains(page, "<td>Cooling</td>", html=True)
+        self.assertContains(page, '<p class="ribbon-row__text">Iso 120 N 95 N<sub>F</sub> 40 Cr</p>', html=True)
+        self.assertContains(page, '<span class="ribbon-row__run">Cooling</span>', html=True)
 
     def test_a_ps_value_for_the_mixture_shows_on_the_ps_page_under_its_name(self):
         PhaseSequence.objects.create(

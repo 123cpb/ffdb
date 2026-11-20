@@ -150,7 +150,7 @@ class ReferencePageTests(ReferenceTestCase):
         for material in (self.rm734, self.five_cb):
             page = reverse("repo:material", args=[material.pk])
             self.assertContains(response, f'<a href="{page}">{material.accession}</a>', html=True)
-        self.assertContains(response, "Cr 139.8 NF 132.7 N 187.9 Iso")
+        self.assertContains(response, "Cr 139.8 N<sub>F</sub> 132.7 N 187.9 Iso")
         self.assertContains(response, "Cr 22.5 N 35 Iso")
         self.assertContains(response, "Reported as K 140 NX 133 N 188 I")
         self.assertNotContains(response, "Cr 140 N 188 Iso")  # the patent's sequence

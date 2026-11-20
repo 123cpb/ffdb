@@ -244,8 +244,8 @@ class MaterialPageTests(SequenceTestCase):
 
         response = self.page()
 
-        self.assertContains(response, "Cr 139.8 NF 132.7 N 187.9 Iso")
-        self.assertContains(response, "Cr 140 N 188 Iso")
+        self.assertContains(response, '<p class="ribbon-row__text">Cr 139.8 N<sub>F</sub> 132.7 N 187.9 Iso</p>', html=True)
+        self.assertContains(response, '<p class="ribbon-row__text">Cr 140 N 188 Iso</p>', html=True)
         # Each reference links to its page on FFDB, which links on to doi.org or Espacenet.
         mandle_page = reverse("repo:reference", args=[self.reference.pk])
         patent_page = reverse("repo:reference", args=[patent.pk])
@@ -257,7 +257,7 @@ class MaterialPageTests(SequenceTestCase):
 
         response = self.page()
 
-        self.assertContains(response, "Cr 100 NS 120 N 150 Iso")
+        self.assertContains(response, "Cr 100 N<sub>S</sub> 120 N 150 Iso")
         self.assertContains(response, "Reported as K 100 NX 120 N 150 I")
 
     def test_each_sequence_shows_how_it_was_observed(self):
@@ -266,8 +266,8 @@ class MaterialPageTests(SequenceTestCase):
 
         response = self.page()
 
-        self.assertContains(response, "<td>Summary</td>", html=True)
-        self.assertContains(response, "<td>Cooling, 5 K/min, DSC, down to 20 °C</td>", html=True)
+        self.assertContains(response, '<span class="ribbon-row__run">Summary</span>', html=True)
+        self.assertContains(response, '<span class="ribbon-row__run">Cooling, 5 K/min, DSC, down to 20 °C</span>', html=True)
         # The reference page lists them the same way.
         reference_page = self.client.get(reverse("repo:reference", args=[self.reference.pk]))
         self.assertContains(reference_page, "<td>Cooling, 5 K/min, DSC, down to 20 °C</td>", html=True)

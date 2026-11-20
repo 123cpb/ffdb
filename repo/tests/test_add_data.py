@@ -213,7 +213,7 @@ class ReferenceAddPageTests(AddDataTestCase):
             page = reverse("repo:material", args=[material.pk])
             self.assertContains(response, f'<a href="{page}">{material.accession}</a>', html=True)
         self.assertNotContains(response, self.five_cb.accession)
-        self.assertContains(response, "Cr 139.8 NF 132.7 N 187.9 Iso")
+        self.assertContains(response, "Cr 139.8 N<sub>F</sub> 132.7 N 187.9 Iso")
         self.assertContains(response, "Spontaneous polarisation, Ps")
 
     def test_a_reference_with_nothing_yet_says_so(self):

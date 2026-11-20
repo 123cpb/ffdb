@@ -3,10 +3,12 @@
 import re
 
 from django import template
-from django.utils.html import escape
+from django.utils.html import escape, format_html
 from django.utils.safestring import mark_safe
 
+from .. import ribbons
 from ..models import CONDITION_NAMES, CONDITION_UNITS, Measurement, Series
+from ..phases import ISOTROPIC, SUBSCRIPTS
 
 register = template.Library()
 
@@ -20,6 +22,44 @@ def formula(text):
     """
     # Escape first, then mark safe: the <sub> tags are the only HTML that gets through.
     return mark_safe(re.sub(r"(?<=[A-Za-z])(\d+)", r"<sub>\1</sub>", escape(text)))
+
+
+@register.filter
+def phase_html(text):
+    """A phase sequence, or a code, with each code that has a subscript written with it:
+    "Cr 139.8 NF 132.7 N 187.9 Iso" -> "Cr 139.8 N<sub>F</sub> 132.7 N 187.9 Iso". Only a whole
+    word that is a code counts (phases.SUBSCRIPTS), so a temperature or "N'" is left alone.
+    format_html() and escape() escape each word, so the <sub> tags are the only HTML let through."""
+    words = []
+    for word in str(text).split():
+        if word in SUBSCRIPTS:
+            words.append(format_html("{}<sub>{}</sub>", *SUBSCRIPTS[word]))
+        else:
+            words.append(escape(word))
+    return mark_safe(" ".join(words))
+
+
+@register.inclusion_tag("repo/_phase_key.html")
+def phase_key(block_ends=False):
+    """The key to the ribbons on a page: {% phase_key %} on a material's page, and
+    {% phase_key block_ends=True %} in the Materials list, to match how its ribbons draw an
+    open end (ribbons.ribbon_svg()). The opacities are reversed because the key draws the
+    faintest step first, on the left, as a ribbon does below a transition."""
+    return {
+        "items": [
+            {
+                "label": mark_safe(", ".join(phase_html(code) for code in codes)) or "other phases",
+                "fill": fill,
+                "outlined": codes == [ISOTROPIC],  # as pale as the page, so it has an outline
+            }
+            for codes, fill in ribbons.key_items()
+        ],
+        "block_ends": block_ends,
+        "stub_fill": ribbons.KEY_STUB_FILL,
+        "steps": list(reversed(ribbons.STEPS)),
+        "fade": list(reversed(ribbons.FADE)),
+        "ink": ribbons.INK,
+    }
 
 
 @register.filter

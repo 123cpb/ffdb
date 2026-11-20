@@ -1,5 +1,5 @@
 {% extends "repo/base.html" %}
-{% load static %}
+{% load static repo_tags %}
 {% block title %}Add data from {{ reference.label }}{% endblock %}
 {% block content %}
 <p class="reference-kind">{{ reference.get_kind_display }}</p>
@@ -94,7 +94,7 @@
             {% endif %}
           </td>
           <td>
-            {{ line.standard_sequence }}
+            {{ line.standard_sequence|phase_html }}
             {% if line.sequence_already_there %}<span class="cell-note">Already in FFDB from this reference: not added again.</span>{% endif %}
           </td>
         </tr>
