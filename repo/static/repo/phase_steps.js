@@ -1,5 +1,5 @@
-/* The phase steps of compound cards' runs (_run.html), shown one at a time. Every step is in
-   the page, so without JavaScript they are all shown. This shows the top phase and the first
+/* The phase steps of compound cards' phase sequences (_run.html), shown one at a time. Every
+   step is in the page, so without JavaScript they are all shown. This shows the top phase and the first
    phase below it, "+ Add a phase" shows the next step, and Remove, on the last step shown,
    clears it and hides it again. A hidden step is always empty, so nothing hidden is sent, and
    the server reads the steps the same way either way: an empty step is skipped. */
@@ -55,9 +55,8 @@ function setUpPhaseSteps(run) {
 
 document.querySelectorAll("[data-phase-builder]").forEach(setUpPhaseSteps);
 
-// A run cards.js adds later, on its own or on a new card: event.target is the run or the card.
+// The phase sequence on a card cards.js adds later: event.target is the card, or a block of
+// values, which has none.
 document.addEventListener("card-part-added", (event) => {
-  const part = event.target;
-  const runs = part.matches("[data-phase-builder]") ? [part] : part.querySelectorAll("[data-phase-builder]");
-  runs.forEach(setUpPhaseSteps);
+  event.target.querySelectorAll("[data-phase-builder]").forEach(setUpPhaseSteps);
 });

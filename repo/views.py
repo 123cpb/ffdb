@@ -299,7 +299,7 @@ def sequence_ribbons(sequences, data=None):
     """Each sequence with its ribbon, all on one temperature axis, for the material page's
     rows: ([(sequence, ribbon), ...], axis). A screen reader reads each ribbon as its
     sequence, how it was observed and its reference (ribbon_label()). data is each sequence's
-    ribbons.RibbonData when they aren't saved, as for a card's runs being checked; otherwise it
+    ribbons.RibbonData when they aren't saved, as for a card's sequence being checked; otherwise it
     is worked out from their stored transitions."""
     if data is None:
         data = [ribbons.ribbon_data(sequence) for sequence in sequences]
@@ -669,16 +669,18 @@ def table_reading(form):
 
 
 def show_runs(cards):
-    """Keep what Check read of each card's runs on it, on an axis of the card's own, for
-    _card_runs_result.html. Ask once each card has been checked (CompoundCard.is_valid())."""
+    """Keep what Check read of each card's phase sequence on it, on an axis of the card's own,
+    for _card_runs_result.html: nothing for a card whose sequence is empty or doesn't read. Ask
+    once each card has been checked (CompoundCard.is_valid())."""
     for card in cards:
-        card.sequence_rows, card.axis = sequence_ribbons(card.runs, card.ribbon_data)
+        runs, data = ([card.run], [card.ribbon]) if card.run else ([], [])
+        card.sequence_rows, card.axis = sequence_ribbons(runs, data)
 
 
 def cards_from_table(form, start=0):
     """The page of compound cards a pasted table makes (a CompoundTableForm, form): a card for each
     line, from index start, each as Check shows it, with any problem it would have at Save, such
-    as a card with no run yet. Raises ValidationError, saying why, when the table can't make
+    as a card with no sequence yet. Raises ValidationError, saying why, when the table can't make
     them (CompoundTableForm.cards_data())."""
     cards = CompoundCards(form.cards_data(start), form.reference)
     made = cards.cards[start:]
@@ -749,20 +751,13 @@ def check_card_material(request, pk):
 @permission_required("repo.add_reference", raise_exception=True)
 @require_POST
 def check_card_runs(request, pk):
-    """What the server makes of a compound card's runs: those that read, on one axis, and each
-    other run's problems under its number. A run left as the page shows it is skipped, as Check
-    skips it, so with none filled in the answer is empty."""
+    """What the server makes of a compound card's phase sequence: its ribbon if it reads, or its
+    problems. They need no title, as the answer sits right under the sequence. A sequence left as
+    the page shows it is skipped, as Check skips it, so the answer is empty."""
     card = checked_card(request, pk)
-    sequence_rows, axis = sequence_ribbons(card.runs, card.ribbon_data)
-    # A run's number is its index + 1, as its heading says. A removed run is hidden, so its
-    # problems aren't listed.
-    runs = [
-        (f"Run {number}", form) for number, form in enumerate(card.run_forms, start=1)
-        if not card.run_forms.removed(form)
-    ]
-    return check_answer(
-        request, runs, "repo/_card_runs_result.html", {"sequence_rows": sequence_rows, "axis": axis}
-    )
+    show_runs([card])
+    context = {"sequence_rows": card.sequence_rows, "axis": card.axis}
+    return check_answer(request, [("", card.run_form)], "repo/_card_runs_result.html", context)
 
 
 @login_required
@@ -837,11 +832,11 @@ def check_block_boxes(request, pk):
 
 def card_saved(request, card, material, added, kept):
     """Say what Save added from one compound card, leaving out a part the card didn't have:
-    "Added 10a as LCR-00512, with 1 run and 2 blocks of values." The arguments are what
-    CompoundCards.save() gives for the card."""
+    "Added 10a as LCR-00512, with a phase sequence and 2 blocks of values." The arguments are
+    what CompoundCards.save() gives for the card."""
     parts = []
-    if card.runs:
-        parts.append(f"{len(card.runs)} run{pluralize(len(card.runs))}")
+    if card.run:
+        parts.append("a phase sequence")
     if card.blocks:
         parts.append(f"{len(card.blocks)} block{pluralize(len(card.blocks))} of values")
     saved = " and ".join(parts)
@@ -859,10 +854,10 @@ def card_saved(request, card, material, added, kept):
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_compound(request, pk):
-    """Adding compound cards from a reference: on each, a material, in FFDB or new, its runs and
-    its blocks of values. A page of one empty card is on the reference's Add data page and posts
+    """Adding compound cards from a reference: on each, a material, in FFDB or new, its phase
+    sequence and its blocks of values. A page of one empty card is on the reference's Add data page and posts
     here, with every card the curator added (cards.js). Check reads every card filled in and shows
-    what Save would add: each material, and each run that reads with its standard sequence and
+    what Save would add: each material, and each sequence that reads with its standard sequence and
     ribbon, as the material's page will show them, and each problem on its card, saving nothing.
     Save (a POST with save in it) reads them again and adds every card, in one transaction, or
     nothing while any card has a problem, and sends the curator back to the Add data page with a

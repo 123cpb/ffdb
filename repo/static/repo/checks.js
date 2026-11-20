@@ -1,8 +1,9 @@
 /* Checks as the curator types, on a reference's Add data page and the add-a-compound page. Each
    answer box (data-check-url) follows the parts of a form that name it (data-check): a compound
-   card's material, its runs, each block of values, or the compound table, on every card, including
-   those cards.js adds. After a short pause in typing in one of them, the whole form is sent to the
-   box's address, and the server's answer, HTML from the templates Check uses, goes in the box. So
+   card's material, its phase sequence, each block of values, or the compound table, on every
+   card, including those cards.js adds. After a short pause in typing in one of them, the whole
+   form is sent to the box's address, and the server's answer, HTML from the templates Check
+   uses, goes in the box. So
    the page shows what Check would, without a reload. Each box is a live region, so a screen reader reads each answer. Draw and the
    Removes change boxes by script, and say so with an input event, as typing does, so what they
    change is checked too.
@@ -79,7 +80,7 @@ async function redraw(boxes, form) {
   if (focused) document.getElementById(focused)?.focus();
 }
 
-// Listening on the whole page, rather than on each part, takes in the cards, runs and blocks
+// Listening on the whole page, rather than on each part, takes in the cards and blocks
 // cards.js adds later: an input event bubbles up from the box typed in, selects included, through
 // the part it is in to the page.
 document.addEventListener("input", (event) => {

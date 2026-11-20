@@ -2,10 +2,10 @@
 The compound cards of one page, forms.CompoundCards (as cards), sent as one form to
 views.add_compound: Check and Save cover every card. Each card is _compound_card.html. A
 reference's Add data page and the add-a-compound page both include it, with the editor's dialog
-(_draw_dialog.html) and the scripts: cards.js adds and removes cards, runs and blocks, and
+(_draw_dialog.html) and the scripts: cards.js adds and removes cards and blocks, and
 draw.js, phase_steps.js and checks.js work on each card, as on the first.
 
-Without JavaScript the page has one card with two runs and two blocks, and the buttons for adding
+Without JavaScript the page has one card with its phase sequence and one block, and the buttons for adding
 and removing are never shown.
 {% endcomment %}
 <form method="post" action="{% url 'repo:add_compound' reference.pk %}" class="entry-form entry-form--wide">

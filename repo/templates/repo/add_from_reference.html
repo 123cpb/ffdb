@@ -16,8 +16,8 @@ cards. A table of its compounds can make the cards.</p>
 
 <section>
   <h2>Add compounds on cards</h2>
-  <p>A card for each compound or mixture, with its runs, each built from its phases, hottest first, and its values.
-  Check shows what Save would add: each compound or mixture, and each run's sequence and ribbon. Save adds every card,
+  <p>A card for each compound or mixture, with its phase sequence, built from its phases, hottest first, and its values.
+  Check shows what Save would add: each compound or mixture, and its sequence and ribbon. Save adds every card,
   or nothing while any card has a problem.</p>
   {% include "repo/_compound_cards.html" %}
 </section>
@@ -40,8 +40,8 @@ cards. A table of its compounds can make the cards.</p>
     {# type="button": it doesn't send the form. data-table is the id of the box it adds a line to. #}
     <button type="button" class="secondary-button" data-draw data-table="{{ form.table.id_for_label }}" hidden>Draw a compound</button>
     <p class="entry-form__help" id="{{ form.table.auto_id }}_helptext">{{ form.table.help_text }}</p>
-    <p class="entry-form__help">Make cards turns each line into a card above, with its compound and its sequence as a
-    run, once every line reads. Add their values there, then Check and Save the cards. The table saves nothing itself.</p>
+    <p class="entry-form__help">Make cards turns each line into a card above, with its compound and its phase sequence,
+    once every line reads. Add their values there, then Check and Save the cards. The table saves nothing itself.</p>
     {# The button's name is sent with the form, so the view can tell Check and Make cards apart. #}
     {# cards.js sends Make cards to data-url instead, and puts the cards in the page without a reload. #}
     <div class="entry-form__buttons">

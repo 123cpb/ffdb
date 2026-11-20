@@ -1,17 +1,17 @@
 {% comment %}
 One compound card, forms.CompoundCard (as card), inside the page's form (_compound_cards.html):
-its material, its runs (_run.html), then its blocks of values (_value_block.html). Every box's
+its material, its phase sequence (_run.html), then its blocks of values (_value_block.html). Every box's
 name starts with the card's prefix, card-0, and its number is its index + 1. In the empty card
 cards.js copies, the index is __card__ and the number __cardnumber__, and cards.js puts in the
 new card's.
 
-Its runs and its blocks each have an empty one in a <template>, with Django's __prefix__ in
-place of its index and __number__ in place of its number, for "+ Add a run" and "+ Add a block
-of values" (cards.js), which also set the formset's TOTAL_FORMS. Those buttons and each Remove
-are hidden, so without JavaScript they are never shown.
+A card has one phase sequence: a paper gives one for each compound. Its blocks have an empty
+one in a <template>, with Django's __prefix__ in place of its index and __number__ in place of
+its number, for "+ Add a block of values" (cards.js), which also sets the formset's TOTAL_FORMS.
+That button and each Remove are hidden, so without JavaScript they are never shown.
 
 What the server makes of the card goes in two boxes, one after the material and one after the
-runs, and in one under each block of values (_value_block.html). Check fills them when the page
+phase sequence, and in one under each block of values (_value_block.html). Check fills them when the page
 comes back. checks.js fills them as the curator types: a part marked data-check names its box,
 and the box's data-check-url is the address that reads that part, with ?card= the card's index.
 Each box is a live region (aria-live), so a screen reader reads each new answer.
@@ -51,19 +51,12 @@ Each box is a live region (aria-live), so a screen reader reads each new answer.
     {% include "repo/_card_material_result.html" %}
   </div>
   {% endwith %}
-  {# The formset's hidden boxes: how many runs the page has, so Django knows how many to read. #}
-  {{ card.run_forms.management_form }}
-  {% if card.run_forms.non_form_errors %}<p class="form-error">{{ card.run_forms.non_form_errors|join:" " }}</p>{% endif %}
-  <div id="{{ card.run_forms.prefix }}-list">
-    {% for form in card.run_forms %}{% include "repo/_run.html" with number=forloop.counter %}{% endfor %}
-  </div>
-  <template id="{{ card.run_forms.prefix }}-template">{% include "repo/_run.html" with form=card.run_forms.empty_form number="__number__" %}</template>
-  <button type="button" class="secondary-button" data-add-row="{{ card.run_forms.prefix }}" hidden>+ Add a run</button>
+  {% include "repo/_run.html" with form=card.run_form %}
   <div id="{{ card.prefix }}-runs-result" aria-live="polite" data-check-url="{% url 'repo:check_card_runs' reference.pk %}?card={{ card.index }}">
     {% include "repo/_card_runs_result.html" with sequence_rows=card.sequence_rows axis=card.axis %}
   </div>
   <p class="entry-form__help">Values: one block for each property or curve. A heating and a cooling curve, or curves at two frequencies, are separate blocks.</p>
-  {# As for the runs: how many blocks the page has. #}
+  {# The formset's hidden boxes: how many blocks the page has, so Django knows how many to read. #}
   {{ card.block_forms.management_form }}
   {% if card.block_forms.non_form_errors %}<p class="form-error">{{ card.block_forms.non_form_errors|join:" " }}</p>{% endif %}
   <div id="{{ card.block_forms.prefix }}-list">

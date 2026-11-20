@@ -322,7 +322,7 @@ class CompoundTableForm(forms.Form):
             raise ValidationError(self.NO_DIRECTION)
         return read_lines(rows, self.reference, direction)
 
-    # Make cards: the table's lines as compound cards. The runs and the cards are further down.
+    # Make cards: the table's lines as compound cards. The cards are further down.
     NO_CARDS = "No cards made: fix the table, then press Make cards again."
     NO_CARDS_LINES = "No cards made: fix these lines, then press Make cards again."
 
@@ -330,14 +330,14 @@ class CompoundTableForm(forms.Form):
         """The compound cards this table makes, one per line, as the data a page of cards sends
         (CompoundCards), so they read exactly as cards typed in would. Each has the line's
         material, by its LCR ID or SMILES as the line gives it, its label, and its sequence as
-        its first run, with the table's direction, rate and method. A sequence FFDB already has
+        its phase sequence, with the table's direction, rate and method. A sequence FFDB already has
         from this reference is left off its card, so saving the cards adds it only once; the
         table's Check says so. Their indexes start at start, so they can follow the cards
         already on a page, and card-TOTAL counts them all.
 
         Nothing is made while anything is wrong. Raises ValidationError, whose messages say why,
         when the table can't be read, the page would have more than MAX_CARDS cards, or a line
-        has a problem or a run a card can't hold."""
+        has a problem or a sequence a card can't hold."""
         if not self.is_valid():
             raise ValidationError(self.NO_CARDS)  # the table's own errors say what is wrong
         lines = self.cleaned_data["table"]
@@ -356,24 +356,23 @@ class CompoundTableForm(forms.Form):
             prefix = f"card-{index}"
             box = "material" if pk_from_accession(line.identifier) is not None else "smiles"
             data.update({f"{prefix}-{box}": line.identifier, f"{prefix}-name": line.label})
-            # The room a card has without JavaScript: as many runs and blocks as an empty one.
-            for formset, extra in (("run", RunFormSet.extra), ("block", ValueBlockFormSet.extra)):
-                data.update({f"{prefix}-{formset}-TOTAL_FORMS": str(extra), f"{prefix}-{formset}-INITIAL_FORMS": "0"})
-            # A run left as the page shows it still sends its top phase, Iso (RunForm's phase_0).
-            data.update({f"{prefix}-run-{i}-phase_0": ISOTROPIC for i in range(RunFormSet.extra)})
+            # As many blocks as an empty card has.
+            data.update({f"{prefix}-block-TOTAL_FORMS": str(ValueBlockFormSet.extra), f"{prefix}-block-INITIAL_FORMS": "0"})
+            # A sequence left as the page shows it still sends its top phase, Iso (RunForm's phase_0).
+            data[f"{prefix}-run-phase_0"] = ISOTROPIC
             if line.sequence and not line.sequence_already_there:
                 run, problem = self.card_run(line, synonyms)
                 if problem:
                     problems.append(f"Line {line.number}: {problem}")
                     continue
-                data.update({f"{prefix}-run-0-{name}": value for name, value in run.items()})
+                data.update({f"{prefix}-run-{name}": value for name, value in run.items()})
         if problems:
             raise ValidationError([self.NO_CARDS_LINES, *problems])
         return data
 
     def card_run(self, line, synonyms):
-        """A line's sequence as the boxes of its card's first run, as (boxes, ""), or (None, why
-        a card's run can't hold it). The run is read by RunForm, as the card will read it. Ask
+        """A line's sequence as the boxes of its card's phase sequence, as (boxes, ""), or (None,
+        why a card can't hold it). It is read by RunForm, as the card will read it. Ask
         only for a line without a problem: its sequence has read."""
         direction = self.cleaned_data["direction"]
         parsed = read_sequence(line.sequence, direction, synonyms)
@@ -386,12 +385,12 @@ class CompoundTableForm(forms.Form):
         run = RunForm(boxes, reference=self.reference)
         if not run.is_valid():
             messages = [message for errors in run.errors.values() for message in errors]
-            return None, f"A card's run can't hold this sequence: {' '.join(messages)}"
+            return None, f"A card can't hold this sequence: {' '.join(messages)}"
         return boxes, ""
 
 
-# A compound card: one compound's material, in FFDB or new, and its runs, each built from phase
-# steps. Check shows what Save would add, and Save adds all of it or nothing.
+# A compound card: one compound's material, in FFDB or new, and its phase sequence, a summary or
+# one run, built from phase steps. Check shows what Save would add, and Save adds all of it or nothing.
 
 # How many phases a run's steps can have: the top phase and seven below it. As in the
 # prototype, whose note says the longest run in the NF list has six above the solid.
@@ -454,7 +453,7 @@ def sequence_steps(text, direction, parsed, synonyms):
         solid, t_solid = code(labels.pop()), temperatures.pop()
     if len(labels) > RUN_PHASES:
         raise PhaseSequenceError(
-            f"The sequence has {len(labels)} phases, not counting the solid, and a card's run has room for {RUN_PHASES}."
+            f"The sequence has {len(labels)} phases, not counting the solid, and a card's phase sequence has room for {RUN_PHASES}."
         )
     boxes = {"phase_0": labels[0], "solid": solid, "t_solid": t_solid}
     for i, (temperature, label) in enumerate(zip(temperatures, labels[1:]), start=1):
@@ -463,13 +462,14 @@ def sequence_steps(text, direction, parsed, synonyms):
 
 
 class RunForm(forms.Form):
-    """One run on a compound card: how it was observed, and its phases as steps, hottest first.
+    """A compound card's phase sequence, a summary or one run: how it was observed, and its
+    phases as steps, hottest first.
     clean() writes the steps as a sequence (steps_text()) and reads it as the compound table
     reads one (read_sequence()), so the card refuses what the table refuses, with the same
     message. A valid form has run, the sequence as a PhaseSequence of its reference, not saved,
     and ribbon, what its ribbon is drawn from. Pass the reference.
 
-    A run left as it was is skipped: its formset makes it optional (empty_permitted), and
+    A sequence left as it was is skipped: its card makes it optional (empty_permitted), and
     Django doesn't check an optional form that hasn't changed from its initial values."""
 
     NOT_ONE_WORD = "A phase label is one word starting with a letter, e.g. NF."
@@ -564,7 +564,7 @@ class RunForm(forms.Form):
 
 
 class CardFormSet(forms.BaseFormSet):
-    """A card's runs, or its blocks of values. Each form has Django's DELETE box (can_delete), as
+    """A card's blocks of values. Each form has Django's DELETE box (can_delete), as
     a hidden box: Remove (cards.js) sets it and hides the form, but keeps it in the page, because
     Django reads the forms by number up to TOTAL_FORMS, and a form missing from the page would
     read as one changed. Django skips a removed form's problems."""
@@ -581,9 +581,6 @@ class CardFormSet(forms.BaseFormSet):
         """The forms filled in and not removed. Django doesn't check a form left as it was."""
         return [form for form in self if form.has_changed() and not self.removed(form)]
 
-
-# Room for two runs on a card, for a page without JavaScript. cards.js adds more.
-RunFormSet = forms.formset_factory(RunForm, formset=CardFormSet, extra=2, can_delete=True)
 
 
 class CardMaterialForm(forms.Form):
@@ -616,7 +613,7 @@ class CardMaterialForm(forms.Form):
     )
     smiles = forms.CharField(
         label="Or new: SMILES", required=False, widget=forms.TextInput(attrs={"autocomplete": "off", "spellcheck": "false"}),
-        help_text="A compound that isn't in FFDB yet. If its structure is in FFDB after all, its runs go to that material.",
+        help_text="A compound that isn't in FFDB yet. If its structure is in FFDB after all, its sequence and values go to that material.",
     )
     name = forms.CharField(
         label="Label, as the reference prints it", required=False, max_length=NAME_LENGTH,
@@ -725,11 +722,11 @@ TEMPLATE_INDEX = "__card__"
 
 
 class CompoundCard:
-    """One compound card: its material (CardMaterialForm), its runs (RunFormSet) and its blocks
-    of values (ValueBlockFormSet). Each part's names start with the card's prefix, card- and its
-    index from 0: card-0-material, card-0-run-0-direction, card-0-block-0-property. Its number,
-    in its heading and its problems, is its index + 1, and never changes: a card removed before
-    it leaves a gap. Pass the data sent, or None for an empty card, the reference the data is from
+    """One compound card: its material (CardMaterialForm), its one phase sequence (RunForm) and
+    its blocks of values (ValueBlockFormSet). Each part's names start with the card's prefix,
+    card- and its index from 0: card-0-material, card-0-run-direction, card-0-block-0-property.
+    Its number, in its heading and its problems, is its index + 1, and never changes: a card
+    removed before it leaves a gap. Pass the data sent, or None for an empty card, the reference the data is from
     and the card's index, or TEMPLATE_INDEX for the empty card cards.js copies.
 
     Remove (cards.js) sets its removed box, card-0-removed, and hides it. A removed card is never
@@ -740,38 +737,40 @@ class CompoundCard:
         # cards.js puts the number in the copy too, as it can't be worked out here.
         self.number = "__cardnumber__" if index == TEMPLATE_INDEX else index + 1
         self.removed = data is not None and data.get(f"{self.prefix}-removed") == "1"
-        # empty_permitted: as for a formset's forms, Django doesn't check it while it is left as
-        # it was, so an empty card shows no problems. is_valid() asks for it on a card filled in.
-        # Django asks for use_required_attribute=False with it; none of its boxes is required.
-        self.material_form = CardMaterialForm(
-            data, prefix=self.prefix, empty_permitted=True, use_required_attribute=False
-        )
-        kwargs = {"reference": reference}
-        self.run_forms = RunFormSet(data, prefix=f"{self.prefix}-run", form_kwargs=kwargs)
-        self.block_forms = ValueBlockFormSet(data, prefix=f"{self.prefix}-block", form_kwargs=kwargs)
-        self.runs, self.ribbon_data, self.blocks, self.problems = [], [], [], []  # set by is_valid()
+        # empty_permitted: as for a formset's forms, Django doesn't check a form while it is left
+        # as it was, so an empty card shows no problems. is_valid() asks for the material on a card
+        # filled in. Django asks for use_required_attribute=False with it, so the browser doesn't
+        # ask for boxes the card can leave empty.
+        optional = {"empty_permitted": True, "use_required_attribute": False}
+        self.material_form = CardMaterialForm(data, prefix=self.prefix, **optional)
+        self.run_form = RunForm(data, prefix=f"{self.prefix}-run", reference=reference, **optional)
+        self.block_forms = ValueBlockFormSet(data, prefix=f"{self.prefix}-block", form_kwargs={"reference": reference})
+        self.run = self.ribbon = None  # set by is_valid()
+        self.blocks, self.problems = [], []
 
     def is_filled(self):
-        """Whether anything is typed on the card: its material, or a run or block of values not
-        removed. Save ignores a card left empty, and doesn't check it, so it shows no problems."""
+        """Whether anything is typed on the card: its material, its phase sequence or a block of
+        values not removed. Save ignores a card left empty, and doesn't check it, so it shows no
+        problems."""
         if self.removed:
             return False
-        return self.material_form.has_changed() or bool(self.run_forms.kept() or self.block_forms.kept())
+        return self.material_form.has_changed() or self.run_form.has_changed() or bool(self.block_forms.kept())
 
     def is_valid(self):
         """Whether Save can add everything on the card. Every part is checked, so each shows its
-        own problems, and the runs that read are kept in runs, with what their ribbons are drawn
-        from in ribbon_data, for Check to show even when something else has a problem. blocks
-        are the blocks of values filled in. Runs and blocks left empty or removed are skipped."""
-        parts = [self.material_form, self.run_forms, self.block_forms]
+        own problems. A phase sequence that reads is kept in run, with what its ribbon is drawn
+        from in ribbon, for Check to show even when something else has a problem; one left empty
+        leaves both None. blocks are the blocks of values filled in, skipping those left empty
+        or removed."""
+        parts = [self.material_form, self.run_form, self.block_forms]
         valid = all([part.is_valid() for part in parts])  # a list: every part is checked
         if not self.material_form.has_changed():
             self.material_form.add_error(None, CardMaterialForm.NO_MATERIAL)
             valid = False
-        read = [form for form in self.run_forms.kept() if form.run is not None]
-        self.runs, self.ribbon_data = [form.run for form in read], [form.ribbon for form in read]
+        # RunForm.clean() sets them only for a sequence that reads, and isn't run for one left empty.
+        self.run, self.ribbon = self.run_form.run, self.run_form.ribbon
         self.blocks = self.block_forms.kept()
-        self.problems = ["Add at least one run or block of values."] if valid and not (self.runs or self.blocks) else []
+        self.problems = ["Add a phase sequence or at least one block of values."] if valid and not (self.run or self.blocks) else []
         return valid and not self.problems
 
     def material_key(self):
@@ -788,7 +787,7 @@ class CompoundCard:
     def save(self, user):
         """Add everything on the card in one transaction, so a failure partway keeps none of it:
         a new compound, named by its label, a new mixture with its components, or the label as an
-        alias of the material in FFDB, and then each run and each block of values, recorded as
+        alias of the material in FFDB, and then its phase sequence and each block of values, recorded as
         entered by user. Inside the page's transaction (CompoundCards.save()) it is part of that
         one. Call it only on a valid card. Returns (the material, whether it was added, whether
         the label was kept as an alias)."""
@@ -805,10 +804,10 @@ class CompoundCard:
                 material.add_aliases([name])
                 material.save(update_fields=["aliases"])
                 kept = True
-            for run in self.runs:
-                run.material = material
-                run.mark_entered(user)
-                run.save()
+            if self.run:
+                self.run.material = material
+                self.run.mark_entered(user)
+                self.run.save()
             for block in self.blocks:
                 block.series.material = material
                 block.save(user)  # SeriesForm.save(): its transaction is part of this one
@@ -823,7 +822,7 @@ class CompoundCards:
 
     TOTAL = "card-TOTAL"
     MAX = MAX_CARDS
-    NOTHING = "Fill in a card: a material, and at least one run or block of values."
+    NOTHING = "Fill in a card: a material, and a phase sequence or at least one block of values."
 
     def __init__(self, data, reference):
         self.data, self.reference, self.problems = data, reference, []
@@ -845,10 +844,10 @@ class CompoundCards:
         return CompoundCard(None, self.reference, TEMPLATE_INDEX)
 
     def phase_suggestions(self):
-        """The labels the runs' phase boxes suggest, for the page's <datalist>, as [(label, what
-        it is), ...]: each phase in the vocabulary's order by its code, with its name, then its
-        other labels, each saying the code it is stored as, so a run can be typed as the reference
-        prints it. The solids are left out: a run's solid has a box of its own."""
+        """The labels the phase sequences' boxes suggest, for the page's <datalist>, as [(label,
+        what it is), ...]: each phase in the vocabulary's order by its code, with its name, then its
+        other labels, each saying the code it is stored as, so a sequence can be typed as the
+        reference prints it. The solids are left out: a sequence's solid has a box of its own."""
         suggestions = []
         for phase in Phase.objects.exclude(code__in=SOLIDS):
             suggestions.append((phase.code, phase.name))
@@ -864,12 +863,12 @@ class CompoundCards:
             return False
         self.filled = [card for card in self.cards if card.is_filled()]
         read = [card for card in self.filled if card.is_valid()]  # the if runs for every card
-        # A material's runs and values belong on one card, so the later card is refused.
+        # A material's phase sequence and values belong on one card, so the later card is refused.
         first_seen = {}  # a card's material_key() -> the number of the first card with it
         for card in read:
             key = card.material_key()
             if key in first_seen:
-                card.problems.append(f"Same material as compound {first_seen[key]}: its runs and values belong on one card.")
+                card.problems.append(f"Same material as compound {first_seen[key]}: its phase sequence and values belong on one card.")
             else:
                 first_seen[key] = card.number
         bad = [str(card.number) for card in self.filled if card not in read or card.problems]
@@ -1364,8 +1363,9 @@ class ValueBlockForm(CurveForm):
         return super().curve_charts() if len(self.point_list) + len(self.problem_lines) > 1 else []
 
 
-# Room for two blocks on a card, for a page without JavaScript, as for runs.
-ValueBlockFormSet = forms.formset_factory(ValueBlockForm, formset=CardFormSet, extra=2, can_delete=True)
+# One block on a card to begin with. "+ Add a block of values" (cards.js) adds more, so without
+# JavaScript a card has room for one.
+ValueBlockFormSet = forms.formset_factory(ValueBlockForm, formset=CardFormSet, extra=1, can_delete=True)
 
 
 # A mixture from a reference: its components in FFDB, typed or pasted one per line, and the

@@ -7,7 +7,7 @@
 <p><a href="{% url 'repo:add_from_reference' reference.pk %}">Back to its Add data page</a></p>
 
 <section>
-  {# views.add_compound gives the cards, forms.CompoundCards, with what Check read of each card's runs. Each card shows what Check read. #}
+  {# views.add_compound gives the cards, forms.CompoundCards, with what Check read of each card's phase sequence. Each card shows what Check read. #}
   {% include "repo/_compound_cards.html" %}
   {% include "repo/_draw_dialog.html" %}
 </section>

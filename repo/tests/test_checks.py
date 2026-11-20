@@ -38,9 +38,9 @@ class ChecksTestCase(CardTestCase):
             name: reverse(f"repo:check_{name}", args=[self.article.pk]) + numbers for name, numbers in CHECKS.items()
         }
 
-    def ask(self, check, runs=(), **material):
-        """Send a card to the check for its material or for its runs, as checks.js sends it."""
-        return self.client.post(self.addresses[check], self.card_data(runs, **material))
+    def ask(self, check, run=None, **material):
+        """Send a card to the check for its material or for its phase sequence, as checks.js sends it."""
+        return self.client.post(self.addresses[check], self.card_data(run, **material))
 
     def ask_table(self, table, direction="summary"):
         return self.client.post(self.addresses["table"], self.table_data(table, direction))
@@ -54,7 +54,7 @@ class ChecksTestCase(CardTestCase):
 
     def everything(self):
         """A card, with a run and a block of values, and a table, so each check has something to read."""
-        return {**self.card_data([RM734_COOLING], [PS_BLOCK], smiles=RM734), **self.table_data(THREE_LINES)}
+        return {**self.card_data(RM734_COOLING, [PS_BLOCK], smiles=RM734), **self.table_data(THREE_LINES)}
 
     def ask_block(self, check, block):
         """Send a card for RM734 with block as its first block of values, to the check for what
@@ -133,7 +133,7 @@ class MaterialTests(ChecksTestCase):
 
         self.assertContains(answer, f'In FFDB as <a href="/material/{self.rm734.pk}/">{self.rm734.accession}</a>')
         self.assertContains(answer, "MB-1 will be kept as an alias.")
-        self.assertInHTML(answer.content.decode(), self.send([RM734_COOLING], smiles=RM734, name="MB-1").content.decode())
+        self.assertInHTML(answer.content.decode(), self.send(RM734_COOLING, smiles=RM734, name="MB-1").content.decode())
 
     def test_a_new_structure_is_drawn_before_its_label_is_given_and_the_label_is_asked_for(self):
         answer = self.ask("card_material", smiles=FIVE_CB)
@@ -165,37 +165,38 @@ class MaterialTests(ChecksTestCase):
                 self.assertContains(self.ask("card_material", **material), f"<li>{problem}</li>", html=True)
 
     def test_with_its_boxes_empty_the_answer_is_empty(self):
-        self.assertEqual(self.ask("card_material", [RM734_COOLING]).content, b"")
+        self.assertEqual(self.ask("card_material", RM734_COOLING).content, b"")
 
 
 class RunTests(ChecksTestCase):
-    def test_a_run_that_reads_shows_its_sequence_and_ribbon_and_the_answer_is_what_check_shows(self):
-        answer = self.ask("card_runs", [RM734_COOLING], material="RM734")
+    def test_a_sequence_that_reads_shows_its_ribbon_and_the_answer_is_what_check_shows(self):
+        answer = self.ask("card_runs", RM734_COOLING, material="RM734")
 
         self.assertContains(answer, "Iso 187.9 N 132.7 N<sub>F</sub> 70 Cr")
         self.assertContains(
             answer, 'aria-label="Iso 187.9 N 132.7 NF 70 Cr (°C), Cooling, 5 K/min, DSC, Mandle 2017, Chem. Eur. J."'
         )
-        self.assertInHTML(answer.content.decode(), self.send([RM734_COOLING], material="RM734").content.decode())
+        self.assertInHTML(answer.content.decode(), self.send(RM734_COOLING, material="RM734").content.decode())
 
-    def test_a_typo_gets_the_parsers_message_under_its_runs_number(self):
+    def test_a_typo_gets_the_parsers_message_and_no_ribbon(self):
         typo = run_fields("cooling", "Iso", ("187.9", "N"), ("132.7", "NFF"))
 
-        answer = self.ask("card_runs", [RM734_COOLING, typo], material="RM734")
+        answer = self.ask("card_runs", typo, material="RM734")
 
+        # No title before the message: the answer sits right under the card's one sequence.
         self.assertContains(
-            answer, "<li>Run 2: Unknown phase label: NFF. Use a label from the phase vocabulary, or add it there first. "
+            answer, "<li>Unknown phase label: NFF. Use a label from the phase vocabulary, or add it there first. "
             "The steps read as: Iso 187.9 N 132.7 NFF</li>",
             html=True,
         )
-        self.assertContains(answer, "Iso 187.9 N 132.7 N<sub>F</sub> 70 Cr")  # run 1 still reads
+        self.assertNotContains(answer, '<svg class="ribbon"')
 
-    def test_a_box_that_doesnt_read_is_named_with_its_run(self):
-        answer = self.ask("card_runs", [run_fields("cooling", "Iso", ("18o.9", "N"))], material="RM734")
+    def test_a_box_that_doesnt_read_is_named_by_its_label(self):
+        answer = self.ask("card_runs", run_fields("cooling", "Iso", ("18o.9", "N")), material="RM734")
 
-        self.assertContains(answer, "<li>Run 1, Transition into phase 2 (°C): Enter a number.</li>", html=True)
+        self.assertContains(answer, "<li>Transition into phase 2 (°C): Enter a number.</li>", html=True)
 
-    def test_runs_left_as_the_page_shows_them_give_an_empty_answer(self):
+    def test_a_sequence_left_as_the_page_shows_it_gives_an_empty_answer(self):
         self.assertEqual(self.ask("card_runs", material="RM734").content.strip(), b"")
 
 
@@ -307,7 +308,7 @@ class PageTests(ChecksTestCase):
     def test_both_card_pages_have_the_answer_boxes_the_parts_that_name_them_and_the_script(self):
         pages = {
             "Add data": self.client.get(self.add_page(self.article)),
-            "Check": self.send([RM734_COOLING], material="RM734"),
+            "Check": self.send(RM734_COOLING, material="RM734"),
         }
         for name, response in pages.items():
             response = visible(response)
@@ -317,7 +318,7 @@ class PageTests(ChecksTestCase):
                         response, f'<div id="{box}" aria-live="polite" data-check-url="{self.addresses[check]}">', count=1
                     )
                 self.assertContains(response, '<fieldset data-check="card-0-material-result">', count=1)
-                self.assertContains(response, 'data-check="card-0-runs-result"', count=2)  # each run
+                self.assertContains(response, 'data-check="card-0-runs-result"', count=1)
                 self.assertContains(response, '<script src="/static/repo/checks.js" defer></script>', html=True)
 
     def test_both_card_pages_have_each_blocks_boxes_and_answer_box(self):
@@ -325,19 +326,19 @@ class PageTests(ChecksTestCase):
             "Add data": self.client.get(self.add_page(self.article)),
             "Check": self.send(blocks=[PS_BLOCK], material="RM734"),
         }
+        # The & of the query is written &amp; in the page, as an & in HTML should be.
+        numbers = "?card=0&amp;block=0"  # the card's one block
+        boxes = reverse("repo:check_block_boxes", args=[self.article.pk]) + numbers
+        reading = reverse("repo:check_block", args=[self.article.pk]) + numbers
         for name, response in pages.items():
-            for i in range(2):  # the card's two blocks
-                with self.subTest(name, block=i):
-                    # The & of the query is written &amp; in the page, as an & in HTML should be.
-                    numbers = f"?card=0&amp;block={i}"
-                    boxes = reverse("repo:check_block_boxes", args=[self.article.pk]) + numbers
-                    reading = reverse("repo:check_block", args=[self.article.pk]) + numbers
-                    self.assertContains(response, f'data-check="card-0-block-{i}-reading"', count=1)
-                    self.assertContains(response, f'<div class="entry-form__row" data-boxes="card-0-block-{i}-boxes">', count=1)
-                    self.assertContains(response, f'<div id="card-0-block-{i}-boxes" data-boxes-url="{boxes}">', count=1)
-                    self.assertContains(
-                        response, f'<div id="card-0-block-{i}-reading" aria-live="polite" data-check-url="{reading}">', count=1
-                    )
+            response = visible(response)
+            with self.subTest(name):
+                self.assertContains(response, 'data-check="card-0-block-0-reading"', count=1)
+                self.assertContains(response, '<div class="entry-form__row" data-boxes="card-0-block-0-boxes">', count=1)
+                self.assertContains(response, f'<div id="card-0-block-0-boxes" data-boxes-url="{boxes}">', count=1)
+                self.assertContains(
+                    response, f'<div id="card-0-block-0-reading" aria-live="polite" data-check-url="{reading}">', count=1
+                )
 
     def test_the_add_data_page_has_the_tables_answer_box(self):
         response = self.client.get(self.add_page(self.article))

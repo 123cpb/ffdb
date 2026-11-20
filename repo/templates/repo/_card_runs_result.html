@@ -1,10 +1,10 @@
 {% comment %}
-What the server makes of a compound card's runs: each run that reads, as the material's page
-will show it, all on one axis. sequence_rows and axis come from views.sequence_ribbons(). The
-card shows it after its runs: Check fills it when the page comes back, and
+What the server makes of a compound card's phase sequence: if it reads, its ribbon, as the
+material's page will show it. sequence_rows and axis come from views.sequence_ribbons(). The
+card shows it after its sequence: Check fills it when the page comes back, and
 views.check_card_runs as the curator types.
 {% endcomment %}
 {% if sequence_rows %}
-<p>Nothing has been saved. Save adds the material and these runs, or nothing while anything on the card has a problem.</p>
+<p>Nothing has been saved. Save adds the material and this phase sequence, or nothing while anything on the card has a problem.</p>
 {% include "repo/_ribbon_rows.html" %}
 {% endif %}

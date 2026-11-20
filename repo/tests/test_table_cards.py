@@ -1,5 +1,5 @@
 """Make cards: a pasted compound table becomes compound cards, a card for each line, with its
-material and its sequence as the card's first run, ready for values. Nothing is made while a line
+material and its sequence as the card's phase sequence, ready for values. Nothing is made while a line
 has a problem. Without JavaScript the table's form brings the page back with the cards; cards.js
 asks views.make_cards for them instead and puts them in the page. Here the forms are posted as
 each would send them."""
@@ -21,7 +21,7 @@ from repo.tests.test_values import DIO
 
 # RM734's run as the card writes it and as boxes hold it: cooling, from Iso down to the solid.
 RM734_BOXES = {"phase_0": "Iso", "t_1": "187.9", "phase_1": "N", "t_2": "132.7", "phase_2": "NF", "solid": "Cr", "t_solid": "70"}
-# A cooling run of nine phases: one more than a card's run has steps.
+# A cooling run of nine phases: one more than a card's phase sequence has steps.
 NINE_PHASES = "Iso 100 N 90 SmA 80 SmC 70 SmB 60 SmE 50 SmX 40 NF 30 NTB"
 
 
@@ -81,8 +81,8 @@ class SequenceStepsTests(TestCase):
                 written = steps_text(direction, steps, boxes["solid"], boxes["t_solid"])
                 self.assertEqual(read_sequence(written, direction).transitions, read_sequence(text, direction).transitions)
 
-    def test_more_phases_than_a_cards_run_has_steps_are_refused(self):
-        with self.assertRaisesMessage(PhaseSequenceError, f"has 9 phases, not counting the solid, and a card's run has room for {RUN_PHASES}"):
+    def test_more_phases_than_a_cards_sequence_has_steps_are_refused(self):
+        with self.assertRaisesMessage(PhaseSequenceError, f"has 9 phases, not counting the solid, and a card's phase sequence has room for {RUN_PHASES}"):
             self.steps(NINE_PHASES, "cooling")
 
 
@@ -131,7 +131,7 @@ class MakeCardsTestCase(CardTestCase):
 
 
 class WithoutJavaScriptTests(MakeCardsTestCase):
-    def test_each_line_becomes_a_card_with_its_material_and_its_run(self):
+    def test_each_line_becomes_a_card_with_its_material_and_its_sequence(self):
         response = self.make(self.three_lines(), method="DSC", rate="5")
 
         cards = response.context["cards"]
@@ -141,19 +141,19 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
              for card in cards.cards],
             [(None, FIVE_CB, "5CB"), (self.rm734.accession, None, "RM734"), (None, DIO, "DIO")],
         )
-        # Each as Check shows it: the material found or new, and its run read, with nothing wrong.
+        # Each as Check shows it: the material found or new, and its sequence read, with nothing wrong.
         self.assertEqual([card.material_form.found for card in cards.cards], [None, self.rm734, self.aya])
         self.assertEqual(cards.cards[0].material_form.new.name, "5CB")
         self.assertEqual(
-            [[(run.sequence, run.direction, run.rate_k_per_min, run.method) for run in card.runs] for card in cards.cards],
+            [(card.run.sequence, card.run.direction, card.run.rate_k_per_min, card.run.method) for card in cards.cards],
             [
-                [("Cr 24 N 35.3 I", "summary", 5.0, "DSC")],
-                [("Cr 139.8 NF 132.7 N 187.9 I", "summary", 5.0, "DSC")],
-                [("Cr 68.8 NF 84.5 N 174 I", "summary", 5.0, "DSC")],
+                ("Cr 24 N 35.3 I", "summary", 5.0, "DSC"),
+                ("Cr 139.8 NF 132.7 N 187.9 I", "summary", 5.0, "DSC"),
+                ("Cr 68.8 NF 84.5 N 174 I", "summary", 5.0, "DSC"),
             ],
         )
         self.assertEqual([card.problems for card in cards.cards], [[], [], []])
-        self.assertTrue(all(card.sequence_rows for card in cards.cards))  # each run's ribbon
+        self.assertTrue(all(card.sequence_rows for card in cards.cards))  # each sequence's ribbon
         self.assertEqual(
             self.messages(response), ["Made 3 cards from the table: add their values, then Check and Save the cards."]
         )
@@ -183,7 +183,7 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence="K 139.8 NF 132.7 N 187.9 I")
         data = CompoundTableForm(self.table_data(self.three_lines()), reference=self.article).cards_data()
 
-        self.assertNotIn("card-1-run-0-direction", data)  # RM734's card: its material and label, but no run
+        self.assertNotIn("card-1-run-direction", data)  # RM734's card: its material and label, but no sequence
         self.assertEqual((data["card-1-material"], data["card-1-name"]), (self.rm734.accession, "RM734"))
 
         data.update({f"card-1-block-0-{name}": value for name, value in PS_BLOCK.items()})
@@ -192,13 +192,13 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(self.rm734.phase_sequences.count(), 1)  # not added again
         self.assertEqual(Series.objects.get().material, self.rm734)
 
-    def test_a_line_without_a_sequence_makes_a_card_with_no_run_yet(self):
+    def test_a_line_without_a_sequence_makes_a_card_with_no_sequence_yet(self):
         response = self.make(f"5CB\t{FIVE_CB}", direction="")
 
         [card] = response.context["cards"].cards
         self.assertEqual(card.material_form["smiles"].value(), FIVE_CB)
-        self.assertEqual(card.runs, [])
-        self.assertEqual(card.problems, ["Add at least one run or block of values."])
+        self.assertIsNone(card.run)
+        self.assertEqual(card.problems, ["Add a phase sequence or at least one block of values."])
 
     def test_a_table_with_a_bad_line_makes_no_cards_and_names_the_line(self):
         table = self.three_lines().replace("K 139.8 NF", "K 139.8 NFF")
@@ -222,7 +222,7 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(response.context["form"].errors["table"], [CompoundTableForm.NO_DIRECTION])
         self.assert_no_cards(response)
 
-    def test_a_sequence_a_cards_run_cant_hold_makes_no_cards(self):
+    def test_a_sequence_a_card_cant_hold_makes_no_cards(self):
         table = f"5CB\t{FIVE_CB}\t{NINE_PHASES}"
 
         response = self.make(table, direction="cooling")
@@ -230,7 +230,7 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(response.context["lines"][0].problem, "")
         self.assertEqual(
             response.context["cards_problems"][1:],
-            [f"Line 1: The sequence has 9 phases, not counting the solid, and a card's run has room for {RUN_PHASES}."],
+            [f"Line 1: The sequence has 9 phases, not counting the solid, and a card's phase sequence has room for {RUN_PHASES}."],
         )
         self.assert_no_cards(response)
 

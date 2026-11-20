@@ -1,19 +1,19 @@
-/* Adding and removing compound cards (_compound_cards.html), and the runs and blocks of values on
-   each card: "+ Add another compound", "+ Add a run" and "+ Add a block of values", and a Remove
-   on each. The buttons are hidden, so without JavaScript the page has one card with two runs and
-   two blocks, as the server sends it.
+/* Adding and removing compound cards (_compound_cards.html), and the blocks of values on each
+   card: "+ Add another compound" and "+ Add a block of values", and a Remove on each. A card has
+   one phase sequence, so there is nothing to add or remove there. The buttons are hidden, so
+   without JavaScript the page has one card with one block, as the server sends it.
 
-   A new card, run or block is a copy of an empty one the server put in a <template>, with the
+   A new card or block is a copy of an empty one the server put in a <template>, with the
    placeholders in it replaced: __card__ in a card's names by its index and __cardnumber__ in its
    heading by its number, the index + 1; __prefix__ (Django's) and __number__ the same way in a
-   run's or block's. The hidden count the server reads them by goes up by one: the page's
-   card-TOTAL, or the formset's TOTAL_FORMS.
+   block's. The hidden count the server reads them by goes up by one: the page's card-TOTAL, or
+   the formset's TOTAL_FORMS.
 
-   Remove hides what it removes, and sets its removed box (a card's) or DELETE box (a run's or
-   block's), which tells the server to skip it. It stays in the page: the server reads cards,
-   runs and blocks by index up to the count, so the others keep their indexes and their numbers.
+   Remove hides what it removes, and sets its removed box (a card's) or DELETE box (a block's),
+   which tells the server to skip it. It stays in the page: the server reads cards and blocks by
+   index up to the count, so the others keep their indexes and their numbers.
 
-   A new card, run or block is announced with a card-part-added event, which phase_steps.js and
+   A new card or block is announced with a card-part-added event, which phase_steps.js and
    draw.js listen for, to set it up as they set up those in the page when it loads. checks.js
    needs nothing: it listens on the whole page.
 
@@ -31,11 +31,11 @@ function fromTemplate(template, replacements) {
     html = html.replaceAll(placeholder, value);
   }
   const holder = document.createElement("div");
-  holder.innerHTML = html;  // the server's empty card, run or block: nothing typed is in it
+  holder.innerHTML = html;  // the server's empty card or block: nothing typed is in it
   return holder.firstElementChild;
 }
 
-// Show the buttons for adding and removing runs and blocks inside part.
+// Show the buttons for adding and removing blocks inside part.
 function showButtons(part) {
   part.querySelectorAll("[data-add-row], [data-remove-row]").forEach((button) => { button.hidden = false; });
 }
@@ -138,8 +138,8 @@ function setUpCards(list) {
   update();
 }
 
-// "+ Add a run" and "+ Add a block of values" on every card, those added later too. The button
-// names its formset's prefix, e.g. card-0-run, and the formset's list and template are named by it.
+// "+ Add a block of values" on every card, those added later too. The button names its formset's
+// prefix, e.g. card-0-block, and the formset's list and template are named by it.
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-add-row]");
   if (!button) return;
@@ -152,14 +152,14 @@ document.addEventListener("click", (event) => {
   added(row);
 });
 
-// Remove on every run and block.
+// Remove on every block.
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-remove-row]");
   if (!button) return;
   const row = button.closest("[data-row]");
   row.querySelector('[name$="-DELETE"]').value = "1";
   row.hidden = true;
-  // As typing does, so checks.js reads the card's runs again without this one.
+  // As typing does, so checks.js reads the card again without this block.
   row.dispatchEvent(new Event("input", { bubbles: true }));
   const list = row.parentElement;  // the formset's list, named prefix-list
   document.querySelector(`[data-add-row="${list.id.replace(/-list$/, "")}"]`).focus();

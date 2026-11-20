@@ -2,7 +2,8 @@
 One block of values on a compound card (card), forms.ValueBlockForm (as form), numbered by
 number, and by index from 0, as in its prefix, card-0-block-0: one line is a single value,
 several are a curve. A block left empty is skipped. Remove this block (cards.js) sets its DELETE
-box and hides it, as for a run (_run.html).
+box and hides it, and Check sends a removed block back hidden, so it stays in the page and the
+blocks after it keep their numbers.
 
 Its first three boxes say what the values are of and against. The boxes those need
 (_block_boxes.html) are in the form only once all three read. Without JavaScript they appear

@@ -127,11 +127,12 @@ class BlockBoxesTests(CardTestCase):
     def block(self, response, number=0):
         return self.card(response).block_forms[number]
 
-    def test_an_empty_card_has_two_blocks_with_no_boxes_for_a_choice_yet(self):
+    def test_an_empty_card_has_one_block_with_no_boxes_for_a_choice_yet(self):
         response = self.client.get(self.add_page(self.article))
 
-        self.assertContains(response, 'name="card-0-block-TOTAL_FORMS" value="2"')
-        self.assertContains(response, "<legend>Values 2</legend>", html=True)
+        self.assertContains(response, 'name="card-0-block-TOTAL_FORMS" value="1"')
+        self.assertContains(response, "<legend>Values 1</legend>", html=True)
+        self.assertNotContains(response, "<legend>Values 2</legend>", html=True)
         block = self.block(response)
         self.assertEqual(block.condition_fields(), [])
         self.assertNotIn("direction", block.fields)
@@ -171,7 +172,7 @@ class BlockBoxesTests(CardTestCase):
 
 class BlockSaveTests(CardTestCase):
     def test_save_adds_a_single_value_and_a_curve_and_rm734s_page_shows_them(self):
-        response = self.send([], "save", True, blocks=[DELTA_EPSILON, PS_BLOCK], material="RM734")
+        response = self.send(None, "save", True, blocks=[DELTA_EPSILON, PS_BLOCK], material="RM734")
 
         self.assertEqual(self.messages(response), [f"Saved 2 blocks of values for {self.rm734.accession} RM734."])
         value = Series.objects.get(property__code="dielectric-anisotropy")
@@ -188,9 +189,9 @@ class BlockSaveTests(CardTestCase):
         self.assertContains(page, 'aria-label="Δε against temperature, extrapolated values: 1 series')
 
     def test_a_run_and_a_block_save_together_and_an_empty_block_is_skipped(self):
-        response = self.send([RM734_COOLING], "save", True, blocks=[LENGTH], material="RM734")
+        response = self.send(RM734_COOLING, "save", True, blocks=[LENGTH], material="RM734")
 
-        self.assertEqual(self.messages(response), [f"Saved 1 run and 1 block of values for {self.rm734.accession} RM734."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734.accession} RM734."])
         point = Measurement.objects.get()
         self.assertEqual((point.series.variable.code, point.value, point.temperature_c, point.x), ("none", 2.4, None, None))
         self.assertEqual(PhaseSequence.objects.get().material, self.rm734)
@@ -198,7 +199,7 @@ class BlockSaveTests(CardTestCase):
     def test_a_limit_with_a_plus_or_minus_is_refused_and_nothing_is_saved(self):
         limit = {**DELTA_EPSILON, "points": "25, <5, 0.3"}
 
-        response = self.send([RM734_COOLING], "save", blocks=[PS_BLOCK, limit], material="RM734", name="MB-1")
+        response = self.send(RM734_COOLING, "save", blocks=[PS_BLOCK, limit], material="RM734", name="MB-1")
 
         self.assertContains(response, "Line 1: A limit has no ±: enter the limit itself as the value.")
         self.assertFalse(Series.objects.exists())
@@ -226,7 +227,7 @@ class BlockSaveTests(CardTestCase):
         }
         for case, (block, box, message) in cases.items():
             with self.subTest(case):
-                response = self.send([], "save", blocks=[block], material="RM734")
+                response = self.send(None, "save", blocks=[block], material="RM734")
 
                 self.assertIn(message, self.card(response).block_forms[0].errors[box])
                 self.assertFalse(Series.objects.exists())
@@ -238,7 +239,7 @@ class PointsAndRulesTests(CardTestCase):
 
     def send_block(self, button="check", block=PS_BLOCK, **boxes):
         """Post RM734's card with one block, block with boxes changed, and no runs."""
-        return self.send([], button, blocks=[{**block, **boxes}], material="RM734")
+        return self.send(None, button, blocks=[{**block, **boxes}], material="RM734")
 
     def errors(self, response, box="points"):
         return self.card(response).block_forms[0].errors.get(box, [])

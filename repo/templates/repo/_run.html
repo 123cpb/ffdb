@@ -1,19 +1,15 @@
 {% comment %}
-One run on a compound card (card), forms.RunForm (as form), numbered by number. Its phases are steps,
-hottest first: the top phase, then each phase below it with the temperature of the transition
-into it. The solid comes on its own, because a summary's melting point can lie above a phase
-seen only on cooling. Every step is in the page; the empty ones are skipped, and so is a run
-left empty. phase_steps.js shows only the steps in use, with "+ Add a phase" for the next and
-Remove on the last: both buttons are hidden, so without JavaScript every step is shown.
-
-Remove this run (cards.js) sets its DELETE box and hides it, and Check sends a removed run back
-hidden, so it stays in the page and the runs after it keep their numbers.
+A compound card's (card's) phase sequence, a summary or one run, forms.RunForm (as form). Its
+phases are steps, hottest first: the top phase, then each phase below it with the temperature of
+the transition into it. The solid comes on its own, because a summary's melting point can lie
+above a phase seen only on cooling. Every step is in the page; the empty ones are skipped, and
+so is a sequence left empty. phase_steps.js shows only the steps in use, with "+ Add a phase"
+for the next and Remove on the last: both buttons are hidden, so without JavaScript every step
+is shown.
 {% endcomment %}
-{# data-check: what the server makes of every run goes in one box after them (_compound_card.html), so they share an axis. #}
-<fieldset class="run" data-row data-phase-builder data-check="{{ card.prefix }}-runs-result"{% if form.DELETE.value %} hidden{% endif %}>
-  <legend>Run {{ number }}</legend>
-  {{ form.DELETE }}
-  <button type="button" class="secondary-button" data-remove-row aria-label="Remove run {{ number }}" hidden>Remove this run</button>
+{# data-check: what the server makes of the sequence goes in the box after it (_compound_card.html). #}
+<fieldset class="run" data-phase-builder data-check="{{ card.prefix }}-runs-result">
+  <legend>Phase sequence</legend>
   {# The parser's message, with the sequence the steps were written as. #}
   {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
   <div class="entry-form__row">

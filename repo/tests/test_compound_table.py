@@ -221,7 +221,7 @@ class LcrIdLineTests(CompoundTableTestCase):
 
         response = self.client.post(reverse("repo:add_compound", args=[self.article.pk]), {**cards, "save": ""}, follow=True)
 
-        self.assertEqual(self.messages(response), [f"Saved 1 run for {self.f7}."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence for {self.f7}."])
         [run] = self.f7.phase_sequences.all()
         self.assertEqual(
             (run.reference, run.direction, run.standard_sequence), (self.article, "cooling", "Iso 120 N 95 NF 40 Cr")
