@@ -13,8 +13,8 @@
       {# Each view sets nav, so the link to the section you are in is marked for screen readers and styled. #}
       <nav class="site-nav" aria-label="Main">
         <a href="{% url 'repo:materials' %}"{% if nav == "materials" %} aria-current="page"{% endif %}>Materials</a>
-        <a href="{% url 'repo:references' %}"{% if nav == "references" %} aria-current="page"{% endif %}>References</a>
         <a href="{% url 'repo:properties' %}"{% if nav == "properties" %} aria-current="page"{% endif %}>Properties</a>
+        <a href="{% url 'repo:references' %}"{% if nav == "references" %} aria-current="page"{% endif %}>References</a>
         {# perms and user come from the auth context processor in settings. Add data needs the permission its view checks. #}
         {% if perms.repo.add_reference %}<a href="{% url 'repo:add' %}"{% if nav == "add" %} aria-current="page"{% endif %}>Add data</a>{% endif %}
       </nav>
