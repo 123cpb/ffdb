@@ -3,11 +3,12 @@ each built from phase steps. Check shows what Save would add, saving nothing; Sa
 it, or nothing while anything on the card has a problem."""
 
 from django.contrib.auth.models import User
+from django.contrib.staticfiles import finders
 from django.test import SimpleTestCase
 from django.urls import reverse
 
 from repo import chem
-from repo.forms import RUN_PHASES, RunForm, steps_text
+from repo.forms import RUN_PHASES, CompoundCard, RunForm, steps_text
 from repo.models import Material, PhaseSequence, RetiredID
 from repo.tests.test_add_data import FIVE_CB, LOGIN, AddDataTestCase
 from repo.tests.test_values import RM734
@@ -278,3 +279,68 @@ class AccessTests(CardTestCase):
 
         self.assertEqual(self.send([RM734_COOLING], "save", material="RM734").status_code, 403)
         self.assertFalse(PhaseSequence.objects.exists())
+
+
+class PhaseBuilderAndDrawTests(CardTestCase):
+    """What Django can see of the phase builder and Draw on a card: the buttons, hidden until
+    the scripts show them, the suggestions and the scripts, on both pages a card is on. The
+    scripts themselves are checked in a browser."""
+
+    def pages(self):
+        """The Add data page, with an empty card, and the add-a-compound page, as Check shows it."""
+        return {
+            "Add data": self.client.get(self.add_page(self.article)),
+            "Check": self.send([RM734_COOLING], material="RM734"),
+        }
+
+    def test_both_pages_have_the_cards_draw_button_the_editors_dialog_and_the_scripts(self):
+        for name, response in self.pages().items():
+            with self.subTest(name):
+                self.assertContains(
+                    response,
+                    '<button type="button" class="secondary-button card-draw" data-draw data-smiles="id_card-smiles" '
+                    "hidden>Draw the structure</button>",
+                    html=True,
+                )
+                self.assertContains(response, '<dialog class="draw-dialog" id="draw-dialog"', count=1)
+                self.assertContains(response, '<div class="entry-form__field" data-draw-label>')
+                self.assertContains(response, '<script src="/static/repo/draw.js" defer></script>', html=True)
+                self.assertContains(response, '<script src="/static/repo/phase_steps.js" defer></script>', html=True)
+
+    def test_each_run_has_add_a_phase_and_remove_on_each_step_after_the_second_all_hidden(self):
+        for name, response in self.pages().items():
+            with self.subTest(name):
+                self.assertContains(response, "data-phase-builder", count=2)  # one for each run
+                self.assertContains(response, "<li class=\"entry-form__row\" data-phase-step>", count=2 * RUN_PHASES)
+                self.assertContains(
+                    response,
+                    '<button type="button" class="secondary-button phase-steps__add" data-add-phase hidden>'
+                    "+ Add a phase</button>",
+                    count=2, html=True,
+                )
+                self.assertContains(response, "data-remove-phase", count=2 * (RUN_PHASES - 2))
+                self.assertContains(response, 'aria-label="Remove phase 3"', count=2)
+                self.assertNotContains(response, 'aria-label="Remove phase 2"')
+
+    def test_the_phase_boxes_suggest_the_vocabulary_without_the_solids(self):
+        for name, response in self.pages().items():
+            with self.subTest(name):
+                self.assertContains(response, 'list="phase-labels"', count=2 * RUN_PHASES)
+                self.assertContains(response, '<datalist id="phase-labels">', count=1)
+                self.assertContains(response, '<option value="NF">Ferroelectric nematic</option>', html=True)
+                self.assertContains(response, '<option value="N_F">stored as NF</option>', html=True)
+                self.assertNotContains(response, '<option value="K">')
+
+    def test_suggestions_are_each_phase_by_its_code_then_its_other_labels(self):
+        suggestions = CompoundCard(None, self.article).phase_suggestions()
+
+        self.assertEqual(
+            suggestions[:4],
+            [("Iso", "Isotropic liquid"), ("I", "stored as Iso"), ("IL", "stored as Iso"), ("N", "Nematic")],
+        )
+        labels = {label for label, _ in suggestions}
+        self.assertFalse(labels & {"Cr", "K", "X", "Cry", "g", "glass", "Tg"})
+
+    def test_the_phase_builders_script_is_in_the_static_files(self):
+        # {% static %} writes the address whether or not the file is there, so this checks it is.
+        self.assertTrue(finders.find("repo/phase_steps.js"))

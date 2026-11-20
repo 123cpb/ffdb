@@ -357,6 +357,9 @@ class CompoundTableForm(forms.Form):
 # prototype, whose note says the longest run in the NF list has six above the solid.
 RUN_PHASES = 8
 LABEL_LENGTH = 30
+# The id of the card's <datalist> of phase labels. A phase box's list attribute names it, and
+# the browser then offers the labels as the curator types, while anything can still be typed.
+PHASE_LIST = "phase-labels"
 
 
 def steps_text(direction, steps, solid="", t_solid=""):
@@ -405,7 +408,7 @@ class RunForm(forms.Form):
     def __init__(self, *args, reference, **kwargs):
         super().__init__(*args, **kwargs)
         self.reference = reference
-        typed = {"autocomplete": "off", "spellcheck": "false"}
+        typed = {"autocomplete": "off", "spellcheck": "false", "list": PHASE_LIST}
         # The steps: phase_0, the top phase, then t_1 and phase_1, t_2 and phase_2, and so on.
         # Iso to begin with, because most runs start from the isotropic liquid.
         self.fields["phase_0"] = forms.CharField(
@@ -564,6 +567,17 @@ class CompoundCard:
         self.material_form = CardMaterialForm(data, prefix="card")
         self.run_forms = RunFormSet(data, prefix="run", form_kwargs={"reference": reference})
         self.runs, self.ribbon_data, self.problems = [], [], []  # set by is_valid()
+
+    def phase_suggestions(self):
+        """The labels its runs' phase boxes suggest, for the card's <datalist>, as [(label, what it
+        is), ...]: each phase in the vocabulary's order by its code, with its name, then its other
+        labels, each saying the code it is stored as, so a run can be typed as the reference prints
+        it. The solids are left out: a run's solid has a box of its own."""
+        suggestions = []
+        for phase in Phase.objects.exclude(code__in=SOLIDS):
+            suggestions.append((phase.code, phase.name))
+            suggestions += [(label, f"stored as {phase.code}") for label in phase.synonym_list()]
+        return suggestions
 
     def is_valid(self):
         """Whether Save can add everything on the card. Every part is checked, so each shows its

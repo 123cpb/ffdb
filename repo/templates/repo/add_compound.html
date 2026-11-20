@@ -1,4 +1,5 @@
 {% extends "repo/base.html" %}
+{% load static %}
 {% block title %}Add a compound from {{ reference.label }}{% endblock %}
 {% block content %}
 <p class="reference-kind">{{ reference.get_kind_display }}</p>
@@ -8,6 +9,7 @@
 <section>
   {# views.add_compound gives the card, forms.CompoundCard. #}
   {% include "repo/_compound_card.html" %}
+  {% include "repo/_draw_dialog.html" %}
 </section>
 
 {# What Check read: the material, once it is found or read, and each run that reads. #}
@@ -45,4 +47,8 @@
 </section>
 {% endif %}
 {% endwith %}
+
+{# As on the Add data page: the card's Draw button and its phase steps. #}
+<script src="{% static 'repo/draw.js' %}" defer></script>
+<script src="{% static 'repo/phase_steps.js' %}" defer></script>
 {% endblock %}

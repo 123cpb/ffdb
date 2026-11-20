@@ -15,6 +15,10 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
+/* The browser hides an element with the hidden attribute by giving it display: none, but any
+   display set here, such as an entry-form__row's flex, would win and show it. This keeps hidden
+   hidden: the scripts' buttons, a card's phase steps and the dialog's label box rely on it. */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -72,6 +76,10 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .entry-form .run { padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 6px; }
 .phase-steps { list-style: none; margin: 0 0 8px; padding: 0; }
 .phase-steps .entry-form__row { margin-bottom: 4px; }
+/* phase_steps.js's buttons: Remove level with the boxes beside it, not with their labels, and
+   "+ Add a phase" clear of the solid below. The card's Draw button clear of the label below. */
+.phase-steps__remove { align-self: end; }
+.phase-steps__add, .card-draw { margin-bottom: 12px; }
 /* What a card's Check found: the drawing beside the material it is. */
 .card-material { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
 .card-material svg { display: block; max-width: 100%; height: auto; }

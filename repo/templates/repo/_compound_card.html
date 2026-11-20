@@ -1,7 +1,8 @@
 {% comment %}
 A compound card, forms.CompoundCard (as card): its material, then its runs. It posts to
 views.add_compound, which shows what Check read. A reference's Add data page and the
-add-a-compound page both include it.
+add-a-compound page both include it, with the editor's dialog (_draw_dialog.html) and the
+scripts for its Draw button (draw.js) and its phase steps (phase_steps.js).
 {% endcomment %}
 <form method="post" action="{% url 'repo:add_compound' reference.pk %}" class="entry-form entry-form--wide">
   {% csrf_token %}
@@ -15,6 +16,9 @@ add-a-compound page both include it.
       {% include "repo/_entry_field.html" with field=form.material %}
       {% include "repo/_entry_field.html" with field=form.smiles %}
     </div>
+    {# draw.js shows this button and opens the editor's dialog (_draw_dialog.html). hidden: without JavaScript it is never shown. #}
+    {# data-smiles is the id of the box "Use this structure" fills, and the editor opens with what that box holds. #}
+    <button type="button" class="secondary-button card-draw" data-draw data-smiles="{{ form.smiles.id_for_label }}" hidden>Draw the structure</button>
     {% include "repo/_entry_field.html" with field=form.name %}
   </fieldset>
   {% endwith %}
@@ -22,6 +26,10 @@ add-a-compound page both include it.
   {{ card.run_forms.management_form }}
   {% if card.run_forms.non_form_errors %}<p class="form-error">{{ card.run_forms.non_form_errors|join:" " }}</p>{% endif %}
   {% for form in card.run_forms %}{% include "repo/_run.html" with number=forloop.counter %}{% endfor %}
+  {# The phase boxes' suggestions: their list attribute names this id (forms.PHASE_LIST). Plain HTML, so it works without JavaScript. #}
+  <datalist id="phase-labels">
+    {% for label, description in card.phase_suggestions %}<option value="{{ label }}">{{ description }}</option>{% endfor %}
+  </datalist>
   {# The button's name is sent with the form, so the view can tell Save from Check. #}
   <div class="entry-form__buttons">
     <button type="submit" name="check">Check</button>

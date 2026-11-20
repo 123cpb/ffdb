@@ -1,0 +1,26 @@
+{% comment %}
+The structure editor's dialog, one for the page, which every Draw button opens (draw.js): the
+compound table's and the compound card's. A closed dialog isn't shown, so without JavaScript
+the page is as before. Include it outside any form: a form can't hold another, and nothing here
+is sent. The label box has no name for the same reason. A reference's Add data page and the
+add-a-compound page include it.
+{% endcomment %}
+{% load static %}
+{# draw.js puts Ketcher's page, data-src, in the empty box when Draw is first pressed. #}
+{# entry-form is on the div, not the dialog: its display: grid would show the dialog while closed. #}
+<dialog class="draw-dialog" id="draw-dialog" aria-labelledby="draw-dialog-title">
+  <div class="entry-form draw-dialog__body">
+    <h2 id="draw-dialog-title">Draw a compound</h2>
+    {# Only the table's Draw shows this: a card has a label box of its own. #}
+    <div class="entry-form__field" data-draw-label>
+      <label for="draw-label">Label, as the reference prints it</label>
+      <input type="text" id="draw-label" autocomplete="off" spellcheck="false">
+    </div>
+    <p class="draw-dialog__status" role="status"></p>
+    <div class="draw-dialog__editor" data-src="{% static 'repo/ketcher/index.html' %}"></div>
+    <div class="entry-form__buttons">
+      <button type="button" data-use>Use this structure</button>
+      <button type="button" class="secondary-button" data-cancel>Cancel</button>
+    </div>
+  </div>
+</dialog>
