@@ -1,0 +1,35 @@
+{% comment %}
+The compound cards of one page, forms.CompoundCards (as cards), sent as one form to
+views.add_compound: Check and Save cover every card. Each card is _compound_card.html. A
+reference's Add data page and the add-a-compound page both include it, with the editor's dialog
+(_draw_dialog.html) and the scripts: cards.js adds and removes cards, runs and blocks, and
+draw.js, phase_steps.js and checks.js work on each card, as on the first.
+
+Without JavaScript the page has one card with two runs and two blocks, and the buttons for adding
+and removing are never shown.
+{% endcomment %}
+<form method="post" action="{% url 'repo:add_compound' reference.pk %}" class="entry-form entry-form--wide">
+  {% csrf_token %}
+  {% for problem in cards.problems %}<p class="form-error">{{ problem }}</p>{% endfor %}
+  {# How many cards the page has, removed ones included, so the server reads each by its index. cards.js adds one for each card it adds, up to data-max. #}
+  <input type="hidden" name="{{ cards.TOTAL }}" value="{{ cards.total }}" data-max="{{ cards.MAX }}">
+  <div id="cards">
+    {% for card in cards.cards %}
+    {# A removed card is sent back as its removed box alone: it stays removed, and keeps its index. #}
+    {% if card.removed %}<input type="hidden" name="{{ card.prefix }}-removed" value="1">
+    {% else %}{% include "repo/_compound_card.html" %}{% endif %}
+    {% endfor %}
+  </div>
+  {# The empty card cards.js copies for "+ Add another compound". A template's content isn't shown or sent. #}
+  <template id="card-template">{% include "repo/_compound_card.html" with card=cards.template_card %}</template>
+  <button type="button" class="secondary-button" data-add-card hidden>+ Add another compound</button>
+  {# The phase boxes' suggestions, for every card: their list attribute names this id (forms.PHASE_LIST). Plain HTML, so it works without JavaScript. #}
+  <datalist id="phase-labels">
+    {% for label, description in cards.phase_suggestions %}<option value="{{ label }}">{{ description }}</option>{% endfor %}
+  </datalist>
+  {# The button's name is sent with the form, so the view can tell Save from Check. #}
+  <div class="entry-form__buttons">
+    <button type="submit" name="check">Check</button>
+    <button type="submit" name="save">Save</button>
+  </div>
+</form>

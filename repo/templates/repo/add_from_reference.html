@@ -14,10 +14,11 @@
 <p>Add this reference's compounds, their phase sequences, its mixtures, and its property values and curves here.</p>
 
 <section>
-  <h2>Add a compound</h2>
-  <p>One compound and its runs, each built from its phases, hottest first. Check shows what Save would add: the
-  compound, and each run's sequence and ribbon. Save adds all of it, or nothing while anything has a problem.</p>
-  {% include "repo/_compound_card.html" %}
+  <h2>Add compounds on cards</h2>
+  <p>A card for each compound, with its runs, each built from its phases, hottest first, and its values. Check shows
+  what Save would add: each compound, and each run's sequence and ribbon. Save adds every card, or nothing while any
+  card has a problem.</p>
+  {% include "repo/_compound_cards.html" %}
 </section>
 
 <section>
@@ -45,7 +46,7 @@
     </div>
   </form>
 
-  {# The editor's dialog, for this table's Draw button and the card's above. #}
+  {# The editor's dialog, for this table's Draw button and the cards' above. #}
   {% include "repo/_draw_dialog.html" %}
 
   {# What the server makes of the table (_table_lines.html): Check fills it when the page comes back, and checks.js as the curator types or pastes. #}
@@ -96,8 +97,9 @@
 
 {% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
 
-{# The Draw buttons' script, the card's phase steps' and the checks as the curator types. defer: they run once the page is read, so what they set up is there. #}
+{# The Draw buttons' script, the cards' phase steps', the checks as the curator types and adding and removing cards. defer: they run once the page is read, so what they set up is there. #}
 <script src="{% static 'repo/draw.js' %}" defer></script>
 <script src="{% static 'repo/phase_steps.js' %}" defer></script>
 <script src="{% static 'repo/checks.js' %}" defer></script>
+<script src="{% static 'repo/cards.js' %}" defer></script>
 {% endblock %}

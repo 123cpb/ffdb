@@ -6,7 +6,7 @@
      has its own label box, so the dialog's is hidden, and the editor opens with the box's
      SMILES, if it has one, so it can be changed by drawing.
    There is one editor for the page, loaded only when Draw is first pressed, because it is about
-   30 MB. Ketcher is served from FFDB's own static files, so this page may reach into its frame:
+   30 MB. A card cards.js adds later has its Draw button set up when cards.js announces it. Ketcher is served from FFDB's own static files, so this page may reach into its frame:
    browsers allow that only within one site. Without JavaScript, or in a browser without
    <dialog>, the buttons stay hidden and the table and the SMILES are typed as before. */
 
@@ -29,10 +29,9 @@ const SAY = {
 };
 
 function setUpDrawing() {
-  const drawButtons = document.querySelectorAll("[data-draw]");
   const dialog = document.getElementById("draw-dialog");
-  // No buttons: not an Add data page. No showModal: a browser too old for <dialog>.
-  if (!drawButtons.length || !dialog || !dialog.showModal) return;
+  // No dialog: not an Add data page. No showModal: a browser too old for <dialog>.
+  if (!dialog || !dialog.showModal) return;
 
   const labelField = dialog.querySelector("[data-draw-label]");
   const label = dialog.querySelector("#draw-label");
@@ -147,9 +146,15 @@ function setUpDrawing() {
 
   dialog.querySelector("[data-cancel]").addEventListener("click", () => dialog.close());
 
-  drawButtons.forEach((button) => {
+  function setUpButton(button) {
     button.addEventListener("click", () => openEditor(button));
     button.hidden = false;
+  }
+
+  document.querySelectorAll("[data-draw]").forEach(setUpButton);
+  // A card cards.js adds later: event.target is the card, or a run or block, which has no button.
+  document.addEventListener("card-part-added", (event) => {
+    event.target.querySelectorAll("[data-draw]").forEach(setUpButton);
   });
 }
 

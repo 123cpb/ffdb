@@ -28,10 +28,12 @@ urlpatterns = [
     path("add/reference/<int:pk>/curve/", views.add_curve, name="add_curve"),
     path("add/reference/<int:pk>/mixture/", views.add_mixture, name="add_mixture"),
     # The checks as the curator types: each reads one part of a form and sends back HTML (POST only).
+    # A card's take its index from 0 after the address, e.g. material/?card=2.
     path("add/reference/<int:pk>/check/material/", views.check_card_material, name="check_card_material"),
     path("add/reference/<int:pk>/check/runs/", views.check_card_runs, name="check_card_runs"),
     path("add/reference/<int:pk>/check/table/", views.check_table, name="check_table"),
-    # A card's block of values, by its number from 0: what it reads as, and the boxes its choice needs.
-    path("add/reference/<int:pk>/check/block/<int:index>/", views.check_block, name="check_block"),
-    path("add/reference/<int:pk>/check/block/<int:index>/boxes/", views.check_block_boxes, name="check_block_boxes"),
+    # A card's block of values, by the card's index and its own, e.g. block/?card=2&block=0: what
+    # it reads as, and the boxes its choice needs.
+    path("add/reference/<int:pk>/check/block/", views.check_block, name="check_block"),
+    path("add/reference/<int:pk>/check/block/boxes/", views.check_block_boxes, name="check_block_boxes"),
 ]

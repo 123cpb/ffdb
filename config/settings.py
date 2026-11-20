@@ -37,6 +37,22 @@ ALLOWED_HOSTS = [h for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h]
 CROSSREF_MAILTO = os.environ.get("CROSSREF_MAILTO", "")
 
 
+# How much one request may send. Both limits apply to every request, logged in or not, because
+# Django reads a form's boxes for its CSRF check before any view asks for a login, so they are
+# no higher than the largest page FFDB has needs: Add data's compound cards (forms.CompoundCards).
+# Over either limit, Django answers with a bare error page, and what the curator typed is lost.
+# A web server in front of Django can have a lower limit of its own: look at it when FFDB is hosted.
+#
+# A card sends about 80 boxes with its two runs and two blocks of values, empty ones included,
+# so a page of 100 cards sends about 8,000. Django's default of 1,000 refuses about the
+# thirteenth card. This allows 100 cards of 200 boxes each, such as five runs and five blocks on
+# every card. The prototype had the same.
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 20_000
+# A page of 100 empty cards is about 0.2 MB, and a curve of the most lines a block takes
+# (forms.MAX_CURVE_POINTS, 5,000) about 0.15 MB. Django's default of 2.5 MB allows about 15 such
+# curves on a page; this allows about 65. The prototype had 20 MB.
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
+
 # Application definition
 
 INSTALLED_APPS = [

@@ -481,8 +481,27 @@ class RunForm(forms.Form):
         return cleaned
 
 
-# Room for two runs on a card, for a page without JavaScript.
-RunFormSet = forms.formset_factory(RunForm, extra=2)
+class CardFormSet(forms.BaseFormSet):
+    """A card's runs, or its blocks of values. Each form has Django's DELETE box (can_delete), as
+    a hidden box: Remove (cards.js) sets it and hides the form, but keeps it in the page, because
+    Django reads the forms by number up to TOTAL_FORMS, and a form missing from the page would
+    read as one changed. Django skips a removed form's problems."""
+
+    deletion_widget = forms.HiddenInput
+
+    def removed(self, form):
+        """Whether Remove set form's DELETE box, read as its field reads it."""
+        return self.can_delete and form.fields[forms.formsets.DELETION_FIELD_NAME].clean(
+            form[forms.formsets.DELETION_FIELD_NAME].data
+        )
+
+    def kept(self):
+        """The forms filled in and not removed. Django doesn't check a form left as it was."""
+        return [form for form in self if form.has_changed() and not self.removed(form)]
+
+
+# Room for two runs on a card, for a page without JavaScript. cards.js adds more.
+RunFormSet = forms.formset_factory(RunForm, formset=CardFormSet, extra=2, can_delete=True)
 
 
 class CardMaterialForm(forms.Form):
@@ -496,6 +515,8 @@ class CardMaterialForm(forms.Form):
     in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be kept.
     A SMILES that reads but isn't in FFDB also gives canonical_smiles, for the drawing, and the
     stereo_warning, even when something else is wrong, such as the label not given yet."""
+
+    NO_MATERIAL = "Give the LCR ID or name of a material in FFDB, or the SMILES of a new compound."
 
     material = forms.CharField(
         label="In FFDB: LCR ID or name", required=False, max_length=NAME_LENGTH,
@@ -524,7 +545,7 @@ class CardMaterialForm(forms.Form):
         if text and smiles:
             raise ValidationError("Give an LCR ID or name, or a SMILES, not both.")
         if not (text or smiles):
-            raise ValidationError("Give the LCR ID or name of a material in FFDB, or the SMILES of a new compound.")
+            raise ValidationError(self.NO_MATERIAL)
         if text:
             self.found, problem = find_material(text, "Check it, or give the SMILES of a new compound.")
             if problem:
@@ -565,48 +586,78 @@ class CardMaterialForm(forms.Form):
         return inline_drawing(self.canonical_smiles)
 
 
+# Several compound cards on one page, sent as one form. The most cards a page can have, as in
+# the prototype, counting removed ones: the server reads cards by number up to the count.
+MAX_CARDS = 100
+# The index of the empty card cards.js copies to add one: it replaces this, in its names, with the
+# new card's index.
+TEMPLATE_INDEX = "__card__"
+
+
 class CompoundCard:
     """One compound card: its material (CardMaterialForm), its runs (RunFormSet) and its blocks
-    of values (ValueBlockFormSet), sent as one form. Each part's names start with its prefix:
-    card-material, run-0-direction, block-0-property. Pass the data sent, or None for an empty
-    card, and the reference the data is from."""
+    of values (ValueBlockFormSet). Each part's names start with the card's prefix, card- and its
+    index from 0: card-0-material, card-0-run-0-direction, card-0-block-0-property. Its number,
+    in its heading and its problems, is its index + 1, and never changes: a card removed before
+    it leaves a gap. Pass the data sent, or None for an empty card, the reference the data is from
+    and the card's index, or TEMPLATE_INDEX for the empty card cards.js copies.
 
-    def __init__(self, data, reference):
-        self.material_form = CardMaterialForm(data, prefix="card")
-        self.run_forms = RunFormSet(data, prefix="run", form_kwargs={"reference": reference})
-        self.block_forms = ValueBlockFormSet(data, prefix="block", form_kwargs={"reference": reference})
+    Remove (cards.js) sets its removed box, card-0-removed, and hides it. A removed card is never
+    checked or saved."""
+
+    def __init__(self, data, reference, index=0):
+        self.index, self.prefix = index, f"card-{index}"
+        # cards.js puts the number in the copy too, as it can't be worked out here.
+        self.number = "__cardnumber__" if index == TEMPLATE_INDEX else index + 1
+        self.removed = data is not None and data.get(f"{self.prefix}-removed") == "1"
+        # empty_permitted: as for a formset's forms, Django doesn't check it while it is left as
+        # it was, so an empty card shows no problems. is_valid() asks for it on a card filled in.
+        # Django asks for use_required_attribute=False with it; none of its boxes is required.
+        self.material_form = CardMaterialForm(
+            data, prefix=self.prefix, empty_permitted=True, use_required_attribute=False
+        )
+        kwargs = {"reference": reference}
+        self.run_forms = RunFormSet(data, prefix=f"{self.prefix}-run", form_kwargs=kwargs)
+        self.block_forms = ValueBlockFormSet(data, prefix=f"{self.prefix}-block", form_kwargs=kwargs)
         self.runs, self.ribbon_data, self.blocks, self.problems = [], [], [], []  # set by is_valid()
 
-    def phase_suggestions(self):
-        """The labels its runs' phase boxes suggest, for the card's <datalist>, as [(label, what it
-        is), ...]: each phase in the vocabulary's order by its code, with its name, then its other
-        labels, each saying the code it is stored as, so a run can be typed as the reference prints
-        it. The solids are left out: a run's solid has a box of its own."""
-        suggestions = []
-        for phase in Phase.objects.exclude(code__in=SOLIDS):
-            suggestions.append((phase.code, phase.name))
-            suggestions += [(label, f"stored as {phase.code}") for label in phase.synonym_list()]
-        return suggestions
+    def is_filled(self):
+        """Whether anything is typed on the card: its material, or a run or block of values not
+        removed. Save ignores a card left empty, and doesn't check it, so it shows no problems."""
+        if self.removed:
+            return False
+        return self.material_form.has_changed() or bool(self.run_forms.kept() or self.block_forms.kept())
 
     def is_valid(self):
         """Whether Save can add everything on the card. Every part is checked, so each shows its
         own problems, and the runs that read are kept in runs, with what their ribbons are drawn
         from in ribbon_data, for Check to show even when something else has a problem. blocks
-        are the blocks of values filled in: the formset skips the others."""
+        are the blocks of values filled in. Runs and blocks left empty or removed are skipped."""
         parts = [self.material_form, self.run_forms, self.block_forms]
         valid = all([part.is_valid() for part in parts])  # a list: every part is checked
-        read = [form for form in self.run_forms if form.run is not None]
+        if not self.material_form.has_changed():
+            self.material_form.add_error(None, CardMaterialForm.NO_MATERIAL)
+            valid = False
+        read = [form for form in self.run_forms.kept() if form.run is not None]
         self.runs, self.ribbon_data = [form.run for form in read], [form.ribbon for form in read]
-        self.blocks = [form for form in self.block_forms if form.has_changed()]
+        self.blocks = self.block_forms.kept()
         self.problems = ["Add at least one run or block of values."] if valid and not (self.runs or self.blocks) else []
         return valid and not self.problems
+
+    def material_key(self):
+        """What makes two cards the same material, once the card is valid: the primary key of
+        the material in FFDB, or a new compound's InChIKey, which its check by the model's rules
+        filled in. A pk is a number and an InChIKey is text, so the two can never be mistaken for
+        each other, as in read_lines()."""
+        form = self.material_form
+        return form.found.pk if form.found is not None else form.new.inchikey
 
     def save(self, user):
         """Add everything on the card in one transaction, so a failure partway keeps none of it:
         a new compound, named by its label, or the label as an alias of the material in FFDB, and
-        then each run and each block of values, recorded as entered by user. Call it only on a
-        valid card. Returns (the material, whether it was added, whether the label was kept as
-        an alias)."""
+        then each run and each block of values, recorded as entered by user. Inside the page's
+        transaction (CompoundCards.save()) it is part of that one. Call it only on a valid card.
+        Returns (the material, whether it was added, whether the label was kept as an alias)."""
         form = self.material_form
         name = form.cleaned_data["name"]
         with transaction.atomic():
@@ -625,6 +676,79 @@ class CompoundCard:
                 block.series.material = material
                 block.save(user)  # SeriesForm.save(): its transaction is part of this one
         return material, added, kept
+
+
+class CompoundCards:
+    """The compound cards of one page, sent as one form, with one Save for all of them. The
+    hidden box TOTAL says how many cards the page has, removed ones included, so each is read by
+    its index; cards.js adds one for each card it adds, up to MAX. Pass the data sent, or None for
+    a page of one empty card, and the reference the data is from."""
+
+    TOTAL = "card-TOTAL"
+    MAX = MAX_CARDS
+    NOTHING = "Fill in a card: a material, and at least one run or block of values."
+
+    def __init__(self, data, reference):
+        self.data, self.reference, self.problems = data, reference, []
+        total = 1
+        if data is not None:
+            try:
+                total = int(data.get(self.TOTAL, 1))
+            except ValueError:
+                pass  # not a number: only a page changed by hand sends one, so read one card
+            if total > self.MAX:
+                self.problems.append(f"A page can have at most {self.MAX} cards, and this one has {total}.")
+                total = self.MAX
+        self.total = max(total, 1)
+        self.cards = [CompoundCard(data, reference, index) for index in range(self.total)]
+        self.filled = []  # set by is_valid()
+
+    def template_card(self):
+        """The empty card cards.js copies to add one, for the page's <template>."""
+        return CompoundCard(None, self.reference, TEMPLATE_INDEX)
+
+    def phase_suggestions(self):
+        """The labels the runs' phase boxes suggest, for the page's <datalist>, as [(label, what
+        it is), ...]: each phase in the vocabulary's order by its code, with its name, then its
+        other labels, each saying the code it is stored as, so a run can be typed as the reference
+        prints it. The solids are left out: a run's solid has a box of its own."""
+        suggestions = []
+        for phase in Phase.objects.exclude(code__in=SOLIDS):
+            suggestions.append((phase.code, phase.name))
+            suggestions += [(label, f"stored as {phase.code}") for label in phase.synonym_list()]
+        return suggestions
+
+    def is_valid(self):
+        """Whether Save can add every card filled in: each reads, no two are the same material,
+        and there is at least one. Cards left empty or removed are ignored. Every card filled in
+        is checked, so each shows its own problems, and the line above the cards names those
+        with one. A page not sent is not valid, and says nothing."""
+        if self.data is None:
+            return False
+        self.filled = [card for card in self.cards if card.is_filled()]
+        read = [card for card in self.filled if card.is_valid()]  # the if runs for every card
+        # A material's runs and values belong on one card, so the later card is refused.
+        first_seen = {}  # a card's material_key() -> the number of the first card with it
+        for card in read:
+            key = card.material_key()
+            if key in first_seen:
+                card.problems.append(f"Same material as compound {first_seen[key]}: its runs and values belong on one card.")
+            else:
+                first_seen[key] = card.number
+        bad = [str(card.number) for card in self.filled if card not in read or card.problems]
+        if not self.filled:
+            self.problems.append(self.NOTHING)
+        elif bad:
+            s = "s" if len(bad) > 1 else ""
+            self.problems.append(f"Nothing has been saved: see the problems on compound{s} {', '.join(bad)}.")
+        return not self.problems
+
+    def save(self, user):
+        """Add every card filled in, in one transaction, so a problem on any card keeps all of
+        them out of FFDB. Call it only once is_valid() is true. Returns each card with what its
+        save() returns: [(card, material, added, kept), ...]."""
+        with transaction.atomic():
+            return [(card, *card.save(user)) for card in self.filled]
 
 
 # Adding a single value or a curve takes two short forms. The first says what the values are
@@ -1227,7 +1351,7 @@ class ValueBlockForm(CurveForm):
 
 
 # Room for two blocks on a card, for a page without JavaScript, as for runs.
-ValueBlockFormSet = forms.formset_factory(ValueBlockForm, extra=2)
+ValueBlockFormSet = forms.formset_factory(ValueBlockForm, formset=CardFormSet, extra=2, can_delete=True)
 
 
 # A mixture from a reference: its components in FFDB, typed or pasted one per line, and the

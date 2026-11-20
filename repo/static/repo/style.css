@@ -72,6 +72,11 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .entry-form__field { display: grid; gap: 4px; align-content: start; }
 .entry-form__field > label { font-weight: 600; font-size: 13.5px; }
 .entry-form__field .entry-form__help { margin: 0; }
+/* A compound card (_compound_card.html): a box laid out as the form is, with its heading and its
+   Remove on one line, and a gap before the next card. */
+.compound-card { display: grid; gap: 4px; margin-bottom: 16px; padding: 14px 16px; border: 2px solid var(--hairline); border-radius: 8px; }
+.compound-card__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.compound-card__head h3 { margin: 0; font-size: 16px; }
 /* A compound card's runs (_run.html) and blocks of values (_value_block.html): each in a box, a
    run's phase steps one under another. */
 .entry-form .run, .entry-form .value-block { padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 6px; }

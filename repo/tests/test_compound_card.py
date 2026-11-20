@@ -2,13 +2,16 @@
 each built from phase steps. Check shows what Save would add, saving nothing; Save adds all of
 it, or nothing while anything on the card has a problem."""
 
+import re
+
 from django.contrib.auth.models import User
 from django.contrib.staticfiles import finders
+from django.http import HttpResponse
 from django.test import SimpleTestCase
 from django.urls import reverse
 
 from repo import chem
-from repo.forms import RUN_PHASES, CompoundCard, RunForm, steps_text
+from repo.forms import RUN_PHASES, CompoundCards, RunForm, steps_text
 from repo.models import Material, PhaseSequence, RetiredID
 from repo.tests.test_add_data import FIVE_CB, LOGIN, AddDataTestCase
 from repo.tests.test_values import RM734
@@ -27,6 +30,20 @@ def run_fields(direction, top, *below, solid="", t_solid="", rate="", method="",
 
 
 EMPTY_RUN = run_fields("", "Iso")  # a run left as the page shows it
+
+
+def visible(response):
+    """The page without what its <template>s hold, which the browser doesn't show: the page as it
+    is without JavaScript. A template can hold others, as the empty card holds an empty run."""
+    kept, depth = [], 0
+    for part in re.split(r"(<template[^>]*>|</template>)", response.content.decode()):
+        if part.startswith("<template"):
+            depth += 1
+        elif part == "</template>":
+            depth -= 1
+        elif depth == 0:
+            kept.append(part)
+    return HttpResponse("".join(kept))
 RM734_COOLING = run_fields(
     "cooling", "Iso", ("187.9", "N"), ("132.7", "NF"), solid="Cr", t_solid="70", rate="5", method="DSC"
 )
@@ -67,24 +84,32 @@ class CardTestCase(AddDataTestCase):
         super().setUp()
         self.page = reverse("repo:add_compound", args=[self.article.pk])
 
-    def card_data(self, runs=(), blocks=(), **material):
-        """The card's boxes as the page sends them: material is its boxes, by name (material,
-        smiles, name), runs fills the two runs and blocks the two blocks of values, each a
-        dict of its boxes by name, the rest left empty."""
-        data = {"run-TOTAL_FORMS": "2", "run-INITIAL_FORMS": "0", "block-TOTAL_FORMS": "2", "block-INITIAL_FORMS": "0"}
-        data.update({f"card-{key}": value for key, value in material.items()})
-        for i, run in enumerate([*runs, *[EMPTY_RUN] * (2 - len(runs))]):
-            data.update({f"run-{i}-{key}": value for key, value in run.items()})
+    def card_data(self, runs=(), blocks=(), index=0, **material):
+        """The boxes of card index (from 0) as the page sends them: material is its boxes, by
+        name (material, smiles, name), runs fills its runs and blocks its blocks of values, each
+        a dict of its boxes by name, the rest left empty. A card has at least two of each, as the
+        page has without JavaScript."""
+        prefix = f"card-{index}"
+        n_runs, n_blocks = max(2, len(runs)), max(2, len(blocks))
+        data = {
+            f"{prefix}-run-TOTAL_FORMS": str(n_runs), f"{prefix}-run-INITIAL_FORMS": "0",
+            f"{prefix}-block-TOTAL_FORMS": str(n_blocks), f"{prefix}-block-INITIAL_FORMS": "0",
+        }
+        data.update({f"{prefix}-{key}": value for key, value in material.items()})
+        for i, run in enumerate([*runs, *[EMPTY_RUN] * (n_runs - len(runs))]):
+            data.update({f"{prefix}-run-{i}-{key}": value for key, value in run.items()})
         for i, block in enumerate(blocks):
-            data.update({f"block-{i}-{key}": value for key, value in block.items()})
+            data.update({f"{prefix}-block-{i}-{key}": value for key, value in block.items()})
         return data
 
     def send(self, runs=(), button="check", follow=False, blocks=(), **material):
-        """Post the card with the Check or Save button."""
-        return self.client.post(self.page, {**self.card_data(runs, blocks, **material), button: ""}, follow=follow)
+        """Post a page of one card with the Check or Save button."""
+        data = {**self.card_data(runs, blocks, **material), CompoundCards.TOTAL: "1", button: ""}
+        return self.client.post(self.page, data, follow=follow)
 
     def card(self, response):
-        return response.context["card"]
+        """The first card of the page sent back."""
+        return response.context["cards"].cards[0]
 
 
 class CheckTests(CardTestCase):
@@ -277,8 +302,8 @@ class AccessTests(CardTestCase):
         response = self.client.get(self.add_page(self.article))
 
         self.assertContains(response, f'<form method="post" action="{self.page}"')
-        self.assertContains(response, 'name="run-TOTAL_FORMS" value="2"')
-        self.assertContains(response, 'name="run-1-phase_7"')  # every step of both runs, without JavaScript
+        self.assertContains(response, 'name="card-0-run-TOTAL_FORMS" value="2"')
+        self.assertContains(response, 'name="card-0-run-1-phase_7"')  # every step of both runs, without JavaScript
 
     def test_a_logged_out_visitor_cant_save(self):
         self.client.logout()
@@ -312,7 +337,7 @@ class PhaseBuilderAndDrawTests(CardTestCase):
             with self.subTest(name):
                 self.assertContains(
                     response,
-                    '<button type="button" class="secondary-button card-draw" data-draw data-smiles="id_card-smiles" '
+                    '<button type="button" class="secondary-button card-draw" data-draw data-smiles="id_card-0-smiles" '
                     "hidden>Draw the structure</button>",
                     html=True,
                 )
@@ -323,6 +348,7 @@ class PhaseBuilderAndDrawTests(CardTestCase):
 
     def test_each_run_has_add_a_phase_and_remove_on_each_step_after_the_second_all_hidden(self):
         for name, response in self.pages().items():
+            response = visible(response)
             with self.subTest(name):
                 self.assertContains(response, "data-phase-builder", count=2)  # one for each run
                 self.assertContains(response, "<li class=\"entry-form__row\" data-phase-step>", count=2 * RUN_PHASES)
@@ -338,6 +364,7 @@ class PhaseBuilderAndDrawTests(CardTestCase):
 
     def test_the_phase_boxes_suggest_the_vocabulary_without_the_solids(self):
         for name, response in self.pages().items():
+            response = visible(response)
             with self.subTest(name):
                 self.assertContains(response, 'list="phase-labels"', count=2 * RUN_PHASES)
                 self.assertContains(response, '<datalist id="phase-labels">', count=1)
@@ -346,7 +373,7 @@ class PhaseBuilderAndDrawTests(CardTestCase):
                 self.assertNotContains(response, '<option value="K">')
 
     def test_suggestions_are_each_phase_by_its_code_then_its_other_labels(self):
-        suggestions = CompoundCard(None, self.article).phase_suggestions()
+        suggestions = CompoundCards(None, self.article).phase_suggestions()
 
         self.assertEqual(
             suggestions[:4],

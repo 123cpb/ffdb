@@ -46,7 +46,7 @@ class BlockBoxesTests(CardTestCase):
     def test_an_empty_card_has_two_blocks_with_no_boxes_for_a_choice_yet(self):
         response = self.client.get(self.add_page(self.article))
 
-        self.assertContains(response, 'name="block-TOTAL_FORMS" value="2"')
+        self.assertContains(response, 'name="card-0-block-TOTAL_FORMS" value="2"')
         self.assertContains(response, "<legend>Values 2</legend>", html=True)
         block = self.block(response)
         self.assertEqual(block.condition_fields(), [])
@@ -80,8 +80,8 @@ class BlockBoxesTests(CardTestCase):
     def test_each_block_has_its_own_method_suggestions(self):
         response = self.send(blocks=[DELTA_EPSILON, PS_BLOCK], material="RM734")
 
-        self.assertContains(response, 'list="block-0-method-suggestions"')
-        self.assertContains(response, '<datalist id="block-1-method-suggestions">')
+        self.assertContains(response, 'list="card-0-block-0-method-suggestions"')
+        self.assertContains(response, '<datalist id="card-0-block-1-method-suggestions">')
         self.assertContains(response, '<option value="current reversal">')
 
 

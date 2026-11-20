@@ -1,22 +1,31 @@
 {% comment %}
-A compound card, forms.CompoundCard (as card): its material, its runs, then its blocks of
-values (_value_block.html). It posts to
-views.add_compound, which shows what Check read. A reference's Add data page and the
-add-a-compound page both include it, with the editor's dialog (_draw_dialog.html) and the
-scripts for its Draw button (draw.js), its phase steps (phase_steps.js) and its checks as the
-curator types (checks.js).
+One compound card, forms.CompoundCard (as card), inside the page's form (_compound_cards.html):
+its material, its runs (_run.html), then its blocks of values (_value_block.html). Every box's
+name starts with the card's prefix, card-0, and its number is its index + 1. In the empty card
+cards.js copies, the index is __card__ and the number __cardnumber__, and cards.js puts in the
+new card's.
+
+Its runs and its blocks each have an empty one in a <template>, with Django's __prefix__ in
+place of its index and __number__ in place of its number, for "+ Add a run" and "+ Add a block
+of values" (cards.js), which also set the formset's TOTAL_FORMS. Those buttons and each Remove
+are hidden, so without JavaScript they are never shown.
 
 What the server makes of the card goes in two boxes, one after the material and one after the
 runs, and in one under each block of values (_value_block.html). Check fills them when the page
-comes back. checks.js fills them as the curator types: a
-part marked data-check names its box, and the box's data-check-url is the address that reads that part.
+comes back. checks.js fills them as the curator types: a part marked data-check names its box,
+and the box's data-check-url is the address that reads that part, with ?card= the card's index.
 Each box is a live region (aria-live), so a screen reader reads each new answer.
 {% endcomment %}
-<form method="post" action="{% url 'repo:add_compound' reference.pk %}" class="entry-form entry-form--wide">
-  {% csrf_token %}
+<section class="compound-card" data-card aria-labelledby="{{ card.prefix }}-title">
+  <div class="compound-card__head">
+    <h3 id="{{ card.prefix }}-title">Compound {{ card.number }}</h3>
+    {# Remove (cards.js) sets it to 1 and hides the card. #}
+    <input type="hidden" name="{{ card.prefix }}-removed" value="">
+    <button type="button" class="secondary-button" data-remove-card aria-label="Remove compound {{ card.number }}" hidden>Remove</button>
+  </div>
   {% for problem in card.problems %}<p class="form-error">{{ problem }}</p>{% endfor %}
   {% with form=card.material_form %}
-  <fieldset data-check="card-material-result">
+  <fieldset data-check="{{ card.prefix }}-material-result">
     <legend>Material</legend>
     <p class="entry-form__help">One already in FFDB, by its LCR ID or name, or a new compound, by its SMILES: fill in one of the two.</p>
     {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
@@ -29,29 +38,28 @@ Each box is a live region (aria-live), so a screen reader reads each new answer.
     <button type="button" class="secondary-button card-draw" data-draw data-smiles="{{ form.smiles.id_for_label }}" hidden>Draw the structure</button>
     {% include "repo/_entry_field.html" with field=form.name %}
   </fieldset>
-  <div id="card-material-result" aria-live="polite" data-check-url="{% url 'repo:check_card_material' reference.pk %}">
+  <div id="{{ card.prefix }}-material-result" aria-live="polite" data-check-url="{% url 'repo:check_card_material' reference.pk %}?card={{ card.index }}">
     {% include "repo/_card_material_result.html" %}
   </div>
   {% endwith %}
-  {# The formset's hidden boxes: how many runs the page sent, so Django knows how many to read. #}
+  {# The formset's hidden boxes: how many runs the page has, so Django knows how many to read. #}
   {{ card.run_forms.management_form }}
   {% if card.run_forms.non_form_errors %}<p class="form-error">{{ card.run_forms.non_form_errors|join:" " }}</p>{% endif %}
-  {% for form in card.run_forms %}{% include "repo/_run.html" with number=forloop.counter %}{% endfor %}
-  <div id="card-runs-result" aria-live="polite" data-check-url="{% url 'repo:check_card_runs' reference.pk %}">
-    {% include "repo/_card_runs_result.html" %}
+  <div id="{{ card.run_forms.prefix }}-list">
+    {% for form in card.run_forms %}{% include "repo/_run.html" with number=forloop.counter %}{% endfor %}
+  </div>
+  <template id="{{ card.run_forms.prefix }}-template">{% include "repo/_run.html" with form=card.run_forms.empty_form number="__number__" %}</template>
+  <button type="button" class="secondary-button" data-add-row="{{ card.run_forms.prefix }}" hidden>+ Add a run</button>
+  <div id="{{ card.prefix }}-runs-result" aria-live="polite" data-check-url="{% url 'repo:check_card_runs' reference.pk %}?card={{ card.index }}">
+    {% include "repo/_card_runs_result.html" with sequence_rows=card.sequence_rows axis=card.axis %}
   </div>
   <p class="entry-form__help">Values: one block for each property or curve. A heating and a cooling curve, or curves at two frequencies, are separate blocks.</p>
-  {# As for the runs: how many blocks the page sent. #}
+  {# As for the runs: how many blocks the page has. #}
   {{ card.block_forms.management_form }}
   {% if card.block_forms.non_form_errors %}<p class="form-error">{{ card.block_forms.non_form_errors|join:" " }}</p>{% endif %}
-  {% for form in card.block_forms %}{% include "repo/_value_block.html" with number=forloop.counter index=forloop.counter0 %}{% endfor %}
-  {# The phase boxes' suggestions: their list attribute names this id (forms.PHASE_LIST). Plain HTML, so it works without JavaScript. #}
-  <datalist id="phase-labels">
-    {% for label, description in card.phase_suggestions %}<option value="{{ label }}">{{ description }}</option>{% endfor %}
-  </datalist>
-  {# The button's name is sent with the form, so the view can tell Save from Check. #}
-  <div class="entry-form__buttons">
-    <button type="submit" name="check">Check</button>
-    <button type="submit" name="save">Save</button>
+  <div id="{{ card.block_forms.prefix }}-list">
+    {% for form in card.block_forms %}{% include "repo/_value_block.html" with number=forloop.counter index=forloop.counter0 %}{% endfor %}
   </div>
-</form>
+  <template id="{{ card.block_forms.prefix }}-template">{% include "repo/_value_block.html" with form=card.block_forms.empty_form number="__number__" index="__prefix__" %}</template>
+  <button type="button" class="secondary-button" data-add-row="{{ card.block_forms.prefix }}" hidden>+ Add a block of values</button>
+</section>

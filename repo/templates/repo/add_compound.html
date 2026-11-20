@@ -1,19 +1,20 @@
 {% extends "repo/base.html" %}
 {% load static %}
-{% block title %}Add a compound from {{ reference.label }}{% endblock %}
+{% block title %}Add compounds from {{ reference.label }}{% endblock %}
 {% block content %}
 <p class="reference-kind">{{ reference.get_kind_display }}</p>
-<h1 class="page-title">Add a compound from {{ reference.label }}</h1>
+<h1 class="page-title">Add compounds from {{ reference.label }}</h1>
 <p><a href="{% url 'repo:add_from_reference' reference.pk %}">Back to its Add data page</a></p>
 
 <section>
-  {# views.add_compound gives the card, forms.CompoundCard, and what Check read of its runs. The card shows what Check read. #}
-  {% include "repo/_compound_card.html" %}
+  {# views.add_compound gives the cards, forms.CompoundCards, with what Check read of each card's runs. Each card shows what Check read. #}
+  {% include "repo/_compound_cards.html" %}
   {% include "repo/_draw_dialog.html" %}
 </section>
 
-{# As on the Add data page: the card's Draw button, its phase steps and its checks as the curator types. #}
+{# As on the Add data page: the cards' Draw buttons, their phase steps, their checks as the curator types, and adding and removing cards. #}
 <script src="{% static 'repo/draw.js' %}" defer></script>
 <script src="{% static 'repo/phase_steps.js' %}" defer></script>
 <script src="{% static 'repo/checks.js' %}" defer></script>
+<script src="{% static 'repo/cards.js' %}" defer></script>
 {% endblock %}

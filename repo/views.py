@@ -15,8 +15,8 @@ from django.views.decorators.http import require_POST
 
 from . import charts, chem, crossref, exports, ribbons
 from .forms import (
-    CompoundCard, CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, MixtureForm, ValueChoiceForm,
-    ValueForm,
+    MAX_CARDS, CompoundCard, CompoundCards, CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm,
+    MixtureForm, ValueChoiceForm, ValueForm,
 )
 from .models import (
     DOI_PREFIX,
@@ -659,10 +659,10 @@ def add_from_reference(request, pk):
         # each label still points at its own box.
         "choice": ValueChoiceForm(reference=reference),
         "curve_choice": CurveChoiceForm(reference=reference, auto_id="id_curve_%s"),
-        # The form for adding a mixture, sent to add_mixture, and an empty compound card, sent
-        # to add_compound.
+        # The form for adding a mixture, sent to add_mixture, and a page of one empty compound
+        # card, sent to add_compound.
         "mixture_form": MixtureForm(),
-        "card": CompoundCard(None, reference),
+        "cards": CompoundCards(None, reference),
         **reference_tables(reference),
     }
     return render(request, "repo/add_from_reference.html", context)
@@ -682,7 +682,8 @@ def table_reading(form):
 # listed first (_check_answer.html). The script puts the answer in the page in place of the last
 # one. Curators only, as their pages are. POST only, as the forms are, so each takes the form's
 # CSRF token, which the script sends with the rest of the form. Nothing is saved. One more,
-# check_block_boxes(), sends back boxes rather than an answer: those a block's choice needs.
+# check_block_boxes(), sends back boxes rather than an answer: those a block's choice needs. A
+# card's checks are sent every card on the page, and read only the one their address names.
 
 
 def check_answer(request, problem_forms, result, context):
@@ -691,9 +692,30 @@ def check_answer(request, problem_forms, result, context):
     return render(request, "repo/_check_answer.html", {"problem_forms": problem_forms, "result": result, **context})
 
 
+def number_param(request, key, limit):
+    """The index in ?key= of a check's address, e.g. ?card=2: a whole number from 0 to below
+    limit. Anything else gives a 404. A card or block copied by cards.js has its index only once
+    copied, so its address carries it here rather than in the path, which {% url %} writes."""
+    try:
+        index = int(request.GET.get(key, ""))
+    except ValueError:
+        raise Http404(f"No {key} number.")
+    if not 0 <= index < limit:
+        raise Http404(f"No {key} with this number.")
+    return index
+
+
+def card_sent(request, pk):
+    """Card ?card= (its index from 0, as in its prefix, card-0) of the compound cards sent, built
+    as views.add_compound builds it: only that card is read."""
+    reference = get_object_or_404(Reference, pk=pk)
+    return CompoundCard(request.POST, reference, number_param(request, "card", MAX_CARDS))
+
+
 def checked_card(request, pk):
-    """The compound card sent, read exactly as views.add_compound's Check reads it."""
-    card = CompoundCard(request.POST, get_object_or_404(Reference, pk=pk))
+    """Card ?card= of the compound cards sent, read exactly as views.add_compound's Check reads
+    it."""
+    card = card_sent(request, pk)
     card.is_valid()
     return card
 
@@ -719,7 +741,12 @@ def check_card_runs(request, pk):
     skips it, so with none filled in the answer is empty."""
     card = checked_card(request, pk)
     sequence_rows, axis = sequence_ribbons(card.runs, card.ribbon_data)
-    runs = [(f"Run {number}", form) for number, form in enumerate(card.run_forms, start=1)]
+    # A run's number is its index + 1, as its heading says. A removed run is hidden, so its
+    # problems aren't listed.
+    runs = [
+        (f"Run {number}", form) for number, form in enumerate(card.run_forms, start=1)
+        if not card.run_forms.removed(form)
+    ]
     return check_answer(
         request, runs, "repo/_card_runs_result.html", {"sequence_rows": sequence_rows, "axis": axis}
     )
@@ -737,24 +764,24 @@ def check_table(request, pk):
     return check_answer(request, [("", form)], "repo/_table_lines.html", {"form": form, **table_reading(form)})
 
 
-def checked_block(request, pk, index):
-    """Block index (from 0, as in its prefix, block-0) of the compound card sent, built exactly
-    as views.add_compound's Check builds it. It is checked when something asks for its errors.
-    An index with no block gives a 404."""
-    blocks = CompoundCard(request.POST, get_object_or_404(Reference, pk=pk)).block_forms.forms
-    if index >= len(blocks):
-        raise Http404("The card has no block with this number.")
-    return blocks[index]
+def checked_block(request, pk):
+    """Block ?block= (its index from 0, as in its prefix, card-0-block-0) of card ?card= of the
+    compound cards sent, built exactly as views.add_compound's Check builds it, with its index. It
+    is checked when something asks for its errors. A block number the card hasn't got gives a
+    404."""
+    blocks = card_sent(request, pk).block_forms.forms
+    index = number_param(request, "block", len(blocks))
+    return index, blocks[index]
 
 
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 @require_POST
-def check_block(request, pk, index):
+def check_block(request, pk):
     """What the server makes of one block of values on a compound card: its problems, then what
     its lines read as, with a curve's chart, from the template Check shows them with. A block
     left empty gives an empty answer, as Check skips it."""
-    form = checked_block(request, pk, index)
+    index, form = checked_block(request, pk)
     if not form.has_changed():
         return HttpResponse()
     return check_answer(request, [(f"Values {index + 1}", form)], "repo/_curve_reading.html", {"form": form})
@@ -763,49 +790,57 @@ def check_block(request, pk, index):
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 @require_POST
-def check_block_boxes(request, pk, index):
+def check_block_boxes(request, pk):
     """The boxes one block of values needs for its property, kind and what it is against, with
     what was typed in them, as Check draws them (_block_boxes.html). checks.js puts them in place
     of the block's boxes when the choice changes, and drops what Check would say at them: the
     block's answer (check_block()) lists its problems."""
-    form = checked_block(request, pk, index)
+    _, form = checked_block(request, pk)
     return render(request, "repo/_block_boxes.html", {"form": form})
+
+
+def card_saved(request, card, material, added, kept):
+    """Say what Save added from one compound card, leaving out a part the card didn't have:
+    "Added 10a as LCR-00512, with 1 run and 2 blocks of values." The arguments are what
+    CompoundCards.save() gives for the card."""
+    parts = []
+    if card.runs:
+        parts.append(f"{len(card.runs)} run{pluralize(len(card.runs))}")
+    if card.blocks:
+        parts.append(f"{len(card.blocks)} block{pluralize(len(card.blocks))} of values")
+    saved = " and ".join(parts)
+    if added:
+        messages.success(request, f"Added {material.name} as {material.accession}, with {saved}.")
+        # Asked again now it is saved, so the warning names it by its LCR ID.
+        warning = material.stereo_warning()
+        if warning:
+            messages.warning(request, warning)
+    else:
+        alias = f" {card.material_form.cleaned_data['name']} is kept as one of its aliases." if kept else ""
+        messages.success(request, f"Saved {saved} for {material}.{alias}")
 
 
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_compound(request, pk):
-    """Adding a compound card from a reference: its material, in FFDB or new, its runs and its
-    blocks of values. The empty card is on the reference's Add data page and posts here. Check
-    reads it and shows what Save would add: the material, and each run that reads with its
-    standard sequence and ribbon, as the material's page will show them, and each block's
-    problems at its boxes, saving nothing. Save (a POST with save in it) reads it again and adds
-    all of it, or nothing while anything on the card has a problem, and sends the curator back
-    to the Add data page with a redirect, so reloading can't save twice. A number with no
-    reference gives a 404."""
+    """Adding compound cards from a reference: on each, a material, in FFDB or new, its runs and
+    its blocks of values. A page of one empty card is on the reference's Add data page and posts
+    here, with every card the curator added (cards.js). Check reads every card filled in and shows
+    what Save would add: each material, and each run that reads with its standard sequence and
+    ribbon, as the material's page will show them, and each problem on its card, saving nothing.
+    Save (a POST with save in it) reads them again and adds every card, in one transaction, or
+    nothing while any card has a problem, and sends the curator back to the Add data page with a
+    redirect, so reloading can't save twice. A number with no reference gives a 404."""
     reference = get_object_or_404(Reference, pk=pk)
-    card = CompoundCard(request.POST if request.method == "POST" else None, reference)
-    if card.is_valid() and "save" in request.POST:
-        material, added, kept = card.save(request.user)
-        # What was saved, leaving out a part the card didn't have: "1 run and 2 blocks of values".
-        parts = []
-        if card.runs:
-            parts.append(f"{len(card.runs)} run{pluralize(len(card.runs))}")
-        if card.blocks:
-            parts.append(f"{len(card.blocks)} block{pluralize(len(card.blocks))} of values")
-        saved = " and ".join(parts)
-        if added:
-            messages.success(request, f"Added {material.name} as {material.accession}, with {saved}.")
-            # Asked again now it is saved, so the warning names it by its LCR ID.
-            warning = material.stereo_warning()
-            if warning:
-                messages.warning(request, warning)
-        else:
-            alias = f" {card.material_form.cleaned_data['name']} is kept as one of its aliases." if kept else ""
-            messages.success(request, f"Saved {saved} for {material}.{alias}")
+    cards = CompoundCards(request.POST if request.method == "POST" else None, reference)
+    if cards.is_valid() and "save" in request.POST:
+        for saved in cards.save(request.user):
+            card_saved(request, *saved)
         return redirect("repo:add_from_reference", reference.pk)
-    sequence_rows, axis = sequence_ribbons(card.runs, card.ribbon_data)
-    context = {"nav": "add", "reference": reference, "card": card, "sequence_rows": sequence_rows, "axis": axis}
+    # What Check read of each card's runs, on an axis of the card's own (_card_runs_result.html).
+    for card in cards.cards:
+        card.sequence_rows, card.axis = sequence_ribbons(card.runs, card.ribbon_data)
+    context = {"nav": "add", "reference": reference, "cards": cards}
     return render(request, "repo/add_compound.html", context)
 
 

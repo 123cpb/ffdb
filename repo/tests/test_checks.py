@@ -4,6 +4,8 @@ sent as Check reads it and sends back what Check shows, from the same template, 
 problems listed first. One more sends back the boxes a block's choice needs, as Check draws them.
 Nothing is saved. The script itself is checked in a browser."""
 
+from urllib.parse import urlencode
+
 from django.contrib.auth.models import User
 from django.contrib.staticfiles import finders
 from django.test import Client
@@ -12,15 +14,18 @@ from django.urls import reverse
 from repo.forms import CompoundTableForm
 from repo.models import Material, PhaseSequence, Property, Series, must_state
 from repo.tests.test_add_data import FIVE_CB, LOGIN
-from repo.tests.test_compound_card import RM734_COOLING, CardTestCase, run_fields
+from repo.tests.test_compound_card import RM734_COOLING, CardTestCase, run_fields, visible
 from repo.tests.test_compound_table import THREE_LINES
 from repo.tests.test_curves import CHART, WITH_A_BAD_LINE
 from repo.tests.test_value_blocks import DELTA_EPSILON, PS_BLOCK
 from repo.tests.test_values import RM734
 
-# Each check's address, by its name, with what it takes after the reference's number: a block's
-# number from 0, here the first block's.
-CHECKS = {"card_material": [], "card_runs": [], "table": [], "block": [0], "block_boxes": [0]}
+# Each check's address, by its name, with what it takes after it: a card's index from 0, and a
+# block's, here the first card's and its first block's.
+CHECKS = {
+    "card_material": "?card=0", "card_runs": "?card=0", "table": "", "block": "?card=0&block=0",
+    "block_boxes": "?card=0&block=0",
+}
 # Δε, extrapolated, against temperature: the choice the check makes.
 EXTRAPOLATED_DELTA_EPSILON = {"property": "dielectric-anisotropy", "kind": "extrapolated", "variable": "temperature"}
 
@@ -31,7 +36,7 @@ class ChecksTestCase(CardTestCase):
     def setUp(self):
         super().setUp()
         self.addresses = {
-            name: reverse(f"repo:check_{name}", args=[self.article.pk, *args]) for name, args in CHECKS.items()
+            name: reverse(f"repo:check_{name}", args=[self.article.pk]) + numbers for name, numbers in CHECKS.items()
         }
 
     def ask(self, check, runs=(), **material):
@@ -63,7 +68,9 @@ class WhoMayUseThemTests(ChecksTestCase):
         self.client.logout()
         for name, address in self.addresses.items():
             with self.subTest(name):
-                self.assertRedirects(self.client.post(address, self.everything()), f"{LOGIN}?next={address}")
+                # Encoded, as the login redirect encodes it: a block's address has an & of its own.
+                login = f"{LOGIN}?{urlencode({'next': address})}"
+                self.assertRedirects(self.client.post(address, self.everything()), login)
 
     def test_a_logged_in_user_who_isnt_a_curator_is_refused(self):
         self.client.force_login(User.objects.create_user("reader", password="a-test-password"))
@@ -88,22 +95,32 @@ class WhoMayUseThemTests(ChecksTestCase):
                 self.assertEqual(client.post(address, {**self.everything(), "csrfmiddlewaretoken": token}).status_code, 200)
 
     def test_a_number_with_no_reference_gives_a_404(self):
-        for name, args in CHECKS.items():
+        for name, numbers in CHECKS.items():
             with self.subTest(name):
-                address = reverse(f"repo:check_{name}", args=[9999, *args])
+                address = reverse(f"repo:check_{name}", args=[9999]) + numbers
                 self.assertEqual(self.client.post(address, self.everything()).status_code, 404)
 
     def test_a_number_with_no_block_on_the_card_gives_a_404(self):
         # The card has two blocks, numbered 0 and 1.
         for name in ["block", "block_boxes"]:
-            with self.subTest(name):
-                address = reverse(f"repo:check_{name}", args=[self.article.pk, 2])
-                self.assertEqual(self.client.post(address, self.everything()).status_code, 404)
+            for numbers in ["?card=0&block=2", "?card=0&block=-1", "?card=0&block=x", "?card=0"]:
+                with self.subTest(name, numbers=numbers):
+                    address = reverse(f"repo:check_{name}", args=[self.article.pk]) + numbers
+                    self.assertEqual(self.client.post(address, self.everything()).status_code, 404)
+
+    def test_a_card_number_that_isnt_one_gives_a_404(self):
+        # A page has at most 100 cards, numbered 0 to 99.
+        for name in ["card_material", "card_runs", "block", "block_boxes"]:
+            for card in ["", "?card=100", "?card=-1", "?card=x"]:
+                with self.subTest(name, card=card):
+                    numbers = card + ("&block=0" if card and name.startswith("block") else "")
+                    address = reverse(f"repo:check_{name}", args=[self.article.pk]) + numbers
+                    self.assertEqual(self.client.post(address, self.everything()).status_code, 404)
 
     def test_no_check_saves_anything(self):
         for name, address in self.addresses.items():
-            self.client.post(address, {**self.everything(), "card-smiles": FIVE_CB, "card-name": "5CB"})
-            self.client.post(address, {**self.everything(), "card-name": "MB-1"})
+            self.client.post(address, {**self.everything(), "card-0-smiles": FIVE_CB, "card-0-name": "5CB"})
+            self.client.post(address, {**self.everything(), "card-0-name": "MB-1"})
 
         self.assertEqual(list(Material.objects.all()), [self.rm734])
         self.assertEqual(Material.objects.get().aliases, "")
@@ -207,30 +224,30 @@ class BlockBoxesTests(ChecksTestCase):
     def test_extrapolated_delta_epsilon_against_temperature_asks_its_frequency_but_not_the_cell(self):
         answer = self.ask_block("block_boxes", EXTRAPOLATED_DELTA_EPSILON)
 
-        self.assertContains(answer, '<label for="id_block-0-condition_frequency_Hz">Frequency (Hz)</label>', html=True)
+        self.assertContains(answer, '<label for="id_card-0-block-0-condition_frequency_Hz">Frequency (Hz)</label>', html=True)
         self.assertNotContains(answer, "condition_cell_gap_um")
         self.assertNotContains(answer, "condition_electrode_coating")
         self.assertContains(answer, '<p class="entry-form__help">Extrapolated Δε values must state: temperature, frequency.</p>', html=True)
-        self.assertContains(answer, 'name="block-0-direction"')  # against temperature, a curve's direction
-        self.assertContains(answer, 'list="block-0-method-suggestions"')
+        self.assertContains(answer, 'name="card-0-block-0-direction"')  # against temperature, a curve's direction
+        self.assertContains(answer, 'list="card-0-block-0-method-suggestions"')
         self.assertContains(answer, '<option value="dielectric spectroscopy">')
         # Measured, it needs the cell too.
         measured = self.ask_block("block_boxes", {**EXTRAPOLATED_DELTA_EPSILON, "kind": "measured"})
-        self.assertContains(measured, 'name="block-0-condition_cell_gap_um"')
-        self.assertContains(measured, 'name="block-0-condition_electrode_coating"')
+        self.assertContains(measured, 'name="card-0-block-0-condition_cell_gap_um"')
+        self.assertContains(measured, 'name="card-0-block-0-condition_electrode_coating"')
 
     def test_against_frequency_the_points_give_the_frequency_and_a_temperature_is_asked(self):
         answer = self.ask_block("block_boxes", {**EXTRAPOLATED_DELTA_EPSILON, "variable": "frequency"})
 
         self.assertNotContains(answer, "condition_frequency_Hz")
-        self.assertNotContains(answer, 'name="block-0-direction"')
-        self.assertContains(answer, 'name="block-0-temperature_c"')
-        self.assertContains(answer, "<label for=\"id_block-0-points\">Points: Frequency (Hz), Δε (dimensionless) and optionally ±</label>", html=True)
+        self.assertNotContains(answer, 'name="card-0-block-0-direction"')
+        self.assertContains(answer, 'name="card-0-block-0-temperature_c"')
+        self.assertContains(answer, "<label for=\"id_card-0-block-0-points\">Points: Frequency (Hz), Δε (dimensionless) and optionally ±</label>", html=True)
 
     def test_what_was_typed_is_kept_and_the_boxes_are_what_check_draws(self):
         answer = self.ask_block("block_boxes", DELTA_EPSILON)
 
-        self.assertContains(answer, 'name="block-0-condition_frequency_Hz" value="1000"')
+        self.assertContains(answer, 'name="card-0-block-0-condition_frequency_Hz" value="1000"')
         self.assertContains(answer, "25, 5.2</textarea>")
         check = self.send(blocks=[DELTA_EPSILON], material="RM734")
         self.assertInHTML(answer.content.decode(), check.content.decode())
@@ -294,13 +311,14 @@ class PageTests(ChecksTestCase):
             "Check": self.send([RM734_COOLING], material="RM734"),
         }
         for name, response in pages.items():
+            response = visible(response)
             with self.subTest(name):
-                for box, check in [("card-material-result", "card_material"), ("card-runs-result", "card_runs")]:
+                for box, check in [("card-0-material-result", "card_material"), ("card-0-runs-result", "card_runs")]:
                     self.assertContains(
                         response, f'<div id="{box}" aria-live="polite" data-check-url="{self.addresses[check]}">', count=1
                     )
-                self.assertContains(response, '<fieldset data-check="card-material-result">', count=1)
-                self.assertContains(response, 'data-check="card-runs-result"', count=2)  # each run
+                self.assertContains(response, '<fieldset data-check="card-0-material-result">', count=1)
+                self.assertContains(response, 'data-check="card-0-runs-result"', count=2)  # each run
                 self.assertContains(response, '<script src="/static/repo/checks.js" defer></script>', html=True)
 
     def test_both_card_pages_have_each_blocks_boxes_and_answer_box(self):
@@ -311,13 +329,15 @@ class PageTests(ChecksTestCase):
         for name, response in pages.items():
             for i in range(2):  # the card's two blocks
                 with self.subTest(name, block=i):
-                    boxes = reverse("repo:check_block_boxes", args=[self.article.pk, i])
-                    reading = reverse("repo:check_block", args=[self.article.pk, i])
-                    self.assertContains(response, f'<fieldset class="value-block" data-check="block-{i}-reading">', count=1)
-                    self.assertContains(response, f'<div class="entry-form__row" data-boxes="block-{i}-boxes">', count=1)
-                    self.assertContains(response, f'<div id="block-{i}-boxes" data-boxes-url="{boxes}">', count=1)
+                    # The & of the query is written &amp; in the page, as an & in HTML should be.
+                    numbers = f"?card=0&amp;block={i}"
+                    boxes = reverse("repo:check_block_boxes", args=[self.article.pk]) + numbers
+                    reading = reverse("repo:check_block", args=[self.article.pk]) + numbers
+                    self.assertContains(response, f'data-check="card-0-block-{i}-reading"', count=1)
+                    self.assertContains(response, f'<div class="entry-form__row" data-boxes="card-0-block-{i}-boxes">', count=1)
+                    self.assertContains(response, f'<div id="card-0-block-{i}-boxes" data-boxes-url="{boxes}">', count=1)
                     self.assertContains(
-                        response, f'<div id="block-{i}-reading" aria-live="polite" data-check-url="{reading}">', count=1
+                        response, f'<div id="card-0-block-{i}-reading" aria-live="polite" data-check-url="{reading}">', count=1
                     )
 
     def test_the_add_data_page_has_the_tables_answer_box(self):
