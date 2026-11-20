@@ -20,31 +20,23 @@
   {% if series_list %}
   <p>{{ property.n_materials }} material{{ property.n_materials|pluralize }} from {{ property.n_references }} reference{{ property.n_references|pluralize }}. Each row is one value or one curve, as its reference gives it.</p>
   <p class="downloads"><a href="{% url 'repo:property_values_csv' property.code %}">Download these values as CSV</a>, one row per point.</p>
+  {% if chosen %}{% include "repo/_charts.html" %}
+  {% else %}<p class="chart-note">Tick rows in the table and select Draw to chart them.</p>{% endif %}
   {% comment %}
-  The materials the charts draw. A GET form, so the choice goes in the address, as the sort
-  does, and the sort chosen goes with it. The default sort has no ?sort=, so needs no box.
+  The table is a form: each row's box sends ?series=<its pk>. A GET form, so the rows ticked
+  go in the address, as the sort does, and the sort chosen goes with them. The default sort
+  has no ?sort=, so needs no box.
   {% endcomment %}
   <form class="chart-choice" method="get">
-    <fieldset>
-      <legend>Materials to draw</legend>
-      <div class="chart-choice__boxes">
-        {% for material in choices %}
-        <label><input type="checkbox" name="material" value="{{ material.pk }}"{% if material.pk in chosen %} checked{% endif %}>
-          {{ material.accession }}{% if material.name %} <span class="result__name">{{ material.name }}</span>{% endif %}</label>
-        {% endfor %}
-      </div>
-    </fieldset>
-    {% if sort != "material" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
-    <button type="submit">Draw</button>
-  </form>
-  {% if chosen %}{% include "repo/_charts.html" %}
-  {% else %}<p class="chart-note">Tick materials and select Draw to chart their values.</p>{% endif %}
-  <p class="table-note">Select the Material or Value heading to sort by it. By value, the smallest comes first, and a curve sits where its lowest value would.</p>
+  {% if sort != "material" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+  <p class="table-note">Tick the rows to chart and select Draw. Select the Material or Value heading to sort by it. By value, the smallest comes first, and a curve sits where its lowest value would.</p>
+  <button type="submit">Draw</button>
   <div class="table-scroll">
     <table class="data-table">
       <thead>
         <tr>
-          {# The heading of the current sort is marked, and the other links to its sort, keeping the materials drawn. #}
+          <th scope="col">Draw</th>
+          {# The heading of the current sort is marked, and the other links to its sort, keeping the rows ticked. #}
           {% if sort == "material" %}<th scope="col" aria-sort="ascending">Material</th>
           {% else %}<th scope="col"><a href="{% url 'repo:property' property.code %}{% if chosen_query %}?{{ chosen_query }}{% endif %}">Material</a></th>{% endif %}
           {% if sort == "value" %}<th scope="col" aria-sort="ascending">Value</th>
@@ -56,6 +48,8 @@
       <tbody>
         {% for series in series_list %}
         <tr>
+          {# aria-label: a screen reader names the box by its row, as the box has no text of its own. #}
+          <td><input type="checkbox" name="series" value="{{ series.pk }}" aria-label="Draw {{ series.material.accession }} from {{ series.reference.label }}"{% if series.pk in chosen %} checked{% endif %}></td>
           <td>
             <a href="{% url 'repo:material' series.material.pk %}">{{ series.material.accession }}</a>
             {% if series.material.name %}<span class="result__name">{{ series.material.name }}</span>{% endif %}
@@ -70,6 +64,7 @@
       </tbody>
     </table>
   </div>
+  </form>
   {% else %}
   <p>No {{ property.symbol }} values yet.</p>
   {% endif %}
