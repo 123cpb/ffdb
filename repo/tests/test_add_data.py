@@ -129,10 +129,13 @@ class FindReferenceTests(AddDataTestCase):
         self.assertEqual(Reference.objects.count(), 3)
         self.assertEqual(self.crossref.requests, [])
 
-    def test_a_blank_box_is_refused(self):
-        response = self.give("patent", "  ", follow=False)
+    def test_a_blank_box_is_refused_for_every_kind_but_an_unpublished_result(self):
+        for kind in ["doi", "patent", "thesis"]:
+            with self.subTest(kind):
+                response = self.give(kind, "  ", follow=False)
 
-        self.assertContains(response, "This field is required.")
+                self.assertContains(response, "Give the DOI, patent number or thesis.")
+        self.assertEqual(Reference.objects.count(), 3)
 
     def test_a_patent_number_already_in_ffdb_is_found_however_it_is_typed(self):
         response = self.give("patent", "ep 3260450 a1")
@@ -160,18 +163,26 @@ class FindReferenceTests(AddDataTestCase):
         self.assertRedirects(response, self.add_page(thesis))
         self.assertEqual(Reference.objects.count(), 4)
 
-    def test_an_unpublished_result_is_added_and_found_again_in_other_capitals(self):
-        response = self.give("unpublished", " Mandle group  2026, Computed dipole moments")
-        result = Reference.objects.get(identifier="Mandle group 2026, Computed dipole moments")
-        self.assertEqual(result.kind, Reference.Kind.UNPUBLISHED)
-        self.assertEqual(self.messages(response), ["Added to FFDB: Mandle group 2026, Computed dipole moments (unpublished)"])
+    def test_every_unpublished_result_goes_under_one_reference_with_nothing_typed(self):
+        response = self.give("unpublished", "")
+        group = Reference.objects.get(identifier="Group results")
+        self.assertEqual(group.kind, Reference.Kind.UNPUBLISHED)
+        self.assertEqual(group.entered_by, self.curator)
+        self.assertEqual(self.messages(response), ["Added to FFDB: Group results (unpublished)"])
 
-        response = self.give("unpublished", "mandle group 2026, computed dipole moments")
+        # Anything typed is ignored: it is still the one reference.
+        response = self.give("unpublished", "Mandle group 2026, Computed dipole moments")
 
-        self.assertRedirects(response, self.add_page(result))
-        self.assertEqual(self.messages(response), ["Already in FFDB: Mandle group 2026, Computed dipole moments (unpublished)"])
+        self.assertRedirects(response, self.add_page(group))
+        self.assertEqual(self.messages(response), ["Already in FFDB: Group results (unpublished)"])
         self.assertEqual(Reference.objects.count(), 4)
         self.assertEqual(self.crossref.requests, [])
+
+    def test_the_browser_lets_the_box_be_sent_empty(self):
+        box = str(self.client.get(ADD).context["form"]["identifier"])
+
+        self.assertIn('name="identifier"', box)
+        self.assertNotIn("required", box)
 
 
 class AccessTests(AddDataTestCase):
