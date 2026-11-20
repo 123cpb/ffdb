@@ -1,0 +1,26 @@
+{% comment %}
+A new mixture's boxes, MixtureForm (as form), apart from its name: whether its composition is
+known, its components in FFDB one per line, its other components and its notes. Add a mixture's
+form (_mixture_form.html) includes it, and so does a compound card (_compound_card.html), whose
+label box is the mixture's name. composition.js hides the components and other components while
+Not disclosed is chosen, unless something is typed in them.
+{% endcomment %}
+<div data-composition>
+  <fieldset>
+    <legend>{{ form.composition_status.label }}</legend>
+    {% if form.composition_status.errors %}<p class="form-error">{{ form.composition_status.errors|join:" " }}</p>{% endif %}
+    {% for radio in form.composition_status %}
+    <label class="entry-form__choice">{{ radio.tag }} {{ radio.choice_label }}</label>
+    {% endfor %}
+    <p class="entry-form__help">{{ form.composition_status.help_text }}</p>
+  </fieldset>
+  <div data-composition-details>
+    <label for="{{ form.components.id_for_label }}">{{ form.components.label }}</label>
+    {# Django points the box at the errors, by this id, so screen readers read them too. #}
+    {% if form.components.errors %}<p class="form-error" id="{{ form.components.auto_id }}_error">{{ form.components.errors|join:" " }}</p>{% endif %}
+    {{ form.components }}
+    <p class="entry-form__help" id="{{ form.components.auto_id }}_helptext">{{ form.components.help_text }}</p>
+    {% include "repo/_entry_field.html" with field=form.other_components %}
+  </div>
+  {% include "repo/_entry_field.html" with field=form.notes %}
+</div>

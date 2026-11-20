@@ -182,8 +182,8 @@ class CheckTests(CardTestCase):
 
     def test_the_material_boxes_need_one_way_to_find_it_and_a_new_compound_its_label(self):
         for material, problem in [
-            ({"material": "RM734", "smiles": FIVE_CB}, "Give an LCR ID or name, or a SMILES, not both."),
-            ({}, "Give the LCR ID or name of a material in FFDB, or the SMILES of a new compound."),
+            ({"material": "RM734", "smiles": FIVE_CB}, "Fill in one of these, not more: an LCR ID or name, a SMILES, or a new mixture."),
+            ({}, "Give the LCR ID or name of a material in FFDB, the SMILES of a new compound, or the composition of a new mixture."),
             ({"smiles": FIVE_CB}, "Give the label the reference prints for this compound: it becomes its name."),
             ({"smiles": "C1CC", "name": "X"}, "RDKit could not read"),
         ]:

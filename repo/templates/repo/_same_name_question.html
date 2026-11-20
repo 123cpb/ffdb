@@ -1,0 +1,26 @@
+{% comment %}
+The question a new mixture's form, MixtureForm (as form), asks when mixtures with its name are in
+FFDB: which, with their compositions, and whether it is one of them. Nothing when there are none.
+Add a mixture's form (_mixture_form.html) includes it, and so does a compound card's material
+answer (_card_material_result.html), which is inside the cards' form, so the answer is sent too.
+{% endcomment %}
+{% if form.same_name %}
+<fieldset>
+  <legend>{{ form.same_as.label }}</legend>
+  <p>FFDB already has {% if form.same_name|length == 1 %}a mixture{% else %}{{ form.same_name|length }} mixtures{% endif %} called {{ form.name.value }}.
+  A mixture has no structure, so FFDB can't tell by itself whether this is the same one, and names such as M5 are
+  reused by different groups.</p>
+  <ul>
+    {% for mixture in form.same_name %}
+    <li>
+      <a href="{% url 'repo:material' mixture.pk %}">{{ mixture.accession }}</a> {{ mixture.name }}{% if mixture.aliases %}, also called {{ mixture.aliases }}{% endif %}
+      {% include "repo/_composition.html" with material=mixture components=mixture.components.all %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% if form.same_as.errors %}<p class="form-error">{{ form.same_as.errors|join:" " }}</p>{% endif %}
+  {% for radio in form.same_as %}
+  <label class="entry-form__choice">{{ radio.tag }} {{ radio.choice_label }}</label>
+  {% endfor %}
+</fieldset>
+{% endif %}

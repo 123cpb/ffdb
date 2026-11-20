@@ -86,6 +86,8 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
    "+ Add a phase" clear of the solid below. The card's Draw button clear of the label below. */
 .phase-steps__remove { align-self: end; }
 .phase-steps__add, .card-draw { margin-bottom: 12px; }
+/* A card's "Or a new mixture": its heading looks like something to press, which it is. */
+.card-mixture summary { cursor: pointer; font-weight: 600; margin-bottom: 8px; }
 /* What a card's Check found: the drawing beside the material it is. */
 .card-material { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
 .card-material svg { display: block; max-width: 100%; height: auto; }

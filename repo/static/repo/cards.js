@@ -56,7 +56,7 @@ function added(part) {
 function isEmpty(card) {
   return [...card.querySelectorAll("input:not([type=hidden]), select, textarea")].every((box) => {
     if (box.tagName === "SELECT") return [...box.options].every((option) => option.selected === option.defaultSelected);
-    if (box.type === "checkbox") return box.checked === box.defaultChecked;
+    if (box.type === "checkbox" || box.type === "radio") return box.checked === box.defaultChecked;
     return box.value === box.defaultValue;
   });
 }

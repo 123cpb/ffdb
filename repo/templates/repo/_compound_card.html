@@ -27,7 +27,7 @@ Each box is a live region (aria-live), so a screen reader reads each new answer.
   {% with form=card.material_form %}
   <fieldset data-check="{{ card.prefix }}-material-result">
     <legend>Material</legend>
-    <p class="entry-form__help">One already in FFDB, by its LCR ID or name, or a new compound, by its SMILES: fill in one of the two.</p>
+    <p class="entry-form__help">One already in FFDB, by its LCR ID or name, a new compound, by its SMILES, or a new mixture, by its composition: fill in one of the three.</p>
     {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
     <div class="entry-form__row">
       {% include "repo/_entry_field.html" with field=form.material %}
@@ -37,6 +37,15 @@ Each box is a live region (aria-live), so a screen reader reads each new answer.
     {# data-smiles is the id of the box "Use this structure" fills, and the editor opens with what that box holds. #}
     <button type="button" class="secondary-button card-draw" data-draw data-smiles="{{ form.smiles.id_for_label }}" hidden>Draw the structure</button>
     {% include "repo/_entry_field.html" with field=form.name %}
+    {# The label box is a new mixture's name too (forms.CardMaterialForm), so the mixture's problems with its name go here. #}
+    {% if form.mixture.name.errors %}<p class="form-error">{{ form.mixture.name.errors|join:" " }}</p>{% endif %}
+    {# A new mixture's boxes, Add a mixture's. <details> opens and closes without JavaScript; it comes back open for a mixture. #}
+    <details class="card-mixture"{% if form.is_mixture %} open{% endif %}>
+      <summary>Or a new mixture</summary>
+      {# Errors that belong to no one box: the rules across the components. #}
+      {% if form.mixture.non_field_errors %}<p class="form-error">{{ form.mixture.non_field_errors|join:" " }}</p>{% endif %}
+      {% include "repo/_mixture_boxes.html" with form=form.mixture %}
+    </details>
   </fieldset>
   <div id="{{ card.prefix }}-material-result" aria-live="polite" data-check-url="{% url 'repo:check_card_material' reference.pk %}?card={{ card.index }}">
     {% include "repo/_card_material_result.html" %}

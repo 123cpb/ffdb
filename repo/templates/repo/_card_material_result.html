@@ -1,8 +1,11 @@
 {% comment %}
 What the server makes of a compound card's material, forms.CardMaterialForm (as form): the
 material in FFDB, or the structure typed, drawn, with whether it is new and any stereochemistry
-warning. The card shows it under its material: Check fills it when the page comes back, and
-views.check_card_material as the curator types. An empty card shows nothing.
+warning. For a new mixture, its component lines as read and, when FFDB has mixtures of its name,
+the question whether it is one of them (Add a mixture's partials); this box is inside the cards'
+form, so the answer is sent with Check and Save. The card shows it under its material: Check
+fills it when the page comes back, and views.check_card_material as the curator types. An empty
+card shows nothing.
 {% endcomment %}
 {% if form.found %}
 <div class="card-material">
@@ -12,7 +15,8 @@ views.check_card_material as the curator types. An empty card shows nothing.
   <p>
     In FFDB as <a href="{% url 'repo:material' form.found.pk %}">{{ form.found.accession }}</a>
     {% if form.found.name %}<span class="result__name">{{ form.found.name }}</span>{% endif %}
-    {% with label=form.cleaned_data.name %}{% if label %}
+    {# Not for a mixture chosen in answer to the question: it was found by the label, which is already one of its names. #}
+    {% with label=form.cleaned_data.name %}{% if label and not form.is_mixture %}
     <span class="cell-note">
       {% if form.alias_problem %}{{ label }} won't be kept as an alias: {{ form.alias_problem }}.
       {% else %}{{ label }} will be kept as an alias.{% endif %}
@@ -29,4 +33,14 @@ views.check_card_material as the curator types. An empty card shows nothing.
     {% if form.stereo_warning %}<span class="cell-note stereo-warning">{{ form.stereo_warning }}</span>{% endif %}
   </p>
 </div>
+{% elif form.new %}
+{# A new mixture whose boxes all read. #}
+<div class="card-material">
+  <span class="result__mixture">Mixture</span>
+  <p>New mixture, named {{ form.new.name }}</p>
+</div>
+{% endif %}
+{% if form.is_mixture %}
+{% include "repo/_component_lines.html" with form=form.mixture %}
+{% include "repo/_same_name_question.html" with form=form.mixture %}
 {% endif %}

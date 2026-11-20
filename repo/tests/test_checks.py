@@ -160,7 +160,7 @@ class MaterialTests(ChecksTestCase):
         for material, problem in [
             ({"material": "XYZ"}, "In FFDB: LCR ID or name: Nothing in FFDB is called XYZ. Check it, or give the SMILES of a new compound."),
             ({"smiles": "C1CC"}, "Or new: SMILES: RDKit could not read “C1CC” as a SMILES. Check it for typing errors."),
-            ({"material": "RM734", "smiles": FIVE_CB}, "Give an LCR ID or name, or a SMILES, not both."),
+            ({"material": "RM734", "smiles": FIVE_CB}, "Fill in one of these, not more: an LCR ID or name, a SMILES, or a new mixture."),
         ]:
             with self.subTest(material):
                 self.assertContains(self.ask("card_material", **material), f"<li>{problem}</li>", html=True)

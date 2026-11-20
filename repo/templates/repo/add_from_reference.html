@@ -15,9 +15,9 @@
 
 <section>
   <h2>Add compounds on cards</h2>
-  <p>A card for each compound, with its runs, each built from its phases, hottest first, and its values. Check shows
-  what Save would add: each compound, and each run's sequence and ribbon. Save adds every card, or nothing while any
-  card has a problem.</p>
+  <p>A card for each compound or mixture, with its runs, each built from its phases, hottest first, and its values.
+  Check shows what Save would add: each compound or mixture, and each run's sequence and ribbon. Save adds every card,
+  or nothing while any card has a problem.</p>
   {% include "repo/_compound_cards.html" %}
 </section>
 
@@ -101,9 +101,10 @@
 
 {% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
 
-{# The Draw buttons' script, the cards' phase steps', the checks as the curator types and adding and removing cards. defer: they run once the page is read, so what they set up is there. #}
+{# The Draw buttons' script, the cards' phase steps', the checks as the curator types, adding and removing cards, and hiding a mixture's composition boxes. defer: they run once the page is read, so what they set up is there. #}
 <script src="{% static 'repo/draw.js' %}" defer></script>
 <script src="{% static 'repo/phase_steps.js' %}" defer></script>
 <script src="{% static 'repo/checks.js' %}" defer></script>
 <script src="{% static 'repo/cards.js' %}" defer></script>
+<script src="{% static 'repo/composition.js' %}" defer></script>
 {% endblock %}

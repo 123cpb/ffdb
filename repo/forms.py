@@ -31,6 +31,7 @@ from .models import (
     group_properties,
     materials_named,
     must_state,
+    name_key,
     pk_from_accession,
 )
 from .phases import (
@@ -615,17 +616,28 @@ RunFormSet = forms.formset_factory(RunForm, formset=CardFormSet, extra=2, can_de
 
 class CardMaterialForm(forms.Form):
     """A compound card's material: one already in FFDB, by its LCR ID or by a name or alias that
-    fits it alone, or a new compound, by its SMILES. Whichever box is filled says which. A SMILES
-    whose structure is already in FFDB finds that material, as in the compound table. The label,
-    as the reference prints it, names a new compound, and is kept as an alias of a material in
-    FFDB unless Material.alias_problem() says why not.
+    fits it alone, a new compound, by its SMILES, or a new mixture, by its composition. Whichever
+    is filled in says which. A SMILES whose structure is already in FFDB finds that material, as
+    in the compound table. The label, as the reference prints it, names a new compound or
+    mixture, and is kept as an alias of a material in FFDB unless Material.alias_problem() says
+    why not.
 
-    A valid form has found, the material in FFDB, or None for a new compound, which is then
-    in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be kept.
-    A SMILES that reads but isn't in FFDB also gives canonical_smiles, for the drawing, and the
-    stereo_warning, even when something else is wrong, such as the label not given yet."""
+    A new mixture is read by Add a mixture's form, MixtureForm, in mixture, with its rules and
+    messages. Its boxes have the card's prefix too, so its name box is the card's label box. When
+    FFDB has mixtures of that name, it asks whether this is one of them, and "Yes" finds that one.
 
-    NO_MATERIAL = "Give the LCR ID or name of a material in FFDB, or the SMILES of a new compound."
+    A valid form has found, the material in FFDB, or None for a new compound or mixture, which is
+    then in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be
+    kept. A SMILES that reads but isn't in FFDB also gives canonical_smiles, for the drawing, and
+    the stereo_warning, even when something else is wrong, such as the label not given yet."""
+
+    NO_MATERIAL = (
+        "Give the LCR ID or name of a material in FFDB, the SMILES of a new compound, or the composition of a new mixture."
+    )
+    NOT_MORE_THAN_ONE = "Fill in one of these, not more: an LCR ID or name, a SMILES, or a new mixture."
+    # A new mixture's own boxes. Its name is the label box, which any material can have, and its
+    # same_as only answers a question, so neither says the material is a mixture.
+    MIXTURE_BOXES = ["composition_status", "components", "other_components", "notes"]
 
     material = forms.CharField(
         label="In FFDB: LCR ID or name", required=False, max_length=NAME_LENGTH,
@@ -637,33 +649,71 @@ class CardMaterialForm(forms.Form):
     )
     name = forms.CharField(
         label="Label, as the reference prints it", required=False, max_length=NAME_LENGTH,
-        help_text="A new compound's name, e.g. 10a. For a material already in FFDB it is optional, and kept as "
-        "another name for it where it can be: a bare compound number such as 10a isn't.",
+        help_text="A new compound's or mixture's name, e.g. 10a or F7. For a material already in FFDB it is "
+        "optional, and kept as another name for it where it can be: a bare compound number such as 10a isn't.",
     )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        sent = self.mixture_form(self.data) if self.is_bound else None
+        # Whether any of a new mixture's own boxes is filled in. When none is, the mixture is drawn
+        # empty, as on a page not sent, and never checked, so a card for a compound shows no
+        # mixture's problems. Nothing typed is lost: its name box is the card's own.
+        self.is_mixture = sent is not None and any(name in sent.changed_data for name in self.MIXTURE_BOXES)
+        self.mixture = sent if self.is_mixture else self.mixture_form(None)
         self.found = self.new = None  # set by clean()
         self.alias_problem = self.stereo_warning = self.canonical_smiles = ""
+
+    def mixture_form(self, data):
+        """Add a mixture's form for this card's mixture, with data, or None for empty boxes.
+        use_required_attribute=False, as for the card's own boxes: a card for a compound leaves the
+        mixture's empty, which the browser mustn't refuse. Its name box is the card's label box, so
+        it takes that box's label, which its problems then name. The label is set before anything
+        reads the form, because Django keeps each box's label from the first read."""
+        form = MixtureForm(data, prefix=self.prefix, use_required_attribute=False)
+        form.fields["name"].label = self.fields["name"].label
+        return form
+
+    def has_changed(self):
+        """Whether its own boxes or a new mixture's are filled in. Django checks a card only when
+        it has changed, so a card with only a mixture's composition is checked too."""
+        return super().has_changed() or self.is_mixture
+
+    def is_valid(self):
+        """Whether its own boxes read, and a new mixture's too. A mixture's problems stay at its
+        boxes, so they aren't repeated among the card's."""
+        valid = super().is_valid()
+        return valid and (not self.is_mixture or self.mixture.is_valid())
 
     def clean(self):
         cleaned = super().clean()
         if self.errors:
             return cleaned  # a box too long to store
         text, smiles, name = cleaned["material"], cleaned["smiles"], cleaned["name"]
-        if text and smiles:
-            raise ValidationError("Give an LCR ID or name, or a SMILES, not both.")
-        if not (text or smiles):
+        filled = [text, smiles, self.is_mixture]
+        if sum(map(bool, filled)) > 1:
+            raise ValidationError(self.NOT_MORE_THAN_ONE)
+        if not any(filled):
             raise ValidationError(self.NO_MATERIAL)
         if text:
             self.found, problem = find_material(text, "Check it, or give the SMILES of a new compound.")
             if problem:
                 self.add_error("material", problem)
-        else:
+        elif smiles:
             self.read_structure(smiles, name)
+        else:
+            self.read_mixture()
         if self.found is not None and name:
             self.alias_problem = self.found.alias_problem(name)
         return cleaned
+
+    def read_mixture(self):
+        """Read a new mixture as Add a mixture reads one: is_valid() asks for its problems. A
+        mixture FFDB already has, chosen in answer to the same-name question, is found; otherwise
+        the new one is built, not saved."""
+        if self.mixture.is_valid():
+            self.found = self.mixture.existing
+            self.new = None if self.found else self.mixture.mixture
 
     def read_structure(self, smiles, name):
         """Find the material in FFDB with this structure, or build a new compound, not saved, and
@@ -755,23 +805,30 @@ class CompoundCard:
 
     def material_key(self):
         """What makes two cards the same material, once the card is valid: the primary key of
-        the material in FFDB, or a new compound's InChIKey, which its check by the model's rules
-        filled in. A pk is a number and an InChIKey is text, so the two can never be mistaken for
-        each other, as in read_lines()."""
+        the material in FFDB, a new compound's InChIKey, which its check by the model's rules
+        filled in, or a new mixture's name, as names are compared. A mixture has no structure, so
+        two new ones with one name on one page are taken to be one. A pk is a number, an InChIKey
+        text and a mixture's key a tuple, so none can be mistaken for another, as in read_lines()."""
         form = self.material_form
-        return form.found.pk if form.found is not None else form.new.inchikey
+        if form.found is not None:
+            return form.found.pk
+        return ("mixture", name_key(form.new.name)) if form.is_mixture else form.new.inchikey
 
     def save(self, user):
         """Add everything on the card in one transaction, so a failure partway keeps none of it:
-        a new compound, named by its label, or the label as an alias of the material in FFDB, and
-        then each run and each block of values, recorded as entered by user. Inside the page's
-        transaction (CompoundCards.save()) it is part of that one. Call it only on a valid card.
-        Returns (the material, whether it was added, whether the label was kept as an alias)."""
+        a new compound, named by its label, a new mixture with its components, or the label as an
+        alias of the material in FFDB, and then each run and each block of values, recorded as
+        entered by user. Inside the page's transaction (CompoundCards.save()) it is part of that
+        one. Call it only on a valid card. Returns (the material, whether it was added, whether
+        the label was kept as an alias)."""
         form = self.material_form
         name = form.cleaned_data["name"]
         with transaction.atomic():
             material, added, kept = form.found or form.new, form.found is None, False
-            if added:
+            if form.is_mixture:
+                # Add a mixture's save: the mixture and its components, or the one in FFDB it is.
+                material, added = form.mixture.save()
+            elif added:
                 material.save()
             elif name and not form.alias_problem:
                 material.add_aliases([name])
@@ -1595,7 +1652,8 @@ class MixtureForm(forms.Form):
         # The question's choices depend on the name, so it is read as posted, before it is
         # cleaned. Cleaning only strips spaces, which name_key() ignores anyway. An unbound
         # form has no name, which fits no mixture.
-        self.same_name = materials_named(self.data.get("name", ""), Material.Kind.MIXTURE)
+        # add_prefix: on a compound card the boxes' names start with the card's, card-0-name.
+        self.same_name = materials_named(self.data.get(self.add_prefix("name"), ""), Material.Kind.MIXTURE)
         if self.same_name:
             self.fields["same_as"].choices = [
                 *[(str(mixture.pk), f"Yes, it's {mixture.accession}") for mixture in self.same_name],

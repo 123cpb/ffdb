@@ -1,0 +1,39 @@
+{% comment %}
+What Check read of a new mixture's component lines, MixtureForm (as form): each line with the
+compound it found and its fraction, or why it wasn't read. Nothing until the box has lines in it.
+The add-a-mixture page includes it, and so does a compound card's material answer
+(_card_material_result.html).
+{% endcomment %}
+{% load repo_tags %}
+{% if form.lines %}
+{% with n_lines=form.lines|length n_problems=form.problem_lines|length %}
+<p>{{ n_lines }} component line{{ n_lines|pluralize }}, {{ n_problems }} with a problem. Nothing has been saved.</p>
+{% endwith %}
+<div class="table-scroll">
+  <table class="data-table compound-table">
+    <thead>
+      <tr>
+        <th scope="col">Line</th><th scope="col">As typed</th><th scope="col">Compound</th><th scope="col">Fraction</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in form.lines %}
+      <tr>
+        <td>{{ line.number }}</td>
+        <td>{{ line.text }}</td>
+        {% if line.problem %}
+        <td colspan="2"><span class="problem">Not read: {{ line.problem }}</span></td>
+        {% else %}
+        <td>
+          <img src="{{ line.material.thumbnail_url }}" alt="Structure of {{ line.material.name }}" width="200" height="128">
+          <a href="{% url 'repo:material' line.material.pk %}">{{ line.material.accession }}</a>
+          {% if line.material.name %}<span class="result__name">{{ line.material.name }}</span>{% endif %}
+        </td>
+        <td>{{ line.fraction|num }} {{ line.unit }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

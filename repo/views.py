@@ -763,12 +763,14 @@ def checked_card(request, pk):
 @permission_required("repo.add_reference", raise_exception=True)
 @require_POST
 def check_card_material(request, pk):
-    """What the server makes of a compound card's material. With all its boxes empty the answer
-    is empty, rather than a message asking for one of them."""
+    """What the server makes of a compound card's material: for a new mixture, with the problems
+    of its own boxes too. With all its boxes empty the answer is empty, rather than a message
+    asking for one of them."""
     form = checked_card(request, pk).material_form
     if not form.has_changed():
         return HttpResponse()
-    return check_answer(request, [("", form)], "repo/_card_material_result.html", {"form": form})
+    problem_forms = [("", form), *([("", form.mixture)] if form.is_mixture else [])]
+    return check_answer(request, problem_forms, "repo/_card_material_result.html", {"form": form})
 
 
 @login_required
