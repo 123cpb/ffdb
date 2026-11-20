@@ -8,7 +8,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.paginator import Paginator
 from django.db.models import Count, F, Min, Q
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
 from django.views.decorators.http import require_POST
@@ -681,7 +681,8 @@ def table_reading(form):
 # uses, and sends back that part as Check shows it, from the same template, with any problems
 # listed first (_check_answer.html). The script puts the answer in the page in place of the last
 # one. Curators only, as their pages are. POST only, as the forms are, so each takes the form's
-# CSRF token, which the script sends with the rest of the form. Nothing is saved.
+# CSRF token, which the script sends with the rest of the form. Nothing is saved. One more,
+# check_block_boxes(), sends back boxes rather than an answer: those a block's choice needs.
 
 
 def check_answer(request, problem_forms, result, context):
@@ -734,6 +735,41 @@ def check_table(request, pk):
     if not request.POST.get("table", "").strip():
         return HttpResponse()
     return check_answer(request, [("", form)], "repo/_table_lines.html", {"form": form, **table_reading(form)})
+
+
+def checked_block(request, pk, index):
+    """Block index (from 0, as in its prefix, block-0) of the compound card sent, built exactly
+    as views.add_compound's Check builds it. It is checked when something asks for its errors.
+    An index with no block gives a 404."""
+    blocks = CompoundCard(request.POST, get_object_or_404(Reference, pk=pk)).block_forms.forms
+    if index >= len(blocks):
+        raise Http404("The card has no block with this number.")
+    return blocks[index]
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+@require_POST
+def check_block(request, pk, index):
+    """What the server makes of one block of values on a compound card: its problems, then what
+    its lines read as, with a curve's chart, from the template Check shows them with. A block
+    left empty gives an empty answer, as Check skips it."""
+    form = checked_block(request, pk, index)
+    if not form.has_changed():
+        return HttpResponse()
+    return check_answer(request, [(f"Values {index + 1}", form)], "repo/_curve_reading.html", {"form": form})
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+@require_POST
+def check_block_boxes(request, pk, index):
+    """The boxes one block of values needs for its property, kind and what it is against, with
+    what was typed in them, as Check draws them (_block_boxes.html). checks.js puts them in place
+    of the block's boxes when the choice changes, and drops what Check would say at them: the
+    block's answer (check_block()) lists its problems."""
+    form = checked_block(request, pk, index)
+    return render(request, "repo/_block_boxes.html", {"form": form})
 
 
 @login_required
@@ -810,7 +846,7 @@ def add_curve(request, pk):
     curve, but only once every line is a point. A number with no reference gives a 404."""
     reference = get_object_or_404(Reference, pk=pk)
     choice = CurveChoiceForm(request.GET or None, reference=reference)
-    form, curve_charts = None, []
+    form = None
     if choice.is_valid():
         data = request.POST if request.method == "POST" else None
         form = CurveForm(data, reference=reference, choice=choice.cleaned_data)
@@ -821,12 +857,8 @@ def add_curve(request, pk):
                 request, f"Saved a {series.property.symbol} curve of {n} point{pluralize(n)} for {series.material.accession}."
             )
             return redirect("repo:add_from_reference", reference.pk)
-        if form.point_list:
-            # Drawn as the material page draws it, from the points read, even when some lines
-            # weren't. chart() gives None for a curve whose points are all limits.
-            drawn = charts.chart(form.prop, form.kind, form.variable, [(form.series, form.point_list)])
-            curve_charts = [drawn] if drawn else []
-    context = {"nav": "add", "reference": reference, "choice": choice, "form": form, "charts": curve_charts}
+    # What Check read, and the chart (form.curve_charts()), are in _curve_reading.html.
+    context = {"nav": "add", "reference": reference, "choice": choice, "form": form}
     return render(request, "repo/add_curve.html", context)
 
 

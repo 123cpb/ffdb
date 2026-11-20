@@ -7,7 +7,8 @@ scripts for its Draw button (draw.js), its phase steps (phase_steps.js) and its 
 curator types (checks.js).
 
 What the server makes of the card goes in two boxes, one after the material and one after the
-runs. Check fills them when the page comes back. checks.js fills them as the curator types: a
+runs, and in one under each block of values (_value_block.html). Check fills them when the page
+comes back. checks.js fills them as the curator types: a
 part marked data-check names its box, and the box's data-check-url is the address that reads that part.
 Each box is a live region (aria-live), so a screen reader reads each new answer.
 {% endcomment %}
@@ -43,7 +44,7 @@ Each box is a live region (aria-live), so a screen reader reads each new answer.
   {# As for the runs: how many blocks the page sent. #}
   {{ card.block_forms.management_form }}
   {% if card.block_forms.non_form_errors %}<p class="form-error">{{ card.block_forms.non_form_errors|join:" " }}</p>{% endif %}
-  {% for form in card.block_forms %}{% include "repo/_value_block.html" with number=forloop.counter %}{% endfor %}
+  {% for form in card.block_forms %}{% include "repo/_value_block.html" with number=forloop.counter index=forloop.counter0 %}{% endfor %}
   {# The phase boxes' suggestions: their list attribute names this id (forms.PHASE_LIST). Plain HTML, so it works without JavaScript. #}
   <datalist id="phase-labels">
     {% for label, description in card.phase_suggestions %}<option value="{{ label }}">{{ description }}</option>{% endfor %}

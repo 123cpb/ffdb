@@ -1,0 +1,32 @@
+{% comment %}
+The boxes of a block of values on a compound card (forms.ValueBlockForm, as form) below its
+three choices: what the values must state, the method and conditions, where in the reference,
+and the points. Which of them it has depends on the choice: the conditions, the direction or T,
+the method's suggestions and the points box's columns and units. _value_block.html includes it,
+and views.check_block_boxes sends it on its own when the choice changes, for checks.js to put
+in place of the old boxes.
+{% endcomment %}
+{% load repo_tags %}
+{% if not form.prop %}
+<p class="entry-form__help">Choose what the values are of and against: the boxes they need appear here, or after Check.</p>
+{% elif form.required %}
+{# form.kind is the Kind box here, because a template looks up a form's boxes first and a block has one by that name: its value is the kind chosen. #}
+<p class="entry-form__help">{{ form.kind.value|capfirst }} {{ form.prop.symbol }} values must state: {{ form.required|condition_names }}.</p>
+{% endif %}
+{% include "repo/_method_conditions.html" %}
+<fieldset>
+  <legend>Where in the reference</legend>
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=form.taken_from %}
+    {% include "repo/_entry_field.html" with field=form.location %}
+    {% include "repo/_entry_field.html" with field=form.digitised %}
+  </div>
+  {% include "repo/_entry_field.html" with field=form.notes %}
+</fieldset>
+<fieldset>
+  <legend>Points</legend>
+  {# Against temperature, a curve's direction; against another variable, one T for every point; against nothing, neither. #}
+  {% if form.against_temperature %}{% include "repo/_entry_field.html" with field=form.direction %}
+  {% elif form.has_x %}{% include "repo/_entry_field.html" with field=form.temperature_c %}{% endif %}
+  {% include "repo/_points_box.html" %}
+</fieldset>

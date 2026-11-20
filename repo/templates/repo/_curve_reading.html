@@ -1,0 +1,15 @@
+{% comment %}
+What a curve form's points read as (forms.CurveForm, as form): the line read as a header, how
+many points were read and how many lines have a problem, and the chart they make
+(form.curve_charts), drawn as the material page will draw it. Nothing until the box has lines
+in it. The add-a-curve page shows it under its form after Check. Each block of values on a
+compound card shows it under its points (_value_block.html): Check fills it, and
+views.check_block as the curator types.
+{% endcomment %}
+{% if form.point_list or form.problem_lines %}
+{% if form.header %}<p class="table-note">Line {{ form.header }} has no number in it, so it was read as a header.</p>{% endif %}
+{% with n_points=form.point_list|length n_problems=form.problem_lines|length %}
+<p>{{ n_points }} point{{ n_points|pluralize }} read, {{ n_problems }} line{{ n_problems|pluralize }} with a problem. Nothing has been saved.</p>
+{% endwith %}
+{% with charts=form.curve_charts %}{% include "repo/_charts.html" %}{% endwith %}
+{% endif %}

@@ -1,7 +1,8 @@
-"""Checks as the curator types (checks.js): three curators' addresses, for a compound card's
-material, for its runs and for the compound table. Each reads what it is sent as Check reads it
-and sends back what Check shows, from the same template, with any problems listed first. Nothing
-is saved. The script itself is checked in a browser."""
+"""Checks as the curator types (checks.js): curators' addresses for a compound card's material,
+for its runs, for each of its blocks of values and for the compound table. Each reads what it is
+sent as Check reads it and sends back what Check shows, from the same template, with any
+problems listed first. One more sends back the boxes a block's choice needs, as Check draws them.
+Nothing is saved. The script itself is checked in a browser."""
 
 from django.contrib.auth.models import User
 from django.contrib.staticfiles import finders
@@ -9,13 +10,19 @@ from django.test import Client
 from django.urls import reverse
 
 from repo.forms import CompoundTableForm
-from repo.models import Material, PhaseSequence
+from repo.models import Material, PhaseSequence, Property, Series, must_state
 from repo.tests.test_add_data import FIVE_CB, LOGIN
 from repo.tests.test_compound_card import RM734_COOLING, CardTestCase, run_fields
 from repo.tests.test_compound_table import THREE_LINES
+from repo.tests.test_curves import CHART, WITH_A_BAD_LINE
+from repo.tests.test_value_blocks import DELTA_EPSILON, PS_BLOCK
 from repo.tests.test_values import RM734
 
-CHECKS = ["card_material", "card_runs", "table"]
+# Each check's address, by its name, with what it takes after the reference's number: a block's
+# number from 0, here the first block's.
+CHECKS = {"card_material": [], "card_runs": [], "table": [], "block": [0], "block_boxes": [0]}
+# Δε, extrapolated, against temperature: the choice the check makes.
+EXTRAPOLATED_DELTA_EPSILON = {"property": "dielectric-anisotropy", "kind": "extrapolated", "variable": "temperature"}
 
 
 class ChecksTestCase(CardTestCase):
@@ -23,7 +30,9 @@ class ChecksTestCase(CardTestCase):
 
     def setUp(self):
         super().setUp()
-        self.addresses = {name: reverse(f"repo:check_{name}", args=[self.article.pk]) for name in CHECKS}
+        self.addresses = {
+            name: reverse(f"repo:check_{name}", args=[self.article.pk, *args]) for name, args in CHECKS.items()
+        }
 
     def ask(self, check, runs=(), **material):
         """Send a card to the check for its material or for its runs, as checks.js sends it."""
@@ -40,8 +49,13 @@ class ChecksTestCase(CardTestCase):
         return self.client.post(self.add_page(self.article), {**self.table_data(table), "check": ""})
 
     def everything(self):
-        """A card and a table, so each check has something to read."""
-        return {**self.card_data([RM734_COOLING], smiles=RM734), **self.table_data(THREE_LINES)}
+        """A card, with a run and a block of values, and a table, so each check has something to read."""
+        return {**self.card_data([RM734_COOLING], [PS_BLOCK], smiles=RM734), **self.table_data(THREE_LINES)}
+
+    def ask_block(self, check, block):
+        """Send a card for RM734 with block as its first block of values, to the check for what
+        the block reads as (block) or for its boxes (block_boxes)."""
+        return self.client.post(self.addresses[check], self.card_data(blocks=[block], material="RM734"))
 
 
 class WhoMayUseThemTests(ChecksTestCase):
@@ -74,9 +88,17 @@ class WhoMayUseThemTests(ChecksTestCase):
                 self.assertEqual(client.post(address, {**self.everything(), "csrfmiddlewaretoken": token}).status_code, 200)
 
     def test_a_number_with_no_reference_gives_a_404(self):
-        for name in CHECKS:
+        for name, args in CHECKS.items():
             with self.subTest(name):
-                self.assertEqual(self.client.post(reverse(f"repo:check_{name}", args=[9999]), self.everything()).status_code, 404)
+                address = reverse(f"repo:check_{name}", args=[9999, *args])
+                self.assertEqual(self.client.post(address, self.everything()).status_code, 404)
+
+    def test_a_number_with_no_block_on_the_card_gives_a_404(self):
+        # The card has two blocks, numbered 0 and 1.
+        for name in ["block", "block_boxes"]:
+            with self.subTest(name):
+                address = reverse(f"repo:check_{name}", args=[self.article.pk, 2])
+                self.assertEqual(self.client.post(address, self.everything()).status_code, 404)
 
     def test_no_check_saves_anything(self):
         for name, address in self.addresses.items():
@@ -86,6 +108,7 @@ class WhoMayUseThemTests(ChecksTestCase):
         self.assertEqual(list(Material.objects.all()), [self.rm734])
         self.assertEqual(Material.objects.get().aliases, "")
         self.assertFalse(PhaseSequence.objects.exists())
+        self.assertFalse(Series.objects.exists())
 
 
 class MaterialTests(ChecksTestCase):
@@ -178,6 +201,89 @@ class TableTests(ChecksTestCase):
         self.assertEqual(self.ask_table(" \n").content, b"")
 
 
+class BlockBoxesTests(ChecksTestCase):
+    """The boxes a block's choice of property, kind and what it is against needs."""
+
+    def test_extrapolated_delta_epsilon_against_temperature_asks_its_frequency_but_not_the_cell(self):
+        answer = self.ask_block("block_boxes", EXTRAPOLATED_DELTA_EPSILON)
+
+        self.assertContains(answer, '<label for="id_block-0-condition_frequency_Hz">Frequency (Hz)</label>', html=True)
+        self.assertNotContains(answer, "condition_cell_gap_um")
+        self.assertNotContains(answer, "condition_electrode_coating")
+        self.assertContains(answer, '<p class="entry-form__help">Extrapolated Δε values must state: temperature, frequency.</p>', html=True)
+        self.assertContains(answer, 'name="block-0-direction"')  # against temperature, a curve's direction
+        self.assertContains(answer, 'list="block-0-method-suggestions"')
+        self.assertContains(answer, '<option value="dielectric spectroscopy">')
+        # Measured, it needs the cell too.
+        measured = self.ask_block("block_boxes", {**EXTRAPOLATED_DELTA_EPSILON, "kind": "measured"})
+        self.assertContains(measured, 'name="block-0-condition_cell_gap_um"')
+        self.assertContains(measured, 'name="block-0-condition_electrode_coating"')
+
+    def test_against_frequency_the_points_give_the_frequency_and_a_temperature_is_asked(self):
+        answer = self.ask_block("block_boxes", {**EXTRAPOLATED_DELTA_EPSILON, "variable": "frequency"})
+
+        self.assertNotContains(answer, "condition_frequency_Hz")
+        self.assertNotContains(answer, 'name="block-0-direction"')
+        self.assertContains(answer, 'name="block-0-temperature_c"')
+        self.assertContains(answer, "<label for=\"id_block-0-points\">Points: Frequency (Hz), Δε (dimensionless) and optionally ±</label>", html=True)
+
+    def test_what_was_typed_is_kept_and_the_boxes_are_what_check_draws(self):
+        answer = self.ask_block("block_boxes", DELTA_EPSILON)
+
+        self.assertContains(answer, 'name="block-0-condition_frequency_Hz" value="1000"')
+        self.assertContains(answer, "25, 5.2</textarea>")
+        check = self.send(blocks=[DELTA_EPSILON], material="RM734")
+        self.assertInHTML(answer.content.decode(), check.content.decode())
+
+    def test_with_nothing_chosen_it_says_to_choose(self):
+        answer = self.ask_block("block_boxes", {"location": "Table 2"})
+
+        self.assertContains(answer, "Choose what the values are of and against: the boxes they need appear here")
+        self.assertNotContains(answer, "condition_")
+
+
+class BlockReadingTests(ChecksTestCase):
+    """What a block's lines read as, under its problems."""
+
+    def test_a_ps_curve_with_a_bad_line_shows_19_points_the_bad_line_and_the_chart(self):
+        answer = self.ask_block("block", {**PS_BLOCK, "points": "\n".join(WITH_A_BAD_LINE)})
+
+        self.assertContains(answer, "19 points read, 1 line with a problem. Nothing has been saved.")
+        self.assertContains(
+            answer,
+            "<li>Values 1, Points: Temperature (°C), Ps (µC/cm²) and optionally ±: Line 12: “2..92” isn't a number.</li>",
+            html=True,
+        )
+        self.assertContains(answer, '<figure class="chart">', count=1)
+        self.assertContains(answer, CHART)
+
+    def test_it_reads_as_check_reads(self):
+        answer = self.ask_block("block", PS_BLOCK)
+        check = self.send(blocks=[PS_BLOCK], material="RM734")
+
+        for shown in ["20 points read, 0 lines with a problem. Nothing has been saved.", CHART]:
+            self.assertContains(answer, shown)
+            self.assertContains(check, shown)
+
+    def test_a_single_value_is_read_but_not_drawn(self):
+        answer = self.ask_block("block", DELTA_EPSILON)
+
+        self.assertContains(answer, "1 point read, 0 lines with a problem.")
+        self.assertNotContains(answer, '<figure class="chart">')
+
+    def test_every_problem_of_the_block_is_listed(self):
+        delta_epsilon = Property.objects.get(code="dielectric-anisotropy")
+
+        answer = self.ask_block("block", {**DELTA_EPSILON, "condition_frequency_Hz": "", "taken_from": ""})
+
+        self.assertContains(answer, f"<li>Values 1: {must_state(delta_epsilon, ['frequency_Hz'])}</li>", html=True)
+        self.assertContains(answer, "<li>Values 1, Taken from: This field is required.</li>", html=True)
+        self.assertContains(answer, "1 point read, 0 lines with a problem.")  # the lines still read
+
+    def test_a_block_left_empty_gives_an_empty_answer(self):
+        self.assertEqual(self.ask_block("block", {}).content, b"")
+
+
 class PageTests(ChecksTestCase):
     """What Django can see of the checks on the pages: the answer boxes, the parts that name
     them and the script."""
@@ -196,6 +302,23 @@ class PageTests(ChecksTestCase):
                 self.assertContains(response, '<fieldset data-check="card-material-result">', count=1)
                 self.assertContains(response, 'data-check="card-runs-result"', count=2)  # each run
                 self.assertContains(response, '<script src="/static/repo/checks.js" defer></script>', html=True)
+
+    def test_both_card_pages_have_each_blocks_boxes_and_answer_box(self):
+        pages = {
+            "Add data": self.client.get(self.add_page(self.article)),
+            "Check": self.send(blocks=[PS_BLOCK], material="RM734"),
+        }
+        for name, response in pages.items():
+            for i in range(2):  # the card's two blocks
+                with self.subTest(name, block=i):
+                    boxes = reverse("repo:check_block_boxes", args=[self.article.pk, i])
+                    reading = reverse("repo:check_block", args=[self.article.pk, i])
+                    self.assertContains(response, f'<fieldset class="value-block" data-check="block-{i}-reading">', count=1)
+                    self.assertContains(response, f'<div class="entry-form__row" data-boxes="block-{i}-boxes">', count=1)
+                    self.assertContains(response, f'<div id="block-{i}-boxes" data-boxes-url="{boxes}">', count=1)
+                    self.assertContains(
+                        response, f'<div id="block-{i}-reading" aria-live="polite" data-check-url="{reading}">', count=1
+                    )
 
     def test_the_add_data_page_has_the_tables_answer_box(self):
         response = self.client.get(self.add_page(self.article))

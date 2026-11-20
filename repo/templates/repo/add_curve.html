@@ -47,14 +47,8 @@
     </div>
   </form>
 
-  {# What Check read, once the box has lines in it. #}
-  {% if form.point_list or form.problem_lines %}
-  {% if form.header %}<p class="table-note">Line {{ form.header }} has no number in it, so it was read as a header.</p>{% endif %}
-  {% with n_points=form.point_list|length n_problems=form.problem_lines|length %}
-  <p>{{ n_points }} point{{ n_points|pluralize }} read, {{ n_problems }} line{{ n_problems|pluralize }} with a problem. Nothing has been saved.</p>
-  {% endwith %}
-  {% include "repo/_charts.html" %}
-  {% endif %}
+  {# What Check read, once the box has lines in it, and the chart. #}
+  {% include "repo/_curve_reading.html" %}
 </section>
 {% endif %}
 {% endblock %}

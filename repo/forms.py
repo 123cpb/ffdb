@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
 
-from . import chem, ribbons
+from . import charts, chem, ribbons
 from .models import (
     CONDITION_NAMES,
     CONDITION_UNITS,
@@ -1137,6 +1137,16 @@ class CurveForm(SeriesForm):
             self.add_error("points", ["Nothing is saved until every line is a point: fix or delete these lines.", *named])
         return cleaned
 
+    def curve_charts(self):
+        """The chart the points read make, drawn as the material page will draw it, in a list
+        as _charts.html takes it: drawn from the points read even when some lines weren't. The
+        list is empty while no point reads, and when every point is a limit, which chart()
+        gives as None. Ask only once the form has been checked."""
+        if not self.point_list:
+            return []
+        drawn = charts.chart(self.prop, self.kind, self.variable, [(self.series, self.point_list)])
+        return [drawn] if drawn else []
+
 
 class ValueBlockForm(CurveForm):
     """One block of values on a compound card, for the card's material: what the forms for a
@@ -1146,7 +1156,8 @@ class ValueBlockForm(CurveForm):
     Its first three boxes say what the values are of and against, as the first forms do. Once
     all three read, __init__ adds the boxes they need with choose(): the conditions, the
     direction or T, and the method's suggestions. So without JavaScript those appear after
-    Check. The rest is CurveForm's and SeriesForm's, so a block is refused by the same rules,
+    Check; with it, views.check_block_boxes draws them as soon as the choice changes. The rest
+    is CurveForm's and SeriesForm's, so a block is refused by the same rules,
     with the same messages. Its series has no material until the card gives it at Save. Pass
     the reference."""
 
@@ -1208,6 +1219,11 @@ class ValueBlockForm(CurveForm):
         if len(cleaned.get("points", [])) <= 1:
             fields["direction"] = Series.Direction.NOT_APPLICABLE
         return fields
+
+    def curve_charts(self):
+        """CurveForm's, but only for a curve: a block of one line is a single value, which
+        isn't drawn here. The lines counted are those read and those that weren't."""
+        return super().curve_charts() if len(self.point_list) + len(self.problem_lines) > 1 else []
 
 
 # Room for two blocks on a card, for a page without JavaScript, as for runs.
