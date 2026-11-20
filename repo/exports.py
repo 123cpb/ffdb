@@ -1,10 +1,12 @@
 """The CSV downloads: what the Materials page and a property page show, as files for a
-spreadsheet or for code. Nothing is combined: there is one row per material, per sequence
-or per point, so whoever uses the data combines it and knows how. Lists inside a cell,
-such as aliases, are separated by "; ", so a cell never looks like two to anyone who
-splits a line at its commas. Every file says whether each row's material is a compound
-or a mixture (material_kind), so a mixture's rows can be left out, for example by code
-that reads structures."""
+spreadsheet or for code. There is one row per material, per sequence or per point, and
+nothing is averaged or chosen, so whoever uses the data combines it and knows how. One
+thing is repeated: a values file gives each row's material's phase sequences, all of them,
+in one cell, so a property's values come with their structures and phases in one file, a
+dataset of their own (decided 20 November 2026). Lists inside a cell, such as aliases, are
+separated by "; ", so a cell never looks like two to anyone who splits a line at its commas.
+Every file says whether each row's material is a compound or a mixture (material_kind), so
+a mixture's rows can be left out, for example by code that reads structures."""
 
 import csv
 import json
@@ -143,11 +145,20 @@ def sequence_rows(materials):
 
 
 VALUE_COLUMNS = [
-    "material_id", "material", "material_kind", "smiles", "property", "symbol", "series_id",
-    "qualifier", "value", "unit", "uncertainty", "temperature_c", "variable", "x", "x_unit",
-    "kind", "method", "direction", "conditions", "conditions_json", "taken_from", "location",
-    "digitised", *REFERENCE_COLUMNS,
+    "material_id", "material", "material_kind", "smiles", "phase_sequences", "property", "symbol",
+    "series_id", "qualifier", "value", "unit", "uncertainty", "temperature_c", "variable", "x",
+    "x_unit", "kind", "method", "direction", "conditions", "conditions_json", "taken_from",
+    "location", "digitised", *REFERENCE_COLUMNS,
 ]
+
+
+def sequence_text(sequence):
+    """One phase sequence as a values file lists it: its standard sequence, then how it was
+    observed and its reference, in brackets: "Cr 34.4 NF 68.8 NS 84.5 N 173.6 Iso (Summary,
+    Chen 2022, Liq. Cryst.)". The sequence is what comes before the first " (". The words are
+    written here rather than taken from the pages' ribbon labels, so a change made for the
+    pages can't change the file."""
+    return f"{sequence.standard_sequence} ({sequence.run_text()}, {sequence.reference.label})"
 
 
 def value_rows(points):
@@ -158,7 +169,18 @@ def value_rows(points):
     twice, in words and as JSON for code. Choices are given as their stored codes:
     measured, cooling, figure, and the material's kind, compound or mixture. kind is the
     value's kind (measured, extrapolated or computed), not the material's. A mixture has
-    no SMILES."""
+    no SMILES. phase_sequences lists every sequence of the material, as the sequences file
+    orders them (sequence_text()), and is blank for a material with none."""
+    sequences = defaultdict(list)
+    # Every sequence of the points' materials, in one query, rather than one for each
+    # material. The points' materials go in as a subquery: the database finds them itself.
+    rows = (
+        PhaseSequence.objects.filter(material__in=points.values("series__material"))
+        .select_related("reference")
+        .order_by("material_id", "reference__identifier", "id")
+    )
+    for sequence in rows:
+        sequences[sequence.material_id].append(sequence_text(sequence))
     points = points.select_related(
         "series__material", "series__property", "series__variable", "series__reference"
     ).order_by(
@@ -170,9 +192,9 @@ def value_rows(points):
         material, prop, variable = series.material, series.property, series.variable
         yield [
             material.accession, material.name, material.kind, material.canonical_smiles,
-            prop.name, prop.symbol, series.pk, point.qualifier, point.value, prop.unit,
-            point.uncertainty, point.temperature_c, variable.code, point.x_value(), variable.unit,
-            series.kind, series.method, series.direction, conditions_text(series.conditions),
+            "; ".join(sequences[material.pk]), prop.name, prop.symbol, series.pk, point.qualifier,
+            point.value, prop.unit, point.uncertainty, point.temperature_c, variable.code,
+            point.x_value(), variable.unit, series.kind, series.method, series.direction, conditions_text(series.conditions),
             # sort_keys, as the words are sorted; ensure_ascii=False writes µ, not µ.
             json.dumps(series.conditions or {}, sort_keys=True, ensure_ascii=False),
             series.taken_from, series.location, "yes" if series.digitised else "no",

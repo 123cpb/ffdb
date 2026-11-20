@@ -152,6 +152,16 @@ class SequencesFileTests(ExportTestCase):
         self.assertEqual([row["material"] for row in rows], ["DIO", "DIO", "RM734"])
 
 
+# DIO's two sequences as a values file lists them: by reference identifier, so 10.1039/...
+# comes before Chen 2022's 10.1080/...; standardised, so Chen's NX is NS; and each with how it
+# was observed and its reference. The second reference has no author or year, so its label
+# is its identifier.
+DIO_SEQUENCES = (
+    "Cr 34 NF 69 N 174 Iso (Summary, 10.1039/d2sm01298g); "
+    "Cr 34.4 NF 68.8 NS 84.5 N 173.6 Iso (Summary, Chen 2022, Liq. Cryst.)"
+)
+
+
 class ValuesFileTests(ExportTestCase):
     ps_url = reverse("repo:property_values_csv", args=["ps"])
 
@@ -159,10 +169,11 @@ class ValuesFileTests(ExportTestCase):
         header, rows = self.download(self.ps_url)
 
         self.assertEqual(header, [
-            "material_id", "material", "material_kind", "smiles", "property", "symbol", "series_id",
-            "qualifier", "value", "unit", "uncertainty", "temperature_c", "variable", "x", "x_unit",
-            "kind", "method", "direction", "conditions", "conditions_json", "taken_from", "location",
-            "digitised", *REFERENCE_COLUMNS, "exported_at",
+            "material_id", "material", "material_kind", "smiles", "phase_sequences", "property",
+            "symbol", "series_id", "qualifier", "value", "unit", "uncertainty", "temperature_c",
+            "variable", "x", "x_unit", "kind", "method", "direction", "conditions",
+            "conditions_json", "taken_from", "location", "digitised", *REFERENCE_COLUMNS,
+            "exported_at",
         ])
         curves = [self.curves[name].pk for name in ("DIO", "RM734", "5CB")]
         self.assertEqual([int(row["series_id"]) for row in rows], [pk for pk in curves for _ in range(3)])
@@ -174,7 +185,7 @@ class ValuesFileTests(ExportTestCase):
 
         self.assertEqual(row, {
             "material_id": self.dio.accession, "material": "DIO", "material_kind": "compound",
-            "smiles": self.dio.canonical_smiles,
+            "smiles": self.dio.canonical_smiles, "phase_sequences": DIO_SEQUENCES,
             "property": "Spontaneous polarisation", "symbol": "Ps", "series_id": str(self.curves["DIO"].pk),
             "qualifier": "exact", "value": "6.08", "unit": "µC/cm²", "uncertainty": "",
             "temperature_c": "60.0", "variable": "temperature", "x": "60.0", "x_unit": "°C",
@@ -225,6 +236,46 @@ class ValuesFileTests(ExportTestCase):
 
         self.assertEqual([row["name"] for row in materials], ["DIO", "RM734"])
         self.assertEqual([(row["material"], row["symbol"]) for row in values], [("DIO", "Δn"), ("RM734", "Δn")])
+
+    def test_both_values_files_give_every_sequence_of_each_rows_material(self):
+        for url in (self.ps_url, reverse("repo:values_csv")):
+            with self.subTest(url=url):
+                cells = {row["material"]: row["phase_sequences"] for row in self.download(url)[1]}
+                self.assertEqual(cells["DIO"], DIO_SEQUENCES)
+                self.assertEqual(cells["RM734"], "Cr 139.8 NF 132.7 N 187.9 Iso (Summary, Chen 2022, Liq. Cryst.)")
+
+    def test_a_run_says_how_it_was_observed(self):
+        PhaseSequence.objects.create(
+            material=self.five_cb, reference=self.chen, direction=PhaseSequence.Direction.COOLING,
+            sequence="I 35 N 20 K", rate_k_per_min=5, method="DSC",
+        )
+
+        rows = self.download(self.ps_url)[1]
+
+        self.assertEqual(rows[-1]["phase_sequences"], (
+            "Cr 24 N 35.3 Iso (Summary, 10.1039/d2sm01298g); "
+            "Iso 35 N 20 Cr (Cooling, 5 K/min, DSC, Chen 2022, Liq. Cryst.)"
+        ))
+
+    def test_a_material_with_no_sequence_has_a_blank_cell(self):
+        six_cb = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
+        add(six_cb, self.other, "ps", **PS_CONDITIONS).points.create(value=1.0, temperature_c=30)
+
+        rows = self.download(self.ps_url)[1]
+
+        self.assertEqual([row["phase_sequences"] for row in rows if row["material"] == "6CB"], [""])
+
+    def test_more_materials_with_sequences_take_no_more_queries(self):
+        with CaptureQueriesContext(connection) as before:
+            self.download(self.ps_url)
+        six_cb = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
+        add(six_cb, self.other, "ps", **PS_CONDITIONS).points.create(value=1.0, temperature_c=30)
+        for reference in (self.chen, self.other):
+            PhaseSequence.objects.create(material=six_cb, reference=reference, sequence="K 14 N 29 I")
+        with CaptureQueriesContext(connection) as after:
+            self.download(self.ps_url)
+
+        self.assertEqual(len(after), len(before))
 
     def test_an_unknown_property_is_not_found(self):
         response = self.client.get(reverse("repo:property_values_csv", args=["no-such-property"]))
