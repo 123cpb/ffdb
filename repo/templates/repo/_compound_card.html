@@ -1,14 +1,21 @@
 {% comment %}
-A compound card, forms.CompoundCard (as card): its material, then its runs. It posts to
+A compound card, forms.CompoundCard (as card): its material, its runs, then its blocks of
+values (_value_block.html). It posts to
 views.add_compound, which shows what Check read. A reference's Add data page and the
 add-a-compound page both include it, with the editor's dialog (_draw_dialog.html) and the
-scripts for its Draw button (draw.js) and its phase steps (phase_steps.js).
+scripts for its Draw button (draw.js), its phase steps (phase_steps.js) and its checks as the
+curator types (checks.js).
+
+What the server makes of the card goes in two boxes, one after the material and one after the
+runs. Check fills them when the page comes back. checks.js fills them as the curator types: a
+part marked data-check names its box, and the box's data-check-url is the address that reads that part.
+Each box is a live region (aria-live), so a screen reader reads each new answer.
 {% endcomment %}
 <form method="post" action="{% url 'repo:add_compound' reference.pk %}" class="entry-form entry-form--wide">
   {% csrf_token %}
   {% for problem in card.problems %}<p class="form-error">{{ problem }}</p>{% endfor %}
   {% with form=card.material_form %}
-  <fieldset>
+  <fieldset data-check="card-material-result">
     <legend>Material</legend>
     <p class="entry-form__help">One already in FFDB, by its LCR ID or name, or a new compound, by its SMILES: fill in one of the two.</p>
     {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
@@ -21,11 +28,22 @@ scripts for its Draw button (draw.js) and its phase steps (phase_steps.js).
     <button type="button" class="secondary-button card-draw" data-draw data-smiles="{{ form.smiles.id_for_label }}" hidden>Draw the structure</button>
     {% include "repo/_entry_field.html" with field=form.name %}
   </fieldset>
+  <div id="card-material-result" aria-live="polite" data-check-url="{% url 'repo:check_card_material' reference.pk %}">
+    {% include "repo/_card_material_result.html" %}
+  </div>
   {% endwith %}
   {# The formset's hidden boxes: how many runs the page sent, so Django knows how many to read. #}
   {{ card.run_forms.management_form }}
   {% if card.run_forms.non_form_errors %}<p class="form-error">{{ card.run_forms.non_form_errors|join:" " }}</p>{% endif %}
   {% for form in card.run_forms %}{% include "repo/_run.html" with number=forloop.counter %}{% endfor %}
+  <div id="card-runs-result" aria-live="polite" data-check-url="{% url 'repo:check_card_runs' reference.pk %}">
+    {% include "repo/_card_runs_result.html" %}
+  </div>
+  <p class="entry-form__help">Values: one block for each property or curve. A heating and a cooling curve, or curves at two frequencies, are separate blocks.</p>
+  {# As for the runs: how many blocks the page sent. #}
+  {{ card.block_forms.management_form }}
+  {% if card.block_forms.non_form_errors %}<p class="form-error">{{ card.block_forms.non_form_errors|join:" " }}</p>{% endif %}
+  {% for form in card.block_forms %}{% include "repo/_value_block.html" with number=forloop.counter %}{% endfor %}
   {# The phase boxes' suggestions: their list attribute names this id (forms.PHASE_LIST). Plain HTML, so it works without JavaScript. #}
   <datalist id="phase-labels">
     {% for label, description in card.phase_suggestions %}<option value="{{ label }}">{{ description }}</option>{% endfor %}

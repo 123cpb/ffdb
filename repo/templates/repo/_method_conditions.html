@@ -1,7 +1,8 @@
 {% comment %}
 The method and conditions boxes of a second form for adding values (forms.SeriesForm, as
 form), with the property's usual methods as suggestions. The add-a-value and add-a-curve
-pages both include it inside their form.
+pages include it inside their form, and so does each block of values on a compound card
+(_value_block.html).
 {% endcomment %}
 <fieldset>
   <legend>Method and conditions</legend>
@@ -11,9 +12,9 @@ pages both include it inside their form.
   </div>
   {% include "repo/_entry_field.html" with field=form.other_conditions %}
 </fieldset>
-{# The method box's suggestions (its list attribute names this id). #}
+{# The method box's suggestions (its list attribute names this id, which has the form's prefix, so each block has its own). #}
 {% if form.prop.methods %}
-<datalist id="method-suggestions">
+<datalist id="{{ form.method_list }}">
   {% for method in form.prop.methods %}<option value="{{ method }}">{% endfor %}
 </datalist>
 {% endif %}

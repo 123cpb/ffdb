@@ -23,7 +23,8 @@
 <section>
   <h2>Add compounds</h2>
   {# views.add_from_reference gives the form, CompoundTableForm. No action: it posts to this page. #}
-  <form method="post" class="entry-form entry-form--wide">
+  {# data-check names the box checks.js puts what the server makes of the form in, after a pause in typing. #}
+  <form method="post" class="entry-form entry-form--wide" data-check="table-result">
     {% csrf_token %}
     <p class="entry-form__help">For every sequence in the table: whether they are summaries or runs, and how they were observed.</p>
     {# Every field but the table: direction, rate and method, side by side. #}
@@ -47,54 +48,11 @@
   {# The editor's dialog, for this table's Draw button and the card's above. #}
   {% include "repo/_draw_dialog.html" %}
 
-  {% if lines %}
-  {% if form.header %}<p class="table-note">Line {{ form.header }} has no digits, so it was read as a header.</p>{% endif %}
-  <p>{{ lines|length }} line{{ lines|length|pluralize }}: {{ status_counts.new }} new, {{ status_counts.in_ffdb }} in FFDB,
-  {{ status_counts.problem }} with a problem. Nothing has been saved. Save adds what this table shows, leaving out the
-  lines with a problem.</p>
-  <div class="table-scroll">
-    <table class="data-table compound-table">
-      <thead>
-        <tr>
-          <th scope="col">Line</th><th scope="col">Structure</th><th scope="col">Label</th>
-          <th scope="col">Status</th><th scope="col">Sequence (°C)</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for line in lines %}
-        <tr>
-          <td>{{ line.number }}</td>
-          <td class="compound-table__drawing">
-            {% if line.canonical_smiles %}<div role="img" aria-label="Structure of {{ line.label }}">{{ line.drawing }}</div>
-            {% elif line.match.kind == "mixture" %}<span class="result__mixture">Mixture</span>{% endif %}
-          </td>
-          <td>{{ line.label }}</td>
-          <td>
-            {% if line.status == "problem" %}
-            <span class="problem">Not saved: {{ line.problem }}</span>
-            <span class="cell-note">{{ line.text }}</span>
-            {% elif line.status == "in_ffdb" %}
-            In FFDB as <a href="{% url 'repo:material' line.match.pk %}">{{ line.match.accession }}</a>
-            {% if line.match.name %}<span class="result__name">{{ line.match.name }}</span>{% endif %}
-            <span class="cell-note">
-              {% if line.alias_problem %}{{ line.label }} won't be kept as an alias: {{ line.alias_problem }}.
-              {% else %}{{ line.label }} will be kept as an alias.{% endif %}
-            </span>
-            {% else %}
-            New
-            {% if line.stereo_warning %}<span class="cell-note stereo-warning">{{ line.stereo_warning }}</span>{% endif %}
-            {% endif %}
-          </td>
-          <td>
-            {{ line.standard_sequence|phase_html }}
-            {% if line.sequence_already_there %}<span class="cell-note">Already in FFDB from this reference: not added again.</span>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  {# What the server makes of the table (_table_lines.html): Check fills it when the page comes back, and checks.js as the curator types or pastes. #}
+  {# checks.js asks data-check-url. aria-live: a screen reader reads each new answer. #}
+  <div id="table-result" aria-live="polite" data-check-url="{% url 'repo:check_table' reference.pk %}">
+    {% include "repo/_table_lines.html" %}
   </div>
-  {% endif %}
 </section>
 
 <section>
@@ -138,7 +96,8 @@
 
 {% include "repo/_values.html" with empty="No property values from this reference." material_column=True %}
 
-{# The Draw buttons' script and the card's phase steps'. defer: they run once the page is read, so what they set up is there. #}
+{# The Draw buttons' script, the card's phase steps' and the checks as the curator types. defer: they run once the page is read, so what they set up is there. #}
 <script src="{% static 'repo/draw.js' %}" defer></script>
 <script src="{% static 'repo/phase_steps.js' %}" defer></script>
+<script src="{% static 'repo/checks.js' %}" defer></script>
 {% endblock %}

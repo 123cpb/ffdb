@@ -1,0 +1,56 @@
+{% comment %}
+What the server makes of a pasted compound table: each line read, with its drawing, whether it is
+new or in FFDB, and its standard sequence, or why it can't be saved. form is CompoundTableForm,
+and lines and status_counts come from views.table_reading(). A reference's Add data page shows
+it under the table: Check fills it when the page comes back, and views.check_table as the curator
+types or pastes.
+{% endcomment %}
+{% load repo_tags %}
+{% if lines %}
+{% if form.header %}<p class="table-note">Line {{ form.header }} has no digits, so it was read as a header.</p>{% endif %}
+<p>{{ lines|length }} line{{ lines|length|pluralize }}: {{ status_counts.new }} new, {{ status_counts.in_ffdb }} in FFDB,
+{{ status_counts.problem }} with a problem. Nothing has been saved. Save adds what this table shows, leaving out the
+lines with a problem.</p>
+<div class="table-scroll">
+  <table class="data-table compound-table">
+    <thead>
+      <tr>
+        <th scope="col">Line</th><th scope="col">Structure</th><th scope="col">Label</th>
+        <th scope="col">Status</th><th scope="col">Sequence (°C)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for line in lines %}
+      <tr>
+        <td>{{ line.number }}</td>
+        <td class="compound-table__drawing">
+          {% if line.canonical_smiles %}<div role="img" aria-label="Structure of {{ line.label }}">{{ line.drawing }}</div>
+          {% elif line.match.kind == "mixture" %}<span class="result__mixture">Mixture</span>{% endif %}
+        </td>
+        <td>{{ line.label }}</td>
+        <td>
+          {% if line.status == "problem" %}
+          <span class="problem">Not saved: {{ line.problem }}</span>
+          <span class="cell-note">{{ line.text }}</span>
+          {% elif line.status == "in_ffdb" %}
+          In FFDB as <a href="{% url 'repo:material' line.match.pk %}">{{ line.match.accession }}</a>
+          {% if line.match.name %}<span class="result__name">{{ line.match.name }}</span>{% endif %}
+          <span class="cell-note">
+            {% if line.alias_problem %}{{ line.label }} won't be kept as an alias: {{ line.alias_problem }}.
+            {% else %}{{ line.label }} will be kept as an alias.{% endif %}
+          </span>
+          {% else %}
+          New
+          {% if line.stereo_warning %}<span class="cell-note stereo-warning">{{ line.stereo_warning }}</span>{% endif %}
+          {% endif %}
+        </td>
+        <td>
+          {{ line.standard_sequence|phase_html }}
+          {% if line.sequence_already_there %}<span class="cell-note">Already in FFDB from this reference: not added again.</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}

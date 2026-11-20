@@ -6,7 +6,8 @@ seen only on cooling. Every step is in the page; the empty ones are skipped, and
 left empty. phase_steps.js shows only the steps in use, with "+ Add a phase" for the next and
 Remove on the last: both buttons are hidden, so without JavaScript every step is shown.
 {% endcomment %}
-<fieldset class="run" data-phase-builder>
+{# data-check: what the server makes of every run goes in one box after them (_compound_card.html), so they share an axis. #}
+<fieldset class="run" data-phase-builder data-check="card-runs-result">
   <legend>Run {{ number }}</legend>
   {# The parser's message, with the sequence the steps were written as. #}
   {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}

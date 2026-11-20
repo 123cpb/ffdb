@@ -1,0 +1,12 @@
+{% comment %}
+The box for a curve's points (forms.CurveForm, as form): its label, the problems, a message for
+each line with one, then the box and its help. The add-a-curve page and each block of values on
+a compound card (_value_block.html) include it.
+{% endcomment %}
+<label for="{{ form.points.id_for_label }}">{{ form.points.label }}</label>
+{# A list, because there is a message for each line with a problem. #}
+{% if form.points.errors %}
+<ul class="form-error" id="{{ form.points.auto_id }}_error">{% for error in form.points.errors %}<li>{{ error }}</li>{% endfor %}</ul>
+{% endif %}
+{{ form.points }}
+<p class="entry-form__help" id="{{ form.points.auto_id }}_helptext">{{ form.points.help_text }}</p>

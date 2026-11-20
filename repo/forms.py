@@ -493,7 +493,9 @@ class CardMaterialForm(forms.Form):
     FFDB unless Material.alias_problem() says why not.
 
     A valid form has found, the material in FFDB, or None for a new compound, which is then
-    in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be kept."""
+    in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be kept.
+    A SMILES that reads but isn't in FFDB also gives canonical_smiles, for the drawing, and the
+    stereo_warning, even when something else is wrong, such as the label not given yet."""
 
     material = forms.CharField(
         label="In FFDB: LCR ID or name", required=False, max_length=NAME_LENGTH,
@@ -512,7 +514,7 @@ class CardMaterialForm(forms.Form):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.found = self.new = None  # set by clean()
-        self.alias_problem = self.stereo_warning = ""
+        self.alias_problem = self.stereo_warning = self.canonical_smiles = ""
 
     def clean(self):
         cleaned = super().clean()
@@ -538,35 +540,42 @@ class CardMaterialForm(forms.Form):
         check it by the model's rules, with their messages: a structure retired from FFDB is
         refused, as in the admin."""
         try:
-            _, inchikey = chem.standardise(smiles)
+            canonical, inchikey = chem.standardise(smiles)
         except chem.StructureError as exc:
             self.add_error("smiles", str(exc))
             return
         self.found = Material.objects.filter(inchikey=inchikey).first()
         if self.found is not None:
             return
+        # Before the label is asked for: the label box comes after the SMILES box, so a check as
+        # the curator types shows the drawing and the warning before there is a label. A
+        # material not saved: the InChIKey is all stereo_warning() needs, as in the table.
+        self.canonical_smiles = canonical
+        self.stereo_warning = Material(inchikey=inchikey).stereo_warning()
         if not name:
             self.add_error("name", "Give the label the reference prints for this compound: it becomes its name.")
             return
         new = Material(name=name, smiles=smiles)
-        check_rules(self, new)  # full_clean() also fills in its identifiers, for the warning
+        check_rules(self, new)
         if not self.errors:
-            self.new, self.stereo_warning = new, new.stereo_warning()
+            self.new = new
 
     def drawing(self):
-        """A new compound's structure, for Check."""
-        return inline_drawing(self.new.canonical_smiles)
+        """The structure typed, when it isn't in FFDB, for Check."""
+        return inline_drawing(self.canonical_smiles)
 
 
 class CompoundCard:
-    """One compound card: its material (CardMaterialForm) and its runs (RunFormSet), sent as one
-    form. Each part's names start with its prefix: card-material, run-0-direction. Pass the data
-    sent, or None for an empty card, and the reference the data is from."""
+    """One compound card: its material (CardMaterialForm), its runs (RunFormSet) and its blocks
+    of values (ValueBlockFormSet), sent as one form. Each part's names start with its prefix:
+    card-material, run-0-direction, block-0-property. Pass the data sent, or None for an empty
+    card, and the reference the data is from."""
 
     def __init__(self, data, reference):
         self.material_form = CardMaterialForm(data, prefix="card")
         self.run_forms = RunFormSet(data, prefix="run", form_kwargs={"reference": reference})
-        self.runs, self.ribbon_data, self.problems = [], [], []  # set by is_valid()
+        self.block_forms = ValueBlockFormSet(data, prefix="block", form_kwargs={"reference": reference})
+        self.runs, self.ribbon_data, self.blocks, self.problems = [], [], [], []  # set by is_valid()
 
     def phase_suggestions(self):
         """The labels its runs' phase boxes suggest, for the card's <datalist>, as [(label, what it
@@ -582,18 +591,22 @@ class CompoundCard:
     def is_valid(self):
         """Whether Save can add everything on the card. Every part is checked, so each shows its
         own problems, and the runs that read are kept in runs, with what their ribbons are drawn
-        from in ribbon_data, for Check to show even when something else has a problem."""
-        valid = all([self.material_form.is_valid(), self.run_forms.is_valid()])  # a list: both are checked
+        from in ribbon_data, for Check to show even when something else has a problem. blocks
+        are the blocks of values filled in: the formset skips the others."""
+        parts = [self.material_form, self.run_forms, self.block_forms]
+        valid = all([part.is_valid() for part in parts])  # a list: every part is checked
         read = [form for form in self.run_forms if form.run is not None]
         self.runs, self.ribbon_data = [form.run for form in read], [form.ribbon for form in read]
-        self.problems = ["Add at least one run."] if valid and not self.runs else []
+        self.blocks = [form for form in self.block_forms if form.has_changed()]
+        self.problems = ["Add at least one run or block of values."] if valid and not (self.runs or self.blocks) else []
         return valid and not self.problems
 
     def save(self, user):
         """Add everything on the card in one transaction, so a failure partway keeps none of it:
         a new compound, named by its label, or the label as an alias of the material in FFDB, and
-        then each run, recorded as entered by user. Call it only on a valid card. Returns (the
-        material, whether it was added, whether the label was kept as an alias)."""
+        then each run and each block of values, recorded as entered by user. Call it only on a
+        valid card. Returns (the material, whether it was added, whether the label was kept as
+        an alias)."""
         form = self.material_form
         name = form.cleaned_data["name"]
         with transaction.atomic():
@@ -608,6 +621,9 @@ class CompoundCard:
                 run.material = material
                 run.mark_entered(user)
                 run.save()
+            for block in self.blocks:
+                block.series.material = material
+                block.save(user)  # SeriesForm.save(): its transaction is part of this one
         return material, added, kept
 
 
@@ -736,11 +752,12 @@ def check_rules(form, obj, **kwargs):
 
 class SeriesForm(forms.Form):
     """What both second forms ask: the method and conditions, and where in the reference the
-    values are. Pass the reference and the first form's cleaned_data as choice. There is a box
-    for each of the property's required conditions for the kind, apart from three given
-    another way: temperature and method, which have boxes of their own, and the condition the
-    series' variable stands for, which its points give (a frequency sweep gives its
-    frequencies). Other conditions are typed as key: value lines.
+    values are. Pass the reference and the first form's cleaned_data as choice, or no choice
+    for a form that reads its own (ValueBlockForm), which asks for no conditions until it calls
+    choose(). There is a box for each of the property's required conditions for the kind, apart
+    from three given another way: temperature and method, which have boxes of their own, and
+    the condition the series' variable stands for, which its points give (a frequency sweep
+    gives its frequencies). Other conditions are typed as key: value lines.
 
     clean() builds the series, not saved, and checks it by the rules for values
     (Series.clean()), so it is refused with the same messages as an import. Each subclass
@@ -763,23 +780,35 @@ class SeriesForm(forms.Form):
         help_text="e.g. Table 2, Fig. 3b or [0129].",
     )
 
-    def __init__(self, *args, reference, choice, **kwargs):
+    def __init__(self, *args, reference, choice=None, **kwargs):
         super().__init__(*args, **kwargs)
-        self.reference, self.material = reference, choice["material"]
-        self.prop, self.kind, self.variable = choice["property"], choice["kind"], choice["variable"]
-        self.required = self.prop.conditions_for(self.kind)  # for the line above the form
-        if self.prop.methods:
-            # The page's <datalist> of the property's methods: the browser offers them as the
-            # curator types, and anything else can still be typed.
-            self.fields["method"].widget.attrs["list"] = "method-suggestions"
-        given_another_way = {"temperature", "method", self.variable.condition}
+        self.reference = reference
+        self.material = choice["material"] if choice else None  # a block's comes from its card
+        self.prop = self.kind = self.variable = None  # set by choose()
+        self.required, self.condition_keys = [], []
+        # The id of the page's <datalist> of the property's methods. With the form's prefix, so
+        # each block on a card has its own: block-0-method-suggestions.
+        self.method_list = self.add_prefix("method-suggestions")
+        self.series, self.point_list = None, []  # built by clean()
+        if choice:
+            self.choose(choice["property"], choice["kind"], choice["variable"])
+
+    def choose(self, prop, kind, variable):
+        """Ask for what values of prop, of this kind, against variable need: a box for each
+        required condition not given another way, and the property's usual methods suggested."""
+        self.prop, self.kind, self.variable = prop, kind, variable
+        self.required = prop.conditions_for(kind)  # for the line above the form
+        if prop.methods:
+            # The browser offers the <datalist>'s methods as the curator types, and anything
+            # else can still be typed.
+            self.fields["method"].widget.attrs["list"] = self.method_list
+        given_another_way = {"temperature", "method", variable.condition}
         self.condition_keys = [key for key in self.required if key not in given_another_way]
         for key in self.condition_keys:
             unit = CONDITION_UNITS.get(key)
             label = capfirst(CONDITION_NAMES.get(key, key)) + (f" ({unit})" if unit else "")
             # Not required here, so a blank box gets the rules' message, as an import would.
             self.fields[f"condition_{key}"] = forms.CharField(label=label, required=False)
-        self.series, self.point_list = None, []  # built by clean()
 
     def condition_fields(self):
         """The boxes for the property's required conditions, for the template."""
@@ -811,6 +840,8 @@ class SeriesForm(forms.Form):
         cleaned = super().clean()
         if cleaned.get("taken_from") == Series.TakenFrom.FIGURE and not cleaned.get("location"):
             self.add_error("location", "Give the figure's label, e.g. Fig. 3b.")
+        if self.prop is None:
+            return cleaned  # nothing chosen yet, so no series: the boxes for the choice say so
         conditions = {
             key: condition_value(cleaned[f"condition_{key}"])
             for key in self.condition_keys
@@ -824,8 +855,10 @@ class SeriesForm(forms.Form):
             **self.series_fields(cleaned),
         )
         # A box that already has an error isn't checked again, so a blank one isn't refused
-        # twice. Series.clean() runs whatever is left out.
-        check_rules(self, self.series, exclude=list(self.errors))
+        # twice. Series.clean() runs whatever is left out. A block's material is left out too:
+        # its card gives it at Save.
+        exclude = list(self.errors) + (["material"] if self.material is None else [])
+        check_rules(self, self.series, exclude=exclude)
         return cleaned
 
     def save(self, user):
@@ -935,31 +968,36 @@ class PointLine:
     problem: str = ""  # why the line can't be read, or "" when it can
 
 
-def read_point_line(number, text, cells):
+def read_point_line(number, text, cells, has_x=True):
     """One line's cells as a PointLine: x, value and optionally ±, in that order, as the form
-    states them. A value starting with < or > is a limit. Nothing is converted."""
+    states them. Without has_x, for a value against nothing, there is no x: value and
+    optionally ±. A value starting with < or > is a limit. Nothing is converted."""
     line = PointLine(number, text)
-    if len(cells) not in (2, 3):
+    if has_x and len(cells) not in (2, 3):
         line.problem = f"Expected two or three cells (x, value and optionally ±), but found {len(cells)}."
         return line
-    x, value, uncertainty = (cells + [""])[:3]
+    if not has_x and len(cells) not in (1, 2):
+        line.problem = f"Expected one or two cells (value and optionally ±), but found {len(cells)}."
+        return line
+    x, value, uncertainty = (cells + [""])[:3] if has_x else ["", *(cells + [""])[:2]]
     line.qualifier = LIMIT_SIGNS.get(value[:1], Measurement.Qualifier.EXACT)
     if line.qualifier != Measurement.Qualifier.EXACT:
         value = value[1:]
     try:
-        line.x, line.value = point_number(x), point_number(value)
+        line.x = point_number(x) if has_x else None
+        line.value = point_number(value)
         line.uncertainty = point_number(uncertainty) if uncertainty else None
     except ValueError as exc:
         line.problem = str(exc)
     return line
 
 
-def read_points(text):
-    """The lines of a pasted curve as (header, lines), each line read as a PointLine. Blank
-    lines are skipped but still counted, so the numbers are the pasted text's. A first line
-    with no number in it, such as "T (°C), Ps (µC/cm²)", is a header: header is its number,
-    or None when there is none. Nothing else is skipped: a line that can't be read has its
-    problem."""
+def read_points(text, has_x=True):
+    """The lines of a pasted curve as (header, lines), each line read as a PointLine, with x
+    or, without has_x, without (read_point_line()). Blank lines are skipped but still counted,
+    so the numbers are the pasted text's. A first line with no number in it, such as
+    "T (°C), Ps (µC/cm²)", is a header: header is its number, or None when there is none.
+    Nothing else is skipped: a line that can't be read has its problem."""
     header, lines = None, []
     for number, text_line in enumerate(text.splitlines(), start=1):
         if not text_line.strip():
@@ -968,7 +1006,7 @@ def read_points(text):
         if header is None and not lines and not any(is_number(cell) for cell in cells):
             header = number
             continue
-        lines.append(read_point_line(number, text_line.strip(), cells))
+        lines.append(read_point_line(number, text_line.strip(), cells, has_x))
     return header, lines
 
 
@@ -983,6 +1021,7 @@ class CurveForm(SeriesForm):
     saved, only when every line is a point."""
 
     EMPTY = "Paste at least one line: x, then the value."
+    EMPTY_WITHOUT_X = "Paste at least one line: the value."
 
     direction = forms.ChoiceField(
         # No default, as for sequences: a default would quietly save a heating curve as Not
@@ -1001,27 +1040,51 @@ class CurveForm(SeriesForm):
         widget=forms.Textarea(attrs={"rows": 10, "spellcheck": "false"}),
         strip=False,  # stripping blank lines from the start would change the line numbers
         error_messages={"required": EMPTY},
-    )  # __init__ gives it its label and help, with the units
+    )  # choose() gives it its label and help, with the units
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.against_temperature = self.variable.code == Variable.TEMPERATURE
-        del self.fields["temperature_c" if self.against_temperature else "direction"]
-        points = self.fields["points"]
-        points.label = f"Points: {self.variable}, {self.prop.symbol} ({self.prop.unit}) and optionally ±"
-        points.help_text = (
-            f"One point a line: the {self.variable.name.lower()}, the value and, if the reference gives one, its ±, "
-            "separated by tabs (as pasted from a spreadsheet), commas or spaces. Start a value with < or > for an "
-            "upper or lower limit. Give them in these units: nothing is converted. A first line with no number in "
-            f"it is read as a header. At most {MAX_CURVE_POINTS:,} lines."
-        )
+        super().__init__(*args, **kwargs)  # which calls choose(), given a choice
         self.header, self.problem_lines = None, []  # set by clean_points() and clean()
 
+    @property
+    def against_temperature(self):
+        return self.variable is not None and self.variable.code == Variable.TEMPERATURE
+
+    @property
+    def has_x(self):
+        """Whether each line starts with x: not for a value against nothing."""
+        return self.variable is not None and self.variable.code != Variable.NONE
+
+    def choose(self, prop, kind, variable):
+        """What SeriesForm.choose() asks, and for the points: against temperature, which way
+        they were taken; against anything else, the temperature of every point; against
+        nothing, which only a block on a card can be, neither. The points box's label and help
+        name what each line gives, with the units."""
+        super().choose(prop, kind, variable)
+        if not self.against_temperature:
+            del self.fields["direction"]
+        if self.against_temperature or not self.has_x:
+            del self.fields["temperature_c"]
+        x_label, x_name = (f"{variable}, ", f"the {variable.name.lower()}, ") if self.has_x else ("", "")
+        points = self.fields["points"]
+        points.label = f"Points: {x_label}{prop.symbol} ({prop.unit}) and optionally ±"
+        points.help_text = (
+            f"One point a line: {x_name}the value and, if the reference gives one, its ±, separated by tabs (as "
+            "pasted from a spreadsheet), commas or spaces. Start a value with < or > for an upper or lower limit. "
+            "Give them in these units: nothing is converted. A first line with no number in it is read as a header. "
+            f"At most {MAX_CURVE_POINTS:,} lines."
+        )
+        if not self.has_x:
+            points.error_messages["required"] = self.EMPTY_WITHOUT_X
+
     def clean_points(self):
-        """The box's lines, read. A box with no lines or too many is refused as a whole."""
-        self.header, lines = read_points(self.cleaned_data["points"])
+        """The box's lines, read. A box with no lines or too many is refused as a whole. Until
+        something is chosen they aren't read: whether a line starts with x isn't known."""
+        if self.variable is None:
+            return []
+        self.header, lines = read_points(self.cleaned_data["points"], self.has_x)
         if not lines:
-            raise ValidationError(self.EMPTY)
+            raise ValidationError(self.fields["points"].error_messages["required"])
         if len(lines) > MAX_CURVE_POINTS:
             raise ValidationError(
                 f"A curve can have at most {MAX_CURVE_POINTS:,} lines, and this one has {len(lines):,}. FFDB never "
@@ -1039,6 +1102,8 @@ class CurveForm(SeriesForm):
 
     def clean(self):
         cleaned = super().clean()  # builds and checks the series
+        if self.series is None:
+            return cleaned  # nothing chosen yet, so no points
         box_messages = {}  # the rules' messages about the T box, each once: a dict keeps their order
         for line in cleaned.get("points", []):
             if line.problem:
@@ -1071,6 +1136,82 @@ class CurveForm(SeriesForm):
                 named.append(f"…and {more:,} more line{'' if more == 1 else 's'} with a problem.")
             self.add_error("points", ["Nothing is saved until every line is a point: fix or delete these lines.", *named])
         return cleaned
+
+
+class ValueBlockForm(CurveForm):
+    """One block of values on a compound card, for the card's material: what the forms for a
+    single value and a curve ask, on one form. One line is a single value and several are a
+    curve, with CurveForm's columns: x, the value and optionally ±, and no x against nothing.
+
+    Its first three boxes say what the values are of and against, as the first forms do. Once
+    all three read, __init__ adds the boxes they need with choose(): the conditions, the
+    direction or T, and the method's suggestions. So without JavaScript those appear after
+    Check. The rest is CurveForm's and SeriesForm's, so a block is refused by the same rules,
+    with the same messages. Its series has no material until the card gives it at Save. Pass
+    the reference."""
+
+    ONE_LINE_HAS_NO_DIRECTION = (
+        "One line is a single value, which has no direction: leave this empty, or give the curve's lines."
+    )
+
+    property = forms.ModelChoiceField(queryset=Property.objects.all(), to_field_name="code", empty_label="Choose…")
+    # No default, as in the first forms: a default of measured would quietly save a computed value as measured.
+    kind = forms.ChoiceField(choices=[("", "Choose…"), *Series.Kind.choices])
+    variable = forms.ModelChoiceField(
+        label="Against", queryset=Variable.objects.all(), to_field_name="code", empty_label="Choose…"
+    )
+    field_order = ["property", "kind", "variable"]  # first, as on the page
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)  # no choice
+        self.fields["property"].choices = property_choices(self.fields["property"])
+        self.fields["variable"].label_from_instance = (
+            lambda v: "Nothing: no temperature, e.g. a gas-phase calculation" if v.code == Variable.NONE else str(v)
+        )
+        chosen = [self.chosen(name) for name in ("property", "kind", "variable")]
+        if all(chosen):
+            self.choose(*chosen)
+        else:
+            # Which of the two a block needs depends on what it is against.
+            del self.fields["direction"], self.fields["temperature_c"]
+
+    def chosen(self, name):
+        """What box name holds, read by its field as validation will read it, or None while
+        it doesn't read."""
+        try:
+            return self.fields[name].clean(self[name].data)
+        except ValidationError:
+            return None
+
+    def choose(self, prop, kind, variable):
+        """CurveForm's, but one line is a single value, which has no direction, so a block
+        against temperature doesn't always need one: clean() says when it does."""
+        super().choose(prop, kind, variable)
+        if self.against_temperature:
+            self.fields["direction"].required = False
+        self.fields["points"].help_text = "One line is a single value, several are a curve. " + self.fields["points"].help_text
+
+    def clean(self):
+        # Before CurveForm checks the series, so these messages come instead of the rules'.
+        n_lines = len(self.cleaned_data.get("points", []))
+        direction = self.cleaned_data.get("direction")
+        if self.against_temperature and n_lines > 1 and not direction:
+            self.add_error("direction", self.fields["direction"].error_messages["required"])  # CurveForm's message
+        elif self.against_temperature and n_lines == 1 and direction:
+            self.add_error("direction", self.ONE_LINE_HAS_NO_DIRECTION)
+        return super().clean()
+
+    def series_fields(self, cleaned):
+        """CurveForm's, but one line is a single value, which is no temperature sweep, as
+        ValueForm stores it. So is a box refused as a whole, which has no lines to count."""
+        fields = super().series_fields(cleaned)
+        if len(cleaned.get("points", [])) <= 1:
+            fields["direction"] = Series.Direction.NOT_APPLICABLE
+        return fields
+
+
+# Room for two blocks on a card, for a page without JavaScript, as for runs.
+ValueBlockFormSet = forms.formset_factory(ValueBlockForm, extra=2)
 
 
 # A mixture from a reference: its components in FFDB, typed or pasted one per line, and the

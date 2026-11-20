@@ -1,0 +1,40 @@
+{% comment %}
+One block of values on a compound card, forms.ValueBlockForm (as form), numbered by number: one
+line is a single value, several are a curve. Its first boxes say what the values are of and
+against. The boxes those need (the conditions, the direction or T, and the method's
+suggestions) are in the form only once all three read, so without JavaScript they appear after
+Check. A block left empty is skipped.
+{% endcomment %}
+{% load repo_tags %}
+<fieldset class="value-block">
+  <legend>Values {{ number }}</legend>
+  {# Problems that belong to no one box, such as a required condition left out. #}
+  {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=form.property %}
+    {% include "repo/_entry_field.html" with field=form.kind %}
+    {% include "repo/_entry_field.html" with field=form.variable %}
+  </div>
+  {% if not form.prop %}
+  <p class="entry-form__help">Choose what the values are of and against, then Check: the boxes they need appear.</p>
+  {% elif form.required %}
+  <p class="entry-form__help">{{ form.kind|capfirst }} {{ form.prop.symbol }} values must state: {{ form.required|condition_names }}.</p>
+  {% endif %}
+  {% include "repo/_method_conditions.html" %}
+  <fieldset>
+    <legend>Where in the reference</legend>
+    <div class="entry-form__row">
+      {% include "repo/_entry_field.html" with field=form.taken_from %}
+      {% include "repo/_entry_field.html" with field=form.location %}
+      {% include "repo/_entry_field.html" with field=form.digitised %}
+    </div>
+    {% include "repo/_entry_field.html" with field=form.notes %}
+  </fieldset>
+  <fieldset>
+    <legend>Points</legend>
+    {# Against temperature, a curve's direction; against another variable, one T for every point; against nothing, neither. #}
+    {% if form.against_temperature %}{% include "repo/_entry_field.html" with field=form.direction %}
+    {% elif form.has_x %}{% include "repo/_entry_field.html" with field=form.temperature_c %}{% endif %}
+    {% include "repo/_points_box.html" %}
+  </fieldset>
+</fieldset>

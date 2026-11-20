@@ -1,0 +1,14 @@
+{% comment %}
+What a check as the curator types sends back, for checks.js to put in the page: the problems
+of each form in problem_forms, a list of (title, form), each naming the box it is about, then
+result, the template Check shows that part with. Check shows the problems at their boxes
+instead, but a script can't draw the boxes again without losing the curator's place.
+views.check_card_material, check_card_runs and check_table send it.
+{% endcomment %}
+{% for title, form in problem_forms %}{% if form.errors %}
+<ul class="form-error">
+  {% for error in form.non_field_errors %}<li>{% if title %}{{ title }}: {% endif %}{{ error }}</li>{% endfor %}
+  {% for field in form %}{% for error in field.errors %}<li>{% if title %}{{ title }}, {% endif %}{{ field.label }}: {{ error }}</li>{% endfor %}{% endfor %}
+</ul>
+{% endif %}{% endfor %}
+{% include result %}

@@ -67,14 +67,21 @@ class CardTestCase(AddDataTestCase):
         super().setUp()
         self.page = reverse("repo:add_compound", args=[self.article.pk])
 
-    def send(self, runs=(), button="check", follow=False, **material):
-        """Post the card with the Check or Save button: material is its boxes, by name (material,
-        smiles, name), and runs fills the two runs, the rest left empty."""
-        data = {"run-TOTAL_FORMS": "2", "run-INITIAL_FORMS": "0", button: ""}
+    def card_data(self, runs=(), blocks=(), **material):
+        """The card's boxes as the page sends them: material is its boxes, by name (material,
+        smiles, name), runs fills the two runs and blocks the two blocks of values, each a
+        dict of its boxes by name, the rest left empty."""
+        data = {"run-TOTAL_FORMS": "2", "run-INITIAL_FORMS": "0", "block-TOTAL_FORMS": "2", "block-INITIAL_FORMS": "0"}
         data.update({f"card-{key}": value for key, value in material.items()})
         for i, run in enumerate([*runs, *[EMPTY_RUN] * (2 - len(runs))]):
             data.update({f"run-{i}-{key}": value for key, value in run.items()})
-        return self.client.post(self.page, data, follow=follow)
+        for i, block in enumerate(blocks):
+            data.update({f"block-{i}-{key}": value for key, value in block.items()})
+        return data
+
+    def send(self, runs=(), button="check", follow=False, blocks=(), **material):
+        """Post the card with the Check or Save button."""
+        return self.client.post(self.page, {**self.card_data(runs, blocks, **material), button: ""}, follow=follow)
 
     def card(self, response):
         return response.context["card"]
@@ -117,6 +124,13 @@ class CheckTests(CardTestCase):
         self.assertContains(response, '<div role="img" aria-label="Structure of 5CB"><svg')
         self.assertContains(response, "Cr 24 N 35.3 Iso")
         self.assertEqual(Material.objects.count(), 1)
+
+    def test_a_new_structure_is_drawn_before_its_label_is_given(self):
+        response = self.send([FIVE_CB_HEATING], smiles=FIVE_CB)
+
+        self.assertContains(response, '<div role="img" aria-label="Structure from the SMILES"><svg')
+        self.assertContains(response, "Not in FFDB")
+        self.assertContains(response, "Give the label the reference prints for this compound: it becomes its name.")
 
     def test_a_structure_already_in_ffdb_finds_that_material_and_says_what_happens_to_the_label(self):
         response = self.send([RM734_COOLING], smiles=RM734, name="MB-1")
@@ -242,10 +256,10 @@ class SaveTests(CardTestCase):
         self.assertFalse(PhaseSequence.objects.exists())
         self.assertContains(response, '<svg class="ribbon"', count=1)  # Check still shows the run that reads
 
-    def test_a_card_with_no_runs_is_refused(self):
+    def test_a_card_with_no_runs_and_no_values_is_refused(self):
         response = self.send([], "save", material="RM734", name="MB-1")
 
-        self.assertContains(response, "Add at least one run.")
+        self.assertContains(response, "Add at least one run or block of values.")
         self.rm734.refresh_from_db()
         self.assertEqual(self.rm734.aliases, "")
 

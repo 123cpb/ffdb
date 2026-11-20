@@ -11,6 +11,7 @@ from django.db.models import Count, F, Min, Q
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
+from django.views.decorators.http import require_POST
 
 from . import charts, chem, crossref, exports, ribbons
 from .forms import (
@@ -647,16 +648,11 @@ def add_from_reference(request, pk):
             if line.problem:
                 messages.error(request, f"Line {line.number} not saved: {line.problem} The line: {line.text}")
         return redirect("repo:add_from_reference", reference.pk)
-    # The lines Check read, or none: an unbound form, or one refused as a whole.
-    lines = form.cleaned_data["table"] if form.is_valid() else []
     context = {
         "nav": "add",
         "reference": reference,
         "form": form,
-        "lines": lines,
-        # How many lines have each status, for the line above the table: {"new": 2, ...}.
-        # A Counter gives 0 for a status no line has.
-        "status_counts": Counter(line.status for line in lines),
+        **table_reading(form),
         "materials": reference.materials(),
         # The first forms for adding a single value and a curve, sent to add_value and
         # add_curve. Both have a material box: auto_id gives the curve's boxes other ids, so
@@ -672,30 +668,105 @@ def add_from_reference(request, pk):
     return render(request, "repo/add_from_reference.html", context)
 
 
+def table_reading(form):
+    """What a compound table's Check shows (_table_lines.html), from its CompoundTableForm: the
+    lines read, or none for an unbound form or one refused as a whole, and how many lines have
+    each status, for the line above the table: {"new": 2, ...}. A Counter gives 0 for a status
+    no line has. The Add data page and the table's check as the curator types both use it."""
+    lines = form.cleaned_data["table"] if form.is_valid() else []
+    return {"lines": lines, "status_counts": Counter(line.status for line in lines)}
+
+
+# Checks as the curator types (checks.js). Each reads one part of a form with the code its Check
+# uses, and sends back that part as Check shows it, from the same template, with any problems
+# listed first (_check_answer.html). The script puts the answer in the page in place of the last
+# one. Curators only, as their pages are. POST only, as the forms are, so each takes the form's
+# CSRF token, which the script sends with the rest of the form. Nothing is saved.
+
+
+def check_answer(request, problem_forms, result, context):
+    """The answer: the problems of each (title, form) in problem_forms, then the template result
+    with context."""
+    return render(request, "repo/_check_answer.html", {"problem_forms": problem_forms, "result": result, **context})
+
+
+def checked_card(request, pk):
+    """The compound card sent, read exactly as views.add_compound's Check reads it."""
+    card = CompoundCard(request.POST, get_object_or_404(Reference, pk=pk))
+    card.is_valid()
+    return card
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+@require_POST
+def check_card_material(request, pk):
+    """What the server makes of a compound card's material. With all its boxes empty the answer
+    is empty, rather than a message asking for one of them."""
+    form = checked_card(request, pk).material_form
+    if not form.has_changed():
+        return HttpResponse()
+    return check_answer(request, [("", form)], "repo/_card_material_result.html", {"form": form})
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+@require_POST
+def check_card_runs(request, pk):
+    """What the server makes of a compound card's runs: those that read, on one axis, and each
+    other run's problems under its number. A run left as the page shows it is skipped, as Check
+    skips it, so with none filled in the answer is empty."""
+    card = checked_card(request, pk)
+    sequence_rows, axis = sequence_ribbons(card.runs, card.ribbon_data)
+    runs = [(f"Run {number}", form) for number, form in enumerate(card.run_forms, start=1)]
+    return check_answer(
+        request, runs, "repo/_card_runs_result.html", {"sequence_rows": sequence_rows, "axis": axis}
+    )
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+@require_POST
+def check_table(request, pk):
+    """What the server makes of a compound table, as its Check shows it. With the table empty
+    the answer is empty, rather than a message asking for a line."""
+    form = CompoundTableForm(request.POST, reference=get_object_or_404(Reference, pk=pk))
+    if not request.POST.get("table", "").strip():
+        return HttpResponse()
+    return check_answer(request, [("", form)], "repo/_table_lines.html", {"form": form, **table_reading(form)})
+
+
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
 def add_compound(request, pk):
-    """Adding a compound card from a reference: its material, in FFDB or new, and its runs. The
-    empty card is on the reference's Add data page and posts here. Check reads it and shows what
-    Save would add: the material, and each run that reads with its standard sequence and ribbon,
-    as the material's page will show them, saving nothing. Save (a POST with save in it) reads it
-    again and adds all of it, or nothing while anything on the card has a problem, and sends the
-    curator back to the Add data page with a redirect, so reloading can't save twice. A number
-    with no reference gives a 404."""
+    """Adding a compound card from a reference: its material, in FFDB or new, its runs and its
+    blocks of values. The empty card is on the reference's Add data page and posts here. Check
+    reads it and shows what Save would add: the material, and each run that reads with its
+    standard sequence and ribbon, as the material's page will show them, and each block's
+    problems at its boxes, saving nothing. Save (a POST with save in it) reads it again and adds
+    all of it, or nothing while anything on the card has a problem, and sends the curator back
+    to the Add data page with a redirect, so reloading can't save twice. A number with no
+    reference gives a 404."""
     reference = get_object_or_404(Reference, pk=pk)
     card = CompoundCard(request.POST if request.method == "POST" else None, reference)
     if card.is_valid() and "save" in request.POST:
         material, added, kept = card.save(request.user)
-        runs = f"{len(card.runs)} run{pluralize(len(card.runs))}"
+        # What was saved, leaving out a part the card didn't have: "1 run and 2 blocks of values".
+        parts = []
+        if card.runs:
+            parts.append(f"{len(card.runs)} run{pluralize(len(card.runs))}")
+        if card.blocks:
+            parts.append(f"{len(card.blocks)} block{pluralize(len(card.blocks))} of values")
+        saved = " and ".join(parts)
         if added:
-            messages.success(request, f"Added {material.name} as {material.accession}, with {runs}.")
+            messages.success(request, f"Added {material.name} as {material.accession}, with {saved}.")
             # Asked again now it is saved, so the warning names it by its LCR ID.
             warning = material.stereo_warning()
             if warning:
                 messages.warning(request, warning)
         else:
             alias = f" {card.material_form.cleaned_data['name']} is kept as one of its aliases." if kept else ""
-            messages.success(request, f"Saved {runs} for {material}.{alias}")
+            messages.success(request, f"Saved {saved} for {material}.{alias}")
         return redirect("repo:add_from_reference", reference.pk)
     sequence_rows, axis = sequence_ribbons(card.runs, card.ribbon_data)
     context = {"nav": "add", "reference": reference, "card": card, "sequence_rows": sequence_rows, "axis": axis}

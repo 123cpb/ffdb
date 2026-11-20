@@ -41,6 +41,9 @@ function setUpPhaseSteps(run) {
     if (!remove) return;  // the first two steps have none
     remove.addEventListener("click", () => {
       step.querySelectorAll("input").forEach((box) => { box.value = ""; });
+      // Cleared by script, which doesn't say the boxes changed, as typing does: this does, so
+      // checks.js reads the run again without the step.
+      step.dispatchEvent(new Event("input", { bubbles: true }));
       shown = i;
       show();
       addButton.focus();  // the Remove button pressed is hidden now, so the focus goes somewhere near

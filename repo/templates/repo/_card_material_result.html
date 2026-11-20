@@ -1,0 +1,32 @@
+{% comment %}
+What the server makes of a compound card's material, forms.CardMaterialForm (as form): the
+material in FFDB, or the structure typed, drawn, with whether it is new and any stereochemistry
+warning. The card shows it under its material: Check fills it when the page comes back, and
+views.check_card_material as the curator types. An empty card shows nothing.
+{% endcomment %}
+{% if form.found %}
+<div class="card-material">
+  {% if form.found.kind == "compound" %}
+  <img src="{{ form.found.thumbnail_url }}" alt="Structure of {{ form.found.name }}" width="200" height="128">
+  {% else %}<span class="result__mixture">Mixture</span>{% endif %}
+  <p>
+    In FFDB as <a href="{% url 'repo:material' form.found.pk %}">{{ form.found.accession }}</a>
+    {% if form.found.name %}<span class="result__name">{{ form.found.name }}</span>{% endif %}
+    {% with label=form.cleaned_data.name %}{% if label %}
+    <span class="cell-note">
+      {% if form.alias_problem %}{{ label }} won't be kept as an alias: {{ form.alias_problem }}.
+      {% else %}{{ label }} will be kept as an alias.{% endif %}
+    </span>
+    {% endif %}{% endwith %}
+  </p>
+</div>
+{% elif form.canonical_smiles %}
+{# A structure that read but isn't in FFDB. It is a new compound once it has its label and the model's rules pass. #}
+<div class="card-material">
+  <div role="img" aria-label="Structure {% if form.new %}of {{ form.new.name }}{% else %}from the SMILES{% endif %}">{{ form.drawing }}</div>
+  <p>
+    {% if form.new %}New compound, named {{ form.new.name }}{% else %}Not in FFDB{% endif %}
+    {% if form.stereo_warning %}<span class="cell-note stereo-warning">{{ form.stereo_warning }}</span>{% endif %}
+  </p>
+</div>
+{% endif %}

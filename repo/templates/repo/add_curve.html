@@ -38,13 +38,7 @@
         {% if form.against_temperature %}{% include "repo/_entry_field.html" with field=form.direction %}
         {% else %}{% include "repo/_entry_field.html" with field=form.temperature_c %}{% endif %}
       </div>
-      <label for="{{ form.points.id_for_label }}">{{ form.points.label }}</label>
-      {# A list, because there is a message for each line with a problem. #}
-      {% if form.points.errors %}
-      <ul class="form-error" id="{{ form.points.auto_id }}_error">{% for error in form.points.errors %}<li>{{ error }}</li>{% endfor %}</ul>
-      {% endif %}
-      {{ form.points }}
-      <p class="entry-form__help" id="{{ form.points.auto_id }}_helptext">{{ form.points.help_text }}</p>
+      {% include "repo/_points_box.html" %}
     </fieldset>
     {# The button's name is sent with the form, so the view can tell Save from Check. #}
     <div class="entry-form__buttons">

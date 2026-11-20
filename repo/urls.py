@@ -27,4 +27,8 @@ urlpatterns = [
     path("add/reference/<int:pk>/value/", views.add_value, name="add_value"),
     path("add/reference/<int:pk>/curve/", views.add_curve, name="add_curve"),
     path("add/reference/<int:pk>/mixture/", views.add_mixture, name="add_mixture"),
+    # The checks as the curator types: each reads one part of a form and sends back HTML (POST only).
+    path("add/reference/<int:pk>/check/material/", views.check_card_material, name="check_card_material"),
+    path("add/reference/<int:pk>/check/runs/", views.check_card_runs, name="check_card_runs"),
+    path("add/reference/<int:pk>/check/table/", views.check_table, name="check_table"),
 ]

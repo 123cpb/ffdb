@@ -68,6 +68,9 @@ function setUpDrawing() {
     const text = table.value;
     const newline = text && !text.endsWith("\n") ? "\n" : "";
     table.value = text + newline + line;
+    // Setting a box's value by script doesn't say it changed, as typing does: this does, so
+    // checks.js reads the table with its new line.
+    table.dispatchEvent(new Event("input", { bubbles: true }));
     table.focus();
     table.setSelectionRange(table.value.length, table.value.length);
     table.scrollTop = table.scrollHeight;
@@ -137,6 +140,7 @@ function setUpDrawing() {
     } else {
       const box = document.getElementById(pressed.dataset.smiles);
       box.value = smiles;
+      box.dispatchEvent(new Event("input", { bubbles: true }));  // so checks.js checks the structure, as for the table
       box.focus();
     }
   });
