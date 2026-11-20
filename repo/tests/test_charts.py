@@ -1,7 +1,7 @@
 from django.urls import reverse
 
 from repo.charts import DENSE_POINTS, LABELLED_LINES, chart_groups, figure, plotted_points, to_svg
-from repo.models import Measurement, Reference, Series, Variable
+from repo.models import Material, Measurement, Reference, Series, Variable
 from repo.tests.test_property_pages import PS_CONDITIONS, PropertyPagesTestCase
 from repo.tests.test_values import ValuesTestCase, add
 
@@ -131,6 +131,9 @@ class PropertyPageChartTests(PropertyPagesTestCase):
     its DOI."""
 
     def page(self, **params):
+        """The Ps page with all three materials ticked, so every series is drawn. A list
+        in params goes in the address once for each item: material=1&material=2."""
+        params.setdefault("material", [self.dio.pk, self.rm734.pk, self.five_cb.pk])
         return self.client.get(reverse("repo:property", args=["ps"]), params)
 
     def ps_figure(self):
@@ -198,3 +201,53 @@ class PropertyPageChartTests(PropertyPagesTestCase):
             self.assertLess(svg.index(dio), svg.index(five_cb), sort)
 
         self.assertEqual(response.context["series_list"][0].material, self.five_cb)  # the table did re-sort
+
+
+class ChartChoiceTests(PropertyPagesTestCase):
+    """Choosing which of the three Ps materials the property page's chart draws."""
+
+    def page(self, **params):
+        return self.client.get(reverse("repo:property", args=["ps"]), params)
+
+    def test_nothing_is_drawn_until_a_material_is_ticked(self):
+        response = self.page()
+
+        self.assertNotContains(response, '<figure class="chart">')
+        self.assertContains(response, "Tick materials and select Draw to chart their values.")
+        self.assertContains(response, 'type="checkbox" name="material"', count=3)
+        self.assertNotContains(response, "checked")
+
+    def test_a_ticked_material_is_drawn_alone(self):
+        response = self.page(material=[self.rm734.pk])
+
+        self.assertContains(response, '<figure class="chart">', count=1)
+        self.assertContains(response, "1 series of 1 material, from Chen 2022")
+        svg = response.context["charts"][0]["svg"]
+        self.assertIn(f"{self.rm734.accession} RM734", svg)
+        self.assertNotIn(f"{self.dio.accession} DIO", svg)
+        self.assertContains(
+            response, f'<input type="checkbox" name="material" value="{self.rm734.pk}" checked>', html=True
+        )
+        # The table still lists every value.
+        self.assertEqual(len(response.context["series_list"]), 3)
+
+    def test_a_material_without_this_property_is_ignored(self):
+        no_ps = Material.objects.create(name="Ethanol", smiles="CCO")
+
+        response = self.page(material=[no_ps.pk, "abc"])
+
+        self.assertEqual(response.context["chosen"], [])
+        self.assertNotContains(response, '<figure class="chart">')
+        self.assertEqual(self.page(material=[no_ps.pk, self.dio.pk]).context["chosen"], [self.dio.pk])
+
+    def test_the_sort_and_the_choice_keep_each_other(self):
+        ticked = f"material={self.dio.pk}"
+
+        by_material = self.page(material=[self.dio.pk])
+        self.assertContains(by_material, f'<a href="?{ticked}&amp;sort=value">Value</a>', html=True)
+        self.assertNotContains(by_material, 'name="sort"')
+
+        by_value = self.page(material=[self.dio.pk], sort="value")
+        link = reverse("repo:property", args=["ps"])
+        self.assertContains(by_value, f'<a href="{link}?{ticked}">Material</a>', html=True)
+        self.assertContains(by_value, '<input type="hidden" name="sort" value="value">', html=True)

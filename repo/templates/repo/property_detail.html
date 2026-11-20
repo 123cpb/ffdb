@@ -20,17 +20,35 @@
   {% if series_list %}
   <p>{{ property.n_materials }} material{{ property.n_materials|pluralize }} from {{ property.n_references }} reference{{ property.n_references|pluralize }}. Each row is one value or one curve, as its reference gives it.</p>
   <p class="downloads"><a href="{% url 'repo:property_values_csv' property.code %}">Download these values as CSV</a>, one row per point.</p>
-  {% include "repo/_charts.html" %}
+  {% comment %}
+  The materials the charts draw. A GET form, so the choice goes in the address, as the sort
+  does, and the sort chosen goes with it. The default sort has no ?sort=, so needs no box.
+  {% endcomment %}
+  <form class="chart-choice" method="get">
+    <fieldset>
+      <legend>Materials to draw</legend>
+      <div class="chart-choice__boxes">
+        {% for material in choices %}
+        <label><input type="checkbox" name="material" value="{{ material.pk }}"{% if material.pk in chosen %} checked{% endif %}>
+          {{ material.accession }}{% if material.name %} <span class="result__name">{{ material.name }}</span>{% endif %}</label>
+        {% endfor %}
+      </div>
+    </fieldset>
+    {% if sort != "material" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
+    <button type="submit">Draw</button>
+  </form>
+  {% if chosen %}{% include "repo/_charts.html" %}
+  {% else %}<p class="chart-note">Tick materials and select Draw to chart their values.</p>{% endif %}
   <p class="table-note">Select the Material or Value heading to sort by it. By value, the smallest comes first, and a curve sits where its lowest value would.</p>
   <div class="table-scroll">
     <table class="data-table">
       <thead>
         <tr>
-          {# The heading of the current sort is marked, and the other links to its sort. #}
+          {# The heading of the current sort is marked, and the other links to its sort, keeping the materials drawn. #}
           {% if sort == "material" %}<th scope="col" aria-sort="ascending">Material</th>
-          {% else %}<th scope="col"><a href="{% url 'repo:property' property.code %}">Material</a></th>{% endif %}
+          {% else %}<th scope="col"><a href="{% url 'repo:property' property.code %}{% if chosen_query %}?{{ chosen_query }}{% endif %}">Material</a></th>{% endif %}
           {% if sort == "value" %}<th scope="col" aria-sort="ascending">Value</th>
-          {% else %}<th scope="col"><a href="?sort=value">Value</a></th>{% endif %}
+          {% else %}<th scope="col"><a href="?{% if chosen_query %}{{ chosen_query }}&amp;{% endif %}sort=value">Value</a></th>{% endif %}
           <th scope="col">At</th><th scope="col">Conditions</th>
           <th scope="col">Kind</th><th scope="col">Method</th><th scope="col">Reference</th>
         </tr>

@@ -178,6 +178,14 @@ ul.form-error { padding-left: 32px; }
 .chart { max-width: 640px; margin: 0 0 12px; padding: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; }
 .chart svg { display: block; width: 100%; height: auto; }
 .chart figcaption { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+/* The property page's materials to draw: the boxes wrap, and a long list scrolls inside its
+   box instead of pushing the chart down the page. The legend floats as .search__range's does. */
+.chart-choice { max-width: 640px; margin: 0 0 12px; }
+.chart-choice fieldset { margin: 0 0 8px; padding: 0; border: 0; }
+.chart-choice legend { float: left; width: 100%; padding: 0; margin-bottom: 4px; font-weight: 600; font-size: 13.5px; }
+.chart-choice__boxes { clear: both; display: flex; flex-wrap: wrap; gap: 4px 18px; max-height: 12em; overflow-y: auto; }
+.chart-choice button { padding: 7px 16px; font: inherit; color: #fff; background: var(--link); border: 0; border-radius: 6px; cursor: pointer; }
+.chart-note { color: var(--muted); }
 /* The tables of sequences and references. */
 .data-table { width: 100%; max-width: 900px; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); }
 .data-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }

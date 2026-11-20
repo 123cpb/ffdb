@@ -479,8 +479,10 @@ PROPERTY_SORTS = {
 
 def property_detail(request, code):
     """One property's public page: what its values must state, and every value of it across
-    materials, by material or, with ?sort=value, by value. Any other ?sort= is ignored. A
-    code with no property gives a 404."""
+    materials, by material or, with ?sort=value, by value. Any other ?sort= is ignored. The
+    charts draw only the materials ticked, each one ?material=<its pk>, and nothing until one
+    is: a number that isn't a material with this property is ignored. A code with no
+    property gives a 404."""
     prop = get_object_or_404(properties_with_counts(), code=code)
     sort = request.GET.get("sort", "")
     if sort not in PROPERTY_SORTS:
@@ -497,10 +499,21 @@ def property_detail(request, code):
     # keeps its colour when the table is sorted by value. sorted() runs the queries once:
     # the queryset keeps the rows, and the template's table uses them again.
     in_material_order = sorted(series, key=lambda one: (one.material_id, one.reference.identifier, one.pk))
+    # The materials to tick, each once, in LCR ID order: a dict keeps the first of each key.
+    # The ticked ones are those whose pk is one of the ?material= texts, so "abc", or the pk
+    # of a material with no value of this property, matches nothing.
+    choices = list({one.material_id: one.material for one in in_material_order}.values())
+    asked = request.GET.getlist("material")
+    chosen = [material.pk for material in choices if str(material.pk) in asked]
+    drawn = [one for one in in_material_order if one.material_id in chosen]
     context = {
         "nav": "properties",
         "property": prop,
-        "charts": charts.charts_for(prop, in_material_order, by_material=True),
+        "charts": charts.charts_for(prop, drawn, by_material=True),
+        "choices": choices,
+        "chosen": chosen,
+        # The choice as it goes in an address, so the sort links keep it: material=1&material=4.
+        "chosen_query": urlencode([("material", pk) for pk in chosen]),
         # The kinds with conditions of their own, in the order the kinds are listed:
         # [("computed", ["method", ...])]. A kind name that isn't one of the kinds is left out.
         "by_kind": [
