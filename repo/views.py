@@ -58,15 +58,15 @@ def matching_sequences(phase="", t_min=None, t_max=None):
     return PhaseSequence.objects.filter(transitions__in=transitions)
 
 
-def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
+def find_materials(text, substructure="", phase="", t_min=None, t_max=None, prop=""):
     """The materials a search finds, in LCR ID order. A blank search finds them all.
 
     A material is found when the text is part of its name or an alias (ignoring case),
     is its InChIKey (ignoring case), or is its LCR ID; when at least one of its sequences
-    meets the phase and temperature boxes (matching_sequences()); and when its structure
-    contains the substructure (SMILES or SMARTS). A substructure finds compounds only,
-    because a mixture has no structure. Raises chem.StructureError when RDKit can't read
-    the substructure.
+    meets the phase and temperature boxes (matching_sequences()); when it has values for the
+    property prop (a code, e.g. ps); and when its structure contains the substructure
+    (SMILES or SMARTS). A substructure finds compounds only, because a mixture has no
+    structure. Raises chem.StructureError when RDKit can't read the substructure.
     """
     materials = Material.objects.order_by("pk")
     text = text.strip()
@@ -82,6 +82,9 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None):
         # sequence, so a material with two would come back twice: distinct() keeps one. This
         # comes before the substructure, so RDKit checks fewer structures.
         materials = materials.filter(phase_sequences__in=sequences).distinct()
+    if prop:
+        # As for the sequences: one row per series of the property, so distinct() keeps one.
+        materials = materials.filter(series__property__code=prop).distinct()
     if substructure.strip():
         pattern = chem.substructure_pattern(substructure)
         # The database can't compare structures, so RDKit checks each compound found so far.
@@ -130,14 +133,17 @@ def search_results(request):
     """The Materials page's search, read the same way by the page and its downloads, so a
     download holds the materials the page lists. Returns (terms, found, matched, error).
 
-    terms is what ?q=, ?sub=, ?phase=, ?tmin= and ?tmax= hold, as typed, in that order. A
-    ?phase= that isn't in the vocabulary is ignored, and so is a ?tmin= or ?tmax= that isn't
-    a number. found is what find_materials() finds, and matched what matching_sequences()
-    finds, for the ribbons. A substructure RDKit can't read finds nothing, and error says why;
-    otherwise error is ""."""
+    terms is what ?q=, ?sub=, ?phase=, ?tmin=, ?tmax= and ?prop= hold, as typed, in that
+    order. A ?phase= or ?prop= that isn't in its vocabulary is ignored, and so is a ?tmin= or
+    ?tmax= that isn't a number. found is what find_materials() finds, and matched what
+    matching_sequences() finds, for the ribbons. A substructure RDKit can't read finds
+    nothing, and error says why; otherwise error is ""."""
     phase = request.GET.get("phase", "")
     if phase and not Phase.objects.filter(code=phase).exists():
         phase = ""
+    prop = request.GET.get("prop", "")
+    if prop and not Property.objects.filter(code=prop).exists():
+        prop = ""
     tmin, t_min = temperature_param(request, "tmin")
     tmax, t_max = temperature_param(request, "tmax")
     terms = {
@@ -146,10 +152,11 @@ def search_results(request):
         "phase": phase,
         "tmin": tmin,
         "tmax": tmax,
+        "prop": prop,
     }
     matched = matching_sequences(phase, t_min, t_max)
     try:
-        return terms, find_materials(terms["q"], terms["sub"], phase, t_min, t_max), matched, ""
+        return terms, find_materials(terms["q"], terms["sub"], phase, t_min, t_max, prop), matched, ""
     except chem.StructureError as exc:
         return terms, Material.objects.none(), matched, str(exc)
 
@@ -250,6 +257,12 @@ def materials(request):
         # The sequences the search found, of this page's materials only: one more query.
         preferred = set(matched.filter(material__in=[m.pk for m in page]).values_list("pk", flat=True))
     rows, axis = list_ribbons(page, preferred)
+    # The property box's choices, grouped as the Properties page groups them, and the property
+    # chosen, from the same list, for the heading: None when there is none.
+    property_groups = group_properties(Property.objects.select_related("group"))
+    chosen_property = next(
+        (prop for _, members in property_groups for prop in members if prop.code == terms["prop"]), None
+    )
     kept = {key: value for key, value in terms.items() if value}
     # The search as it goes in an address, so the order links and the downloads keep it.
     # urlencode() turns characters such as # into %23: a bare # would end the address there.
@@ -263,6 +276,8 @@ def materials(request):
         "tmin": terms["tmin"],
         "tmax": terms["tmax"],
         "range_text": range_text(terms["tmin"], terms["tmax"]),
+        "property_groups": property_groups,
+        "chosen_property": chosen_property,
         "error": error,
         "page": page,
         "rows": rows,
@@ -526,7 +541,8 @@ def property_detail(request, code):
 
 # The downloads (exports.py). The Materials page's three are for the materials its search
 # finds: a search that finds nothing, or a substructure RDKit can't read, gives a file with
-# its header and no rows.
+# its header and no rows. With a property chosen, its values file holds only that property's
+# values, as the prototype's did.
 
 
 def materials_csv(request):
@@ -540,7 +556,10 @@ def sequences_csv(request):
 
 
 def values_csv(request):
-    points = Measurement.objects.filter(series__material__in=search_results(request)[1])
+    terms, found = search_results(request)[:2]
+    points = Measurement.objects.filter(series__material__in=found)
+    if terms["prop"]:
+        points = points.filter(series__property__code=terms["prop"])
     return exports.csv_response("ffdb-values.csv", exports.VALUE_COLUMNS, exports.value_rows(points))
 
 

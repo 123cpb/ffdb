@@ -30,6 +30,14 @@
         <input name="tmax" type="number" step="any" value="{{ tmax }}" placeholder="to" aria-label="To (°C)">
       </div>
     </fieldset>
+    <div class="search__field">
+      <label for="prop">Has values for</label>
+      {# A group's members sit under its name (an optgroup), as on the Properties page. #}
+      <select id="prop" name="prop">
+        <option value="">Any property</option>
+        {% for group, members in property_groups %}{% if group %}<optgroup label="{{ group.name }}">{% endif %}{% for prop in members %}<option value="{{ prop.code }}"{% if prop == chosen_property %} selected{% endif %}>{{ prop.name }}</option>{% endfor %}{% if group %}</optgroup>{% endif %}{% endfor %}
+      </select>
+    </div>
     {# A new search keeps the order chosen. The default has no ?sort=, so needs no box. #}
     {% if sort != "newest" %}<input type="hidden" name="sort" value="{{ sort }}">{% endif %}
     <button type="submit">Search</button>
@@ -43,7 +51,7 @@
 <p class="form-error" role="alert">{{ error }}</p>
 {% else %}
 {% with total=page.paginator.count %}
-<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if phase %} with {{ phase }}{% if range_text %} forming {{ range_text }}{% endif %}{% elif range_text %} with a phase forming {{ range_text }}{% endif %}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}{% if query and substructure %} and{% endif %}{% if substructure %} contain{{ total|pluralize:"s," }} <code>{{ substructure }}</code>{% endif %}</h2>
+<h2 class="result-count">{{ total }} material{{ total|pluralize }}{% if phase %} with {{ phase }}{% if range_text %} forming {{ range_text }}{% endif %}{% elif range_text %} with a phase forming {{ range_text }}{% endif %}{% if chosen_property %}{% if phase or range_text %} and{% else %} with{% endif %} values for {{ chosen_property.name }}{% endif %}{% if query %} match{{ total|pluralize:"es," }} “{{ query }}”{% endif %}{% if query and substructure %} and{% endif %}{% if substructure %} contain{{ total|pluralize:"s," }} <code>{{ substructure }}</code>{% endif %}</h2>
 {% endwith %}
 
 {% if page.object_list %}
@@ -57,7 +65,7 @@
 <p class="downloads">Download all {{ page.paginator.count }} as CSV:
   <a href="{% url 'repo:materials_csv' %}{% if search %}?{{ search }}{% endif %}">materials</a>,
   <a href="{% url 'repo:sequences_csv' %}{% if search %}?{{ search }}{% endif %}">phase sequences</a>,
-  <a href="{% url 'repo:values_csv' %}{% if search %}?{{ search }}{% endif %}">property values</a>
+  <a href="{% url 'repo:values_csv' %}{% if search %}?{{ search }}{% endif %}">{% if chosen_property %}{{ chosen_property.symbol }}{% else %}property{% endif %} values</a>
 </p>
 {# The ribbons (views.list_ribbons()) share the axis above the list. Shown when a row on this page has one. #}
 {% if axis %}

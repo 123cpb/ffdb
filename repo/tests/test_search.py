@@ -3,6 +3,7 @@ from django.urls import reverse
 from django.utils.html import escape
 
 from repo.models import Material, PhaseSequence, Reference, pk_from_accession
+from repo.tests.test_values import add
 
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
@@ -213,6 +214,67 @@ class TemperatureSearchTests(TestCase):
         response = self.search(tmin="100")
 
         self.assertContains(response, "2 materials with a phase forming at 100 °C or above")
+
+
+
+class PropertySearchTests(TestCase):
+    """The property vocabulary is already in the test database, from the 0011 migration. RM734
+    has two Ps curves and a Δn value, 5CB a Δn value only, and 6CB no values. RM734 and 6CB
+    have NF."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
+        cls.six_cb = Material.objects.create(name="6CB", smiles=SIX_CB)
+        first, second = add_reference("10.1000/first"), add_reference("10.1000/second")
+        for material, reference, code in [
+            (cls.rm734, first, "ps"),
+            (cls.rm734, second, "ps"),  # Ps again, in a second series
+            (cls.rm734, first, "birefringence"),
+            (cls.five_cb, first, "birefringence"),
+        ]:
+            add(material, reference, code)
+        PhaseSequence.objects.create(material=cls.rm734, reference=first, sequence="K 139.8 NF 132.7 N 187.9 I")
+        PhaseSequence.objects.create(material=cls.six_cb, reference=first, sequence="K 14 NF 20 N 29 I")
+
+    def search(self, **params):
+        return self.client.get(reverse("repo:materials"), params)
+
+    def found(self, **params):
+        return list(self.search(**params).context["page"].object_list)
+
+    def test_a_property_lists_only_the_materials_with_values_for_it(self):
+        # RM734 has two Ps series but is listed once.
+        self.assertEqual(self.found(prop="ps"), [self.rm734])
+        self.assertEqual(self.found(prop="birefringence"), [self.five_cb, self.rm734])
+
+    def test_a_property_with_no_values_finds_nothing(self):
+        self.assertEqual(self.found(prop="density"), [])
+
+    def test_property_combines_with_the_phase_and_name_searches(self):
+        self.assertEqual(self.found(prop="birefringence", phase="NF"), [self.rm734])
+        self.assertEqual(self.found(prop="birefringence", q="5CB"), [self.five_cb])
+        self.assertEqual(self.found(prop="ps", q="5CB"), [])
+
+    def test_a_property_not_in_the_vocabulary_is_ignored(self):
+        response = self.search(prop="xyz")
+
+        self.assertEqual(list(response.context["page"].object_list), [self.six_cb, self.five_cb, self.rm734])
+        self.assertEqual(response.context["search"], "")
+
+    def test_heading_box_and_page_links_keep_the_property(self):
+        response = self.search(prop="birefringence")
+
+        self.assertContains(response, "2 materials with values for Birefringence")
+        self.assertContains(response, '<option value="birefringence" selected>Birefringence</option>')
+        self.assertContains(response, '<optgroup label="Refractive index">')
+        self.assertEqual(response.context["search"], "prop=birefringence")
+
+    def test_heading_with_a_phase_too(self):
+        response = self.search(phase="NF", prop="ps")
+
+        self.assertContains(response, "1 material with NF and values for Spontaneous polarisation")
 
 
 class PagingTests(TestCase):

@@ -215,6 +215,17 @@ class ValuesFileTests(ExportTestCase):
         self.assertEqual([row["material"] for row in nf], ["DIO"] * 3 + ["RM734"] * 4)
         self.assertEqual([row["symbol"] for row in rm734], ["Ps"] * 3 + ["Δn"])
 
+    def test_with_a_property_chosen_the_materials_page_gives_only_its_values(self):
+        dn = add(self.rm734, self.chen, "birefringence", conditions={"wavelength_nm": 550})
+        dn.points.create(value=0.2, temperature_c=140)
+        add(self.dio, self.chen, "birefringence").points.create(value=0.3, temperature_c=100)
+
+        materials = self.download(reverse("repo:materials_csv"), prop="birefringence")[1]
+        values = self.download(reverse("repo:values_csv"), prop="birefringence")[1]
+
+        self.assertEqual([row["name"] for row in materials], ["DIO", "RM734"])
+        self.assertEqual([(row["material"], row["symbol"]) for row in values], [("DIO", "Δn"), ("RM734", "Δn")])
+
     def test_an_unknown_property_is_not_found(self):
         response = self.client.get(reverse("repo:property_values_csv", args=["no-such-property"]))
 
@@ -317,6 +328,13 @@ class LinkTests(ExportTestCase):
 
         for name in ("materials_csv", "sequences_csv", "values_csv"):
             self.assertContains(response, f'href="{reverse(f"repo:{name}")}?phase=NF"')
+
+    def test_they_keep_the_property_and_the_values_link_names_it(self):
+        response = self.client.get(reverse("repo:materials"), {"prop": "ps"})
+
+        for name in ("materials_csv", "sequences_csv"):
+            self.assertContains(response, f'href="{reverse(f"repo:{name}")}?prop=ps"')
+        self.assertContains(response, f'href="{reverse("repo:values_csv")}?prop=ps">Ps values</a>')
 
     def test_without_a_search_they_hold_every_material(self):
         response = self.client.get(reverse("repo:materials"))
