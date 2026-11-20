@@ -14,7 +14,8 @@ from django.template.defaultfilters import pluralize
 
 from . import charts, chem, crossref, exports, ribbons
 from .forms import (
-    CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, MixtureForm, ValueChoiceForm, ValueForm,
+    CompoundCard, CompoundTableForm, CurveChoiceForm, CurveForm, FindReferenceForm, MixtureForm, ValueChoiceForm,
+    ValueForm,
 )
 from .models import (
     DOI_PREFIX,
@@ -295,11 +296,14 @@ def value_sections(series, with_charts=False):
     ]
 
 
-def sequence_ribbons(sequences):
+def sequence_ribbons(sequences, data=None):
     """Each sequence with its ribbon, all on one temperature axis, for the material page's
     rows: ([(sequence, ribbon), ...], axis). A screen reader reads each ribbon as its
-    sequence, how it was observed and its reference (ribbon_label())."""
-    data = [ribbons.ribbon_data(sequence) for sequence in sequences]
+    sequence, how it was observed and its reference (ribbon_label()). data is each sequence's
+    ribbons.RibbonData when they aren't saved, as for a card's runs being checked; otherwise it
+    is worked out from their stored transitions."""
+    if data is None:
+        data = [ribbons.ribbon_data(sequence) for sequence in sequences]
     lo, hi = ribbons.temperature_range(data)
     rows = [
         (sequence, ribbons.ribbon_svg(one, lo, hi, label=ribbon_label(sequence)))
@@ -659,11 +663,43 @@ def add_from_reference(request, pk):
         # each label still points at its own box.
         "choice": ValueChoiceForm(reference=reference),
         "curve_choice": CurveChoiceForm(reference=reference, auto_id="id_curve_%s"),
-        # The form for adding a mixture, sent to add_mixture.
+        # The form for adding a mixture, sent to add_mixture, and an empty compound card, sent
+        # to add_compound.
         "mixture_form": MixtureForm(),
+        "card": CompoundCard(None, reference),
         **reference_tables(reference),
     }
     return render(request, "repo/add_from_reference.html", context)
+
+
+@login_required
+@permission_required("repo.add_reference", raise_exception=True)
+def add_compound(request, pk):
+    """Adding a compound card from a reference: its material, in FFDB or new, and its runs. The
+    empty card is on the reference's Add data page and posts here. Check reads it and shows what
+    Save would add: the material, and each run that reads with its standard sequence and ribbon,
+    as the material's page will show them, saving nothing. Save (a POST with save in it) reads it
+    again and adds all of it, or nothing while anything on the card has a problem, and sends the
+    curator back to the Add data page with a redirect, so reloading can't save twice. A number
+    with no reference gives a 404."""
+    reference = get_object_or_404(Reference, pk=pk)
+    card = CompoundCard(request.POST if request.method == "POST" else None, reference)
+    if card.is_valid() and "save" in request.POST:
+        material, added, kept = card.save(request.user)
+        runs = f"{len(card.runs)} run{pluralize(len(card.runs))}"
+        if added:
+            messages.success(request, f"Added {material.name} as {material.accession}, with {runs}.")
+            # Asked again now it is saved, so the warning names it by its LCR ID.
+            warning = material.stereo_warning()
+            if warning:
+                messages.warning(request, warning)
+        else:
+            alias = f" {card.material_form.cleaned_data['name']} is kept as one of its aliases." if kept else ""
+            messages.success(request, f"Saved {runs} for {material}.{alias}")
+        return redirect("repo:add_from_reference", reference.pk)
+    sequence_rows, axis = sequence_ribbons(card.runs, card.ribbon_data)
+    context = {"nav": "add", "reference": reference, "card": card, "sequence_rows": sequence_rows, "axis": axis}
+    return render(request, "repo/add_compound.html", context)
 
 
 @login_required

@@ -63,6 +63,13 @@ class ParsedSequence:
             parts += ["?" if temperature is None else f"{temperature:g}", phase]
         return " ".join(parts)
 
+    def melting_point(self):
+        """The temperature written after the crystal when it comes first, in a summary or a
+        heating run, or None. In a summary it is kept even when a monotropic phase lies below
+        it, so it isn't always one of the transitions. A cooling run ends with the crystal, and
+        the temperature it crystallises at isn't a melting point."""
+        return self.temperatures[0] if self.phases[0] == CRYSTAL and self.temperatures else None
+
 
 def normalise_label(label):
     """A phase label as labels are compared: no underscores or spaces, lower case, so N_F == NF == nf."""

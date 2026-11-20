@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
 
-from . import chem
+from . import chem, ribbons
 from .models import (
     CONDITION_NAMES,
     CONDITION_UNITS,
@@ -33,7 +33,7 @@ from .models import (
     must_state,
     pk_from_accession,
 )
-from .phases import PhaseSequenceError
+from .phases import ISOTROPIC, SOLIDS, PhaseSequenceError, tokenise
 
 # What every DOI looks like once cleaned: 10., a number of four or more digits, /, then the
 # rest, e.g. 10.1002/chem.201702742.
@@ -166,12 +166,29 @@ class TableLine:
         return "in_ffdb" if self.match else "new"
 
     def drawing(self):
-        """The structure as SVG to put in the page, 200 by 128 pixels like the thumbnails. It
-        is drawn from the canonical SMILES, which holds nothing the curator typed but the
-        structure, so it can go in as it is. RDKit's SVG starts with an XML declaration, which
-        can't go inside a page, so it is cut off."""
-        svg = chem.structure_svg(self.canonical_smiles, 200, 128)
-        return mark_safe(svg[svg.index("<svg"):])
+        return inline_drawing(self.canonical_smiles)
+
+
+def inline_drawing(canonical_smiles):
+    """A structure not saved yet as SVG to put in the page, 200 by 128 pixels like the
+    thumbnails. It is drawn from the canonical SMILES, which holds nothing the curator typed but
+    the structure, so it can go in as it is. RDKit's SVG starts with an XML declaration, which
+    can't go inside a page, so it is cut off."""
+    svg = chem.structure_svg(canonical_smiles, 200, 128)
+    return mark_safe(svg[svg.index("<svg"):])
+
+
+def read_sequence(text, direction, synonyms=None):
+    """A phase sequence read exactly as saving it would read it, by the parser for direction
+    (one of PhaseSequence.Direction), as phases.ParsedSequence. Raises PhaseSequenceError,
+    saying why, when it can't be read, or when it or its standard text is too long to store:
+    both are stored, and the standard one can be longer, because K becomes Cr. The compound
+    table and the compound card read every sequence with this. Pass synonyms
+    (Phase.synonym_map()) when reading many."""
+    parsed = PhaseSequence(sequence=text, direction=direction).parsed(synonyms)  # not saved
+    if max(len(text), len(parsed.standard_text())) > SEQUENCE_LENGTH:
+        raise PhaseSequenceError(f"longer than the {SEQUENCE_LENGTH} characters it can have.")
+    return parsed
 
 
 def read_lines(rows, reference, direction):
@@ -225,15 +242,9 @@ def read_lines(rows, reference, direction):
         first_seen[key] = number
         if line.sequence:
             try:
-                # An unsaved sequence, so it is read exactly as saving it would read it.
-                sequence = PhaseSequence(sequence=line.sequence, direction=direction)
-                line.standard_sequence = sequence.parsed(synonyms).standard_text()
+                line.standard_sequence = read_sequence(line.sequence, direction, synonyms).standard_text()
             except PhaseSequenceError as exc:
                 line.problem = f"Phase sequence: {exc}"
-                continue
-            # Both texts are stored, and the standard one can be longer: K becomes Cr.
-            if max(len(line.sequence), len(line.standard_sequence)) > SEQUENCE_LENGTH:
-                line.problem = f"Phase sequence: longer than the {SEQUENCE_LENGTH} characters it can have."
                 continue
         if line.match:
             line.alias_problem = line.match.alias_problem(line.label)
@@ -337,6 +348,253 @@ class CompoundTableForm(forms.Form):
                     sequence.save()
                     counts["sequences"] += 1
         return counts, warnings
+
+
+# A compound card: one compound's material, in FFDB or new, and its runs, each built from phase
+# steps. Check shows what Save would add, and Save adds all of it or nothing.
+
+# How many phases a run's steps can have: the top phase and seven below it. As in the
+# prototype, whose note says the longest run in the NF list has six above the solid.
+RUN_PHASES = 8
+LABEL_LENGTH = 30
+
+
+def steps_text(direction, steps, solid="", t_solid=""):
+    """A run's phase steps written as a sequence in the notation of its direction (one of
+    PhaseSequence.Direction), as a line of the compound table would give it. steps is
+    [(temperature, label), ...], hottest first, both text as typed: each phase below the top one
+    has the temperature of the transition into it, and the top one None. The solid comes on its
+    own, with the temperature it melts or crystallises at.
+
+    A summary or a heating run is written from the solid up, "K 139.8 NF 132.7 N 187.9 Iso"; a
+    cooling run, or one whose direction isn't stated, from the top down, "Iso 187.9 N 132.7 NF
+    70 K". A solid without its temperature is written with ?, which only a summary accepts."""
+    words = [steps[0][1]]
+    for temperature, label in steps[1:]:
+        words += [temperature, label]
+    if direction in (PhaseSequence.Direction.SUMMARY, PhaseSequence.Direction.HEATING):
+        return " ".join(([solid, t_solid or "?"] if solid else []) + words[::-1])
+    return " ".join(words + ([t_solid or "?", solid] if solid else []))
+
+
+class RunForm(forms.Form):
+    """One run on a compound card: how it was observed, and its phases as steps, hottest first.
+    clean() writes the steps as a sequence (steps_text()) and reads it as the compound table
+    reads one (read_sequence()), so the card refuses what the table refuses, with the same
+    message. A valid form has run, the sequence as a PhaseSequence of its reference, not saved,
+    and ribbon, what its ribbon is drawn from. Pass the reference.
+
+    A run left as it was is skipped: its formset makes it optional (empty_permitted), and
+    Django doesn't check an optional form that hasn't changed from its initial values."""
+
+    NOT_ONE_WORD = "A phase label is one word starting with a letter, e.g. NF."
+
+    # No default, as in the compound table: a default of summary would quietly save a heating
+    # run as a summary.
+    direction = forms.ChoiceField(
+        label="This is",
+        choices=[("", "Choose…"), *PhaseSequence.Direction.choices],
+        error_messages={"required": "Choose what this is: a summary, or a cooling or heating run."},
+    )
+    rate = forms.FloatField(label="Rate (K/min)", required=False)
+    method = forms.CharField(required=False, max_length=METHOD_LENGTH, help_text="e.g. DSC or POM")
+    lowest = forms.FloatField(label="Lowest temperature reached (°C)", required=False)
+    solid = forms.ChoiceField(required=False)  # __init__ gives it the vocabulary's solids
+    t_solid = forms.FloatField(label="Melts or crystallises at (°C)", required=False)
+
+    def __init__(self, *args, reference, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.reference = reference
+        typed = {"autocomplete": "off", "spellcheck": "false"}
+        # The steps: phase_0, the top phase, then t_1 and phase_1, t_2 and phase_2, and so on.
+        # Iso to begin with, because most runs start from the isotropic liquid.
+        self.fields["phase_0"] = forms.CharField(
+            label="Top phase", initial=ISOTROPIC, max_length=LABEL_LENGTH, widget=forms.TextInput(attrs=typed),
+            error_messages={"required": "Give the top phase, e.g. Iso."},
+        )
+        for i in range(1, RUN_PHASES):
+            self.fields[f"t_{i}"] = forms.FloatField(label=f"Transition into phase {i + 1} (°C)", required=False)
+            self.fields[f"phase_{i}"] = forms.CharField(
+                label=f"Phase {i + 1}", required=False, max_length=LABEL_LENGTH, widget=forms.TextInput(attrs=typed)
+            )
+        # By code: a solid's other labels are converted to its code anyway, and a page keeps
+        # its K in the sequence as reported only for liquid-crystal phases.
+        self.fields["solid"].choices = [("", "None"), *((p.code, str(p)) for p in Phase.objects.filter(code__in=SOLIDS))]
+        self.run = self.ribbon = None  # set by clean()
+
+    def step_fields(self):
+        """The steps' boxes for the template, hottest first, as (temperature, phase): the top
+        phase has no temperature."""
+        return [(self[f"t_{i}"] if i else None, self[f"phase_{i}"]) for i in range(RUN_PHASES)]
+
+    def typed(self, name):
+        """A temperature box's text as typed, so 143.0 keeps its zero in the sequence as
+        reported. Ask only once the box has read as a number."""
+        return self[name].value().strip()
+
+    def read_steps(self, cleaned):
+        """The steps filled in, hottest first, as steps_text() takes them. A step with both
+        boxes empty is skipped. A box that can't go into a sequence gets an error: a label that
+        isn't one word, which the parser would read as more than one, and half a step, whose
+        other half would be lost."""
+        steps = []
+        for i in range(RUN_PHASES):
+            phase, t = f"phase_{i}", f"t_{i}"
+            label, temperature = cleaned.get(phase, ""), cleaned.get(t)  # the top phase has no t_0
+            if label and (tokenise(label) != [label] or not label[0].isalpha()):
+                self.add_error(phase, self.NOT_ONE_WORD)
+            if i == 0:
+                steps.append((None, label))  # a blank top phase already has its field's error
+            elif t in self.errors:
+                continue  # it didn't read as a number, and already says so
+            elif label and temperature is not None:
+                steps.append((self.typed(t), label))
+            elif label:
+                self.add_error(t, f"Give the temperature of the transition into {label}.")
+            elif temperature is not None:
+                self.add_error(phase, "Give the phase that forms at this temperature.")
+        return steps
+
+    def clean(self):
+        cleaned = super().clean()
+        steps = self.read_steps(cleaned)
+        if cleaned.get("t_solid") is not None and not cleaned.get("solid"):
+            self.add_error("solid", "Choose the solid, or clear its temperature.")
+        if self.errors:
+            return cleaned  # the sequence can't be written until every box reads
+        direction, solid = cleaned["direction"], cleaned["solid"]
+        text = steps_text(direction, steps, solid, self.typed("t_solid") if cleaned["t_solid"] is not None else "")
+        try:
+            parsed = read_sequence(text, direction)
+        except PhaseSequenceError as exc:
+            # The curator typed steps, not this text, so it is shown to make sense of the message.
+            self.add_error(None, f"{exc} The steps read as: {text}")
+            return cleaned
+        self.run = PhaseSequence(
+            reference=self.reference, direction=direction, sequence=text, standard_sequence=parsed.standard_text(),
+            rate_k_per_min=cleaned["rate"], method=cleaned["method"], lowest_temperature_c=cleaned["lowest"],
+        )
+        self.ribbon = ribbons.ribbon_data(self.run, parsed)
+        return cleaned
+
+
+# Room for two runs on a card, for a page without JavaScript.
+RunFormSet = forms.formset_factory(RunForm, extra=2)
+
+
+class CardMaterialForm(forms.Form):
+    """A compound card's material: one already in FFDB, by its LCR ID or by a name or alias that
+    fits it alone, or a new compound, by its SMILES. Whichever box is filled says which. A SMILES
+    whose structure is already in FFDB finds that material, as in the compound table. The label,
+    as the reference prints it, names a new compound, and is kept as an alias of a material in
+    FFDB unless Material.alias_problem() says why not.
+
+    A valid form has found, the material in FFDB, or None for a new compound, which is then
+    in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be kept."""
+
+    material = forms.CharField(
+        label="In FFDB: LCR ID or name", required=False, max_length=NAME_LENGTH,
+        help_text="A material already in FFDB, e.g. LCR-00012 or RM734.",
+    )
+    smiles = forms.CharField(
+        label="Or new: SMILES", required=False, widget=forms.TextInput(attrs={"autocomplete": "off", "spellcheck": "false"}),
+        help_text="A compound that isn't in FFDB yet. If its structure is in FFDB after all, its runs go to that material.",
+    )
+    name = forms.CharField(
+        label="Label, as the reference prints it", required=False, max_length=NAME_LENGTH,
+        help_text="A new compound's name, e.g. 10a. For a material already in FFDB it is optional, and kept as "
+        "another name for it where it can be: a bare compound number such as 10a isn't.",
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.found = self.new = None  # set by clean()
+        self.alias_problem = self.stereo_warning = ""
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.errors:
+            return cleaned  # a box too long to store
+        text, smiles, name = cleaned["material"], cleaned["smiles"], cleaned["name"]
+        if text and smiles:
+            raise ValidationError("Give an LCR ID or name, or a SMILES, not both.")
+        if not (text or smiles):
+            raise ValidationError("Give the LCR ID or name of a material in FFDB, or the SMILES of a new compound.")
+        if text:
+            self.found, problem = find_material(text, "Check it, or give the SMILES of a new compound.")
+            if problem:
+                self.add_error("material", problem)
+        else:
+            self.read_structure(smiles, name)
+        if self.found is not None and name:
+            self.alias_problem = self.found.alias_problem(name)
+        return cleaned
+
+    def read_structure(self, smiles, name):
+        """Find the material in FFDB with this structure, or build a new compound, not saved, and
+        check it by the model's rules, with their messages: a structure retired from FFDB is
+        refused, as in the admin."""
+        try:
+            _, inchikey = chem.standardise(smiles)
+        except chem.StructureError as exc:
+            self.add_error("smiles", str(exc))
+            return
+        self.found = Material.objects.filter(inchikey=inchikey).first()
+        if self.found is not None:
+            return
+        if not name:
+            self.add_error("name", "Give the label the reference prints for this compound: it becomes its name.")
+            return
+        new = Material(name=name, smiles=smiles)
+        check_rules(self, new)  # full_clean() also fills in its identifiers, for the warning
+        if not self.errors:
+            self.new, self.stereo_warning = new, new.stereo_warning()
+
+    def drawing(self):
+        """A new compound's structure, for Check."""
+        return inline_drawing(self.new.canonical_smiles)
+
+
+class CompoundCard:
+    """One compound card: its material (CardMaterialForm) and its runs (RunFormSet), sent as one
+    form. Each part's names start with its prefix: card-material, run-0-direction. Pass the data
+    sent, or None for an empty card, and the reference the data is from."""
+
+    def __init__(self, data, reference):
+        self.material_form = CardMaterialForm(data, prefix="card")
+        self.run_forms = RunFormSet(data, prefix="run", form_kwargs={"reference": reference})
+        self.runs, self.ribbon_data, self.problems = [], [], []  # set by is_valid()
+
+    def is_valid(self):
+        """Whether Save can add everything on the card. Every part is checked, so each shows its
+        own problems, and the runs that read are kept in runs, with what their ribbons are drawn
+        from in ribbon_data, for Check to show even when something else has a problem."""
+        valid = all([self.material_form.is_valid(), self.run_forms.is_valid()])  # a list: both are checked
+        read = [form for form in self.run_forms if form.run is not None]
+        self.runs, self.ribbon_data = [form.run for form in read], [form.ribbon for form in read]
+        self.problems = ["Add at least one run."] if valid and not self.runs else []
+        return valid and not self.problems
+
+    def save(self, user):
+        """Add everything on the card in one transaction, so a failure partway keeps none of it:
+        a new compound, named by its label, or the label as an alias of the material in FFDB, and
+        then each run, recorded as entered by user. Call it only on a valid card. Returns (the
+        material, whether it was added, whether the label was kept as an alias)."""
+        form = self.material_form
+        name = form.cleaned_data["name"]
+        with transaction.atomic():
+            material, added, kept = form.found or form.new, form.found is None, False
+            if added:
+                material.save()
+            elif name and not form.alias_problem:
+                material.add_aliases([name])
+                material.save(update_fields=["aliases"])
+                kept = True
+            for run in self.runs:
+                run.material = material
+                run.mark_entered(user)
+                run.save()
+        return material, added, kept
 
 
 # Adding a single value or a curve takes two short forms. The first says what the values are
@@ -821,10 +1079,11 @@ class ComponentLine:
     problem: str = ""  # why the line can't be read, or "" when it can
 
 
-def find_component(text):
+def find_material(text, advice):
     """The material that text names, by its LCR ID or by a name or alias that fits it alone,
-    as (material, ""), or (None, why none was found). Whether it is a compound is left to
-    MixtureComponent.clean()."""
+    as (material, ""), or (None, why none was found). advice ends the message when nothing has
+    the name, saying what to do instead. A mixture's components and a compound card both find
+    their materials with this."""
     pk = pk_from_accession(text)
     if pk is not None:
         return material_with_lcr_id(pk)
@@ -833,9 +1092,7 @@ def find_component(text):
         return found[0], ""
     if found:
         return None, f"More than one material is called {text} ({', '.join(map(str, found))}): give its LCR ID."
-    return None, (
-        f"Nothing in FFDB is called {text}. Add it first with the compound table, or describe it under Other components."
-    )
+    return None, f"Nothing in FFDB is called {text}. {advice}"
 
 
 def read_components(text):
@@ -865,7 +1122,10 @@ def read_components(text):
         except ValueError as exc:
             line.problem = str(exc)
             continue
-        line.material, line.problem = find_component(name)
+        # Whether it is a compound is left to MixtureComponent.clean(), below.
+        line.material, line.problem = find_material(
+            name, "Add it first with the compound table, or describe it under Other components."
+        )
         if line.problem:
             continue
         try:

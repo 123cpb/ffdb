@@ -14,6 +14,13 @@
 <p>Add this reference's compounds, their phase sequences, its mixtures, and its property values and curves here.</p>
 
 <section>
+  <h2>Add a compound</h2>
+  <p>One compound and its runs, each built from its phases, hottest first. Check shows what Save would add: the
+  compound, and each run's sequence and ribbon. Save adds all of it, or nothing while anything has a problem.</p>
+  {% include "repo/_compound_card.html" %}
+</section>
+
+<section>
   <h2>Add compounds</h2>
   {# views.add_from_reference gives the form, CompoundTableForm. No action: it posts to this page. #}
   <form method="post" class="entry-form entry-form--wide">

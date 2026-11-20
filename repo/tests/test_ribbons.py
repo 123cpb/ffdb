@@ -228,6 +228,15 @@ class MaterialPageTests(TestCase):
         self.assertEqual(summary_data.melting, 139.8)
         self.assertIsNone(heating_data.melting)  # a heating run's melting point is a transition
 
+    def test_a_sequence_not_saved_is_drawn_from_what_the_parser_read_as_it_will_be_once_saved(self):
+        for text, direction in [("K 139.8 NF 132.7 N 187.9 I", "summary"), ("Iso 188 N 131 NF 70 K", "cooling")]:
+            with self.subTest(text):
+                unsaved = PhaseSequence(sequence=text, direction=direction, lowest_temperature_c=20)
+
+                drawn = ribbons.ribbon_data(unsaved, unsaved.parsed())
+
+                self.assertEqual(drawn, ribbons.ribbon_data(self.add(text, direction=direction, lowest_temperature_c=20)))
+
     def test_each_sequence_has_a_ribbon_on_one_axis(self):
         self.add("K 139.8 NF 132.7 N 187.9 I")
         self.add("Iso 188 N 131 NF", direction="cooling", lowest_temperature_c=100)

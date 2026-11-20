@@ -1,0 +1,30 @@
+{% comment %}
+A compound card, forms.CompoundCard (as card): its material, then its runs. It posts to
+views.add_compound, which shows what Check read. A reference's Add data page and the
+add-a-compound page both include it.
+{% endcomment %}
+<form method="post" action="{% url 'repo:add_compound' reference.pk %}" class="entry-form entry-form--wide">
+  {% csrf_token %}
+  {% for problem in card.problems %}<p class="form-error">{{ problem }}</p>{% endfor %}
+  {% with form=card.material_form %}
+  <fieldset>
+    <legend>Material</legend>
+    <p class="entry-form__help">One already in FFDB, by its LCR ID or name, or a new compound, by its SMILES: fill in one of the two.</p>
+    {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+    <div class="entry-form__row">
+      {% include "repo/_entry_field.html" with field=form.material %}
+      {% include "repo/_entry_field.html" with field=form.smiles %}
+    </div>
+    {% include "repo/_entry_field.html" with field=form.name %}
+  </fieldset>
+  {% endwith %}
+  {# The formset's hidden boxes: how many runs the page sent, so Django knows how many to read. #}
+  {{ card.run_forms.management_form }}
+  {% if card.run_forms.non_form_errors %}<p class="form-error">{{ card.run_forms.non_form_errors|join:" " }}</p>{% endif %}
+  {% for form in card.run_forms %}{% include "repo/_run.html" with number=forloop.counter %}{% endfor %}
+  {# The button's name is sent with the form, so the view can tell Save from Check. #}
+  <div class="entry-form__buttons">
+    <button type="submit" name="check">Check</button>
+    <button type="submit" name="save">Save</button>
+  </div>
+</form>

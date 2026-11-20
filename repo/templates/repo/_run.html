@@ -1,0 +1,30 @@
+{% comment %}
+One run on a compound card, forms.RunForm (as form), numbered by number. Its phases are steps,
+hottest first: the top phase, then each phase below it with the temperature of the transition
+into it. The solid comes on its own, because a summary's melting point can lie above a phase
+seen only on cooling. Every step is shown; the empty ones are skipped, and so is a run left empty.
+{% endcomment %}
+<fieldset class="run">
+  <legend>Run {{ number }}</legend>
+  {# The parser's message, with the sequence the steps were written as. #}
+  {% if form.non_field_errors %}<p class="form-error">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=form.direction %}
+    {% include "repo/_entry_field.html" with field=form.rate %}
+    {% include "repo/_entry_field.html" with field=form.method %}
+    {% include "repo/_entry_field.html" with field=form.lowest %}
+  </div>
+  <p class="entry-form__help">Its phases, hottest first. Leave the steps you don't need empty.</p>
+  <ol class="phase-steps">
+    {% for temperature, phase in form.step_fields %}
+    <li class="entry-form__row">
+      {% if temperature %}{% include "repo/_entry_field.html" with field=temperature %}{% endif %}
+      {% include "repo/_entry_field.html" with field=phase %}
+    </li>
+    {% endfor %}
+  </ol>
+  <div class="entry-form__row">
+    {% include "repo/_entry_field.html" with field=form.solid %}
+    {% include "repo/_entry_field.html" with field=form.t_solid %}
+  </div>
+</fieldset>

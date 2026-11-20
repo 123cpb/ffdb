@@ -14,7 +14,6 @@ from django.utils import timezone
 
 from . import chem
 from .phases import (
-    CRYSTAL,
     ISOTROPIC,
     NOT_LIQUID_CRYSTAL,
     PhaseSequenceError,
@@ -771,11 +770,7 @@ class PhaseSequence(Entered):
         self.standard_sequence = parsed.standard_text()
         clearing = [t.temperature_c for t in parsed.transitions if t.upper == ISOTROPIC]
         self.t_clearing_c = max(clearing) if clearing else None
-        # The melting point is the temperature written after the crystal, when it comes first:
-        # in a summary or a heating run. In a summary it is kept even when a monotropic phase
-        # lies below it, so it isn't always one of the transitions. A cooling run ends with the
-        # crystal, and the temperature it crystallises at isn't a melting point.
-        self.t_melting_c = parsed.temperatures[0] if parsed.phases[0] == CRYSTAL and parsed.temperatures else None
+        self.t_melting_c = parsed.melting_point()
         super().save(*args, **kwargs)
         # Links to phases and transitions need the sequence's primary key, so they come after
         # the save. set() adds the missing phase links and removes the others. The transitions

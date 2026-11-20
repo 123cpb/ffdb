@@ -68,6 +68,13 @@ main.wrap { padding-top: 28px; padding-bottom: 56px; }
 .entry-form__field { display: grid; gap: 4px; align-content: start; }
 .entry-form__field > label { font-weight: 600; font-size: 13.5px; }
 .entry-form__field .entry-form__help { margin: 0; }
+/* A compound card's runs (_run.html): each in a box, its phase steps one under another. */
+.entry-form .run { padding: 12px 14px; border: 1px solid var(--hairline); border-radius: 6px; }
+.phase-steps { list-style: none; margin: 0 0 8px; padding: 0; }
+.phase-steps .entry-form__row { margin-bottom: 4px; }
+/* What a card's Check found: the drawing beside the material it is. */
+.card-material { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
+.card-material svg { display: block; max-width: 100%; height: auto; }
 
 .messages { list-style: none; margin: 0 0 20px; padding: 0; }
 .message { padding: 10px 14px; background: #eef4fa; border: 1px solid #c6d9ec; border-radius: 6px; }

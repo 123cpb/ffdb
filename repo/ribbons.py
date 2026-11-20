@@ -52,20 +52,27 @@ class RibbonData:
     lowest: float = None  # the lowest temperature reached, where the reference gives it
 
 
-def ribbon_data(sequence):
-    """What a ribbon needs from a saved PhaseSequence. The transitions are the stored ones, so
-    the ribbon shows what the temperature search finds. Prefetch transitions__upper and
-    transitions__lower when drawing many, or each transition costs two queries.
+def ribbon_data(sequence, parsed=None):
+    """What a ribbon needs from a PhaseSequence. For a saved one the transitions are the stored
+    ones, so the ribbon shows what the temperature search finds. Prefetch transitions__upper and
+    transitions__lower when drawing many, or each transition costs two queries. A sequence not
+    saved yet, such as a run on a card being checked, has none stored: pass parsed, what the
+    parser read from it, and the ribbon is drawn from that, as saving it would store it.
 
     The melting point is marked for a summary only, as in the prototype: in a summary it can
     lie above a monotropic phase, so it isn't always a transition. In a heating run it always
     is one, so the ribbon already shows it."""
-    transitions = sorted(
-        (Transition(t.upper.code, t.lower.code, t.temperature_c) for t in sequence.transitions.all()),
-        key=lambda transition: transition.temperature_c,
-        reverse=True,
-    )
-    melting = sequence.t_melting_c if sequence.direction == sequence.Direction.SUMMARY else None
+    if parsed is None:
+        transitions = sorted(
+            (Transition(t.upper.code, t.lower.code, t.temperature_c) for t in sequence.transitions.all()),
+            key=lambda transition: transition.temperature_c,
+            reverse=True,
+        )
+        melting = sequence.t_melting_c
+    else:
+        transitions, melting = parsed.transitions, parsed.melting_point()  # already highest first
+    if sequence.direction != sequence.Direction.SUMMARY:
+        melting = None
     return RibbonData(transitions, melting, sequence.lowest_temperature_c)
 
 

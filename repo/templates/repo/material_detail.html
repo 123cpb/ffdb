@@ -35,29 +35,7 @@
   <h2>Phase sequences</h2>
   {% if sequence_rows %}
   <p>Liquid-crystal phases: {% for phase in lc_phases %}{{ phase.code }}{% if not forloop.last %}, {% endif %}{% empty %}none reported{% endfor %}</p>
-  {# One row per sequence, as the prototype had them: how it was observed, then its ribbon and its text. #}
-  {# The ribbons (views.sequence_ribbons()) share the axis under the key. #}
-  {% phase_key %}
-  <div class="ribbon-row ribbon-row--axis" aria-hidden="true">
-    <span class="ribbon-row__axis-label">Phases against temperature (°C)</span>
-    {{ axis }}
-  </div>
-  <ol class="ribbon-rows">
-    {% for sequence, ribbon in sequence_rows %}
-    <li class="ribbon-row">
-      <div class="ribbon-row__meta">
-        <a href="{% url 'repo:reference' sequence.reference.pk %}">{{ sequence.reference.label }}</a>
-        <span class="ribbon-row__run">{{ sequence.run_text }}</span>
-      </div>
-      <div>
-        {{ ribbon }}
-        <p class="ribbon-row__text">{{ sequence.standard_sequence|phase_html }}
-          {% if sequence.phase_was_renamed %}<span class="reported">Reported as {{ sequence.sequence }}</span>{% endif %}
-        </p>
-      </div>
-    </li>
-    {% endfor %}
-  </ol>
+  {% include "repo/_ribbon_rows.html" %}
   {% else %}
   <p>No phase sequences yet.</p>
   {% endif %}
