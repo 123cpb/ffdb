@@ -133,10 +133,10 @@ class Command(BaseCommand):
         # Only now, with a sequence to cite it, is the reference added if it's new.
         if kind in (Reference.Kind.ARTICLE, Reference.Kind.PREPRINT):
             identifier = clean_doi(identifier)
-        # A new reference is public unless it is unpublished work. One already in FFDB keeps
+        # A new reference is published unless it is unpublished work. One already in FFDB keeps
         # its switch, so an import never undoes an admin hiding it.
         reference, created = Reference.objects.get_or_create(
-            identifier=identifier, defaults={"kind": kind, "public": kind != Reference.Kind.UNPUBLISHED}
+            identifier=identifier, defaults={"kind": kind, "published": kind != Reference.Kind.UNPUBLISHED}
         )
         self.counts["reference added"] += created  # True counts as 1, False as 0
 

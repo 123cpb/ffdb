@@ -138,7 +138,7 @@ class ComponentInline(admin.TabularInline):
 
 @admin.register(Material)
 class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't record it
-    list_display = ["accession", "name", "kind", "listed"]
+    list_display = ["accession", "name", "kind", "listed", "is_public"]
     list_filter = ["kind", "listed"]
     # Also what the autocomplete box searches when a sequence's material, or a mixture's
     # component, is chosen.
@@ -153,6 +153,12 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
     @admin.display(description="ID", ordering="pk")
     def accession(self, obj):
         return obj.accession
+
+    @admin.display(description="public", boolean=True)
+    def is_public(self, obj):
+        """The rule's answer (MaterialQuerySet.public()), worked out the same way as on the public
+        pages: one query a row, as SeriesAdmin's point count is."""
+        return Material.objects.public().filter(pk=obj.pk).exists()
 
     @admin.display(description="structure")
     def structure(self, obj):
@@ -289,12 +295,12 @@ class PhaseAdmin(admin.ModelAdmin):
 
 @admin.register(Reference)
 class ReferenceAdmin(NewRowsTicked, EnteredAdmin):
-    """A reference added here is public unless unticked, as on Add data. Ticked for unpublished
-    work, the form is refused with the database's message (Reference's constraint)."""
+    """A reference added here is published unless unticked, as on Add data. Ticked for
+    unpublished work, the form is refused with the database's message (Reference's constraint)."""
 
-    list_display = ["label", "kind", "identifier", "public", *ENTERED]
-    list_filter = ["public", *ENTERED_FILTERS]
-    new_rows_ticked = ["public"]
+    list_display = ["label", "kind", "identifier", "published", *ENTERED]
+    list_filter = ["published", *ENTERED_FILTERS]
+    new_rows_ticked = ["published"]
     # Also what the autocomplete box searches when a sequence's reference is chosen.
     search_fields = ["identifier", "first_author", "title"]
     readonly_fields = ENTERED

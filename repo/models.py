@@ -81,6 +81,55 @@ PREPRINT_DOIS = ("10.48550/arxiv.", "10.26434/chemrxiv")
 ROUNDING_ALLOWANCE = 0.5
 
 
+# What is public, said here once and nowhere else: every public page, search, chart and
+# download starts from one of these methods, e.g. Material.objects.public(). Each model's
+# objects is made from its query set below (as_manager()), so the method is there on
+# Model.objects and on related rows too, e.g. material.phase_sequences.public(). The models
+# are named inside the methods, which run only when called, so they can come later in the file.
+
+
+class PhaseSequenceQuerySet(models.QuerySet):
+    def public(self):
+        """Approved, under a published reference. It asks for the reference's switch, not
+        Reference.objects.public(), which asks for public data, so each rule would wait for the
+        other. The answer is the same: a published reference with an approved sequence is public."""
+        return self.filter(approved=True, reference__published=True)
+
+
+class SeriesQuerySet(models.QuerySet):
+    def public(self):
+        """As for a sequence: approved, under a published reference."""
+        return self.filter(approved=True, reference__published=True)
+
+
+class MeasurementQuerySet(models.QuerySet):
+    def public(self):
+        """The points of public series: a point is public with its series."""
+        return self.filter(series__in=Series.objects.public())
+
+
+class MaterialQuerySet(models.QuerySet):
+    def public(self):
+        """Listed, or with a public sequence or series. pk__in, not a join through the
+        sequences: a join gives a material once for each of its sequences, and pk__in once."""
+        return self.filter(
+            Q(listed=True)
+            | Q(pk__in=PhaseSequence.objects.public().values("material"))
+            | Q(pk__in=Series.objects.public().values("material"))
+        )
+
+
+class ReferenceQuerySet(models.QuerySet):
+    def public(self):
+        """Published, with a public sequence or series, so FFDB lists only references that gave
+        it public data. A public sequence or series already needs its reference published, but
+        published=True says the rule as it is written."""
+        return self.filter(published=True).filter(
+            Q(pk__in=PhaseSequence.objects.public().values("reference"))
+            | Q(pk__in=Series.objects.public().values("reference"))
+        )
+
+
 class Material(models.Model):
     """A compound, identified by its structure, or a mixture, which has no structure and is
     described by its composition: its components in FFDB (MixtureComponent rows) and the
@@ -133,6 +182,8 @@ class Material(models.Model):
         help_text="Shown even with no public sequence or value, e.g. a structure from LCPROP's list.",
     )
     created = models.DateTimeField(auto_now_add=True)
+
+    objects = MaterialQuerySet.as_manager()
 
     class Meta:
         ordering = ["name"]
@@ -612,9 +663,13 @@ class Reference(Entered):
     )
     notes = models.TextField(blank=True)
     # Off unless something turns it on, so a reference nobody said was published stays hidden.
-    public = models.BooleanField(
-        default=False, help_text="The work is published. An unpublished group result can't be public."
+    # Published is only this switch: whether the reference is public is ReferenceQuerySet.public().
+    published = models.BooleanField(
+        default=False,
+        help_text="The work is published, so its approved data can be public. An unpublished group result can't be.",
     )
+
+    objects = ReferenceQuerySet.as_manager()
 
     class Meta:
         ordering = ["kind", "identifier"]
@@ -622,9 +677,9 @@ class Reference(Entered):
             # A CheckConstraint, so PostgreSQL refuses it however the row is written. The
             # admin's form checks it too, and shows the message.
             models.CheckConstraint(
-                condition=~Q(kind="unpublished") | Q(public=False),
-                name="unpublished_is_not_public",
-                violation_error_message="An unpublished group result can't be public.",
+                condition=~Q(kind="unpublished") | Q(published=False),
+                name="unpublished_is_not_published",
+                violation_error_message="An unpublished group result can't be marked published.",
             ),
         ]
 
@@ -736,6 +791,8 @@ class PhaseSequence(Entered):
     )
     t_clearing_c = models.FloatField("clearing point (°C)", null=True, blank=True, editable=False)
     t_melting_c = models.FloatField("melting point (°C)", null=True, blank=True, editable=False)
+
+    objects = PhaseSequenceQuerySet.as_manager()
 
     class Meta:
         ordering = ["material__name", "reference__identifier", "id"]
@@ -1084,6 +1141,8 @@ class Series(Entered):
     # Off unless something turns it on, so a series nobody checked stays hidden.
     approved = models.BooleanField(default=False, help_text="An admin has checked it.")
 
+    objects = SeriesQuerySet.as_manager()
+
     class Meta:
         ordering = ["property__sort_order", "reference__identifier", "id"]
         verbose_name_plural = "series"
@@ -1182,6 +1241,8 @@ class Measurement(models.Model):
         help_text="The series' variable at this point, in its unit. Empty for a series against temperature "
         "(its x is T) and for a value against nothing.",
     )
+
+    objects = MeasurementQuerySet.as_manager()
 
     class Meta:
         # series_id, not series: "series" would sort by Series's own ordering, through a join.

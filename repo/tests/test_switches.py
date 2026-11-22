@@ -1,6 +1,6 @@
-"""The switches: approved on sequences and series, public on references and listed on
+"""The switches: approved on sequences and series, published on references and listed on
 materials. Each is off unless something turns it on, so every way data is added turns them on:
-the imports, Add data and the admin. The database refuses public unpublished work."""
+the imports, Add data and the admin. The database refuses published unpublished work."""
 
 import csv
 import tempfile
@@ -59,13 +59,13 @@ class ImportMaterialsTests(ImportTestCase):
         super().setUp()
         self.write("merged.csv", MERGED)
 
-    def test_sequences_are_approved_and_references_public(self):
+    def test_sequences_are_approved_and_references_published(self):
         self.run_import("import_materials", "merged.csv")
 
         self.assertEqual(PhaseSequence.objects.count(), 2)
         self.assertFalse(PhaseSequence.objects.filter(approved=False).exists())
         # Only the article: a reference is added with a sequence, and no row gives the patent one.
-        self.assertTrue(Reference.objects.get(identifier=ARTICLE).public)
+        self.assertTrue(Reference.objects.get(identifier=ARTICLE).published)
         self.assertEqual(Reference.objects.count(), 1)
 
     def test_a_material_added_with_no_sequence_is_listed(self):
@@ -78,20 +78,20 @@ class ImportMaterialsTests(ImportTestCase):
     def test_running_it_again_leaves_switches_an_admin_turned_off(self):
         self.run_import("import_materials", "merged.csv")
         PhaseSequence.objects.update(approved=False)
-        Reference.objects.update(public=False)
+        Reference.objects.update(published=False)
         Material.objects.update(listed=False)
 
         output = self.run_import("import_materials", "merged.csv")
 
         self.assertFalse(PhaseSequence.objects.filter(approved=True).exists())
-        self.assertFalse(Reference.objects.filter(public=True).exists())
+        self.assertFalse(Reference.objects.filter(published=True).exists())
         # 5CB and DMCH were already there, so this run added nothing to list.
         self.assertFalse(Material.objects.filter(listed=True).exists())
         self.assertIn("Materials listed, with no sequence: 0\n", output)
 
 
 class ImportSeriesTests(ImportTestCase):
-    def test_series_are_approved_and_references_public(self):
+    def test_series_are_approved_and_references_published(self):
         Material.objects.create(name="RM734", smiles=RM734)
         Material.objects.create(name="5CB", smiles=FIVE_CB)
         for name, lines in POINTS.items():
@@ -102,16 +102,16 @@ class ImportSeriesTests(ImportTestCase):
 
         self.assertEqual(Series.objects.count(), 3)
         self.assertFalse(Series.objects.filter(approved=False).exists())
-        self.assertFalse(Reference.objects.filter(public=False).exists())
+        self.assertFalse(Reference.objects.filter(published=False).exists())
 
 
 class AddDataTests(CardTestCase):
-    def test_a_new_reference_is_public_unless_it_is_unpublished_work(self):
+    def test_a_new_reference_is_published_unless_it_is_unpublished_work(self):
         self.give("doi", PCCP)
         self.give("unpublished", "")
 
-        self.assertTrue(Reference.objects.get(identifier=PCCP).public)
-        self.assertFalse(Reference.objects.get(kind=Reference.Kind.UNPUBLISHED).public)
+        self.assertTrue(Reference.objects.get(identifier=PCCP).published)
+        self.assertFalse(Reference.objects.get(kind=Reference.Kind.UNPUBLISHED).published)
 
     def test_a_saved_cards_sequence_and_values_are_approved(self):
         self.send(RM734_COOLING, "save", blocks=[DELTA_EPSILON], material=self.rm734.accession)
@@ -127,9 +127,9 @@ class AdminTests(EnteredTestCase):
         """The form of an admin page, not sent."""
         return self.client.get(reverse(name)).context["adminform"].form
 
-    def test_new_rows_start_with_approved_and_public_ticked_but_not_listed(self):
+    def test_new_rows_start_with_approved_and_published_ticked_but_not_listed(self):
         self.assertTrue(self.page_form("admin:repo_series_add")["approved"].value())
-        self.assertTrue(self.page_form("admin:repo_reference_add")["public"].value())
+        self.assertTrue(self.page_form("admin:repo_reference_add")["published"].value())
         self.assertFalse(self.page_form("admin:repo_material_add")["listed"].value())
 
     def test_a_saved_sequence_shows_its_own_box_and_the_new_row_starts_ticked(self):
@@ -140,21 +140,21 @@ class AdminTests(EnteredTestCase):
         self.assertEqual((saved.instance, saved["approved"].value()), (self.imported, False))
         self.assertTrue(new["approved"].value())
 
-    def test_an_unpublished_reference_ticked_public_is_refused_with_the_message(self):
+    def test_an_unpublished_reference_ticked_published_is_refused_with_the_message(self):
         data = {
             "kind": "unpublished", "identifier": UNPUBLISHED_WORK, "first_author": "", "year": "",
-            "title": "", "venue": "", "notes": "", "public": "on",
+            "title": "", "venue": "", "notes": "", "published": "on",
             "phase_sequences-TOTAL_FORMS": "0", "phase_sequences-INITIAL_FORMS": "0",
         }
         response = self.client.post(reverse("admin:repo_reference_add"), data)
 
         form = response.context["adminform"].form
-        self.assertEqual(list(form.non_field_errors()), ["An unpublished group result can't be public."])
+        self.assertEqual(list(form.non_field_errors()), ["An unpublished group result can't be marked published."])
         self.assertFalse(Reference.objects.filter(identifier=UNPUBLISHED_WORK).exists())
 
     def test_each_list_filters_by_its_switch(self):
         five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True)
-        published = Reference.objects.create(kind=Reference.Kind.PATENT, identifier=PATENT, public=True)
+        published = Reference.objects.create(kind=Reference.Kind.PATENT, identifier=PATENT, published=True)
         waiting = Series.objects.create(
             material=self.material, reference=published, property=Property.objects.get(code="birefringence"),
             variable=Variable.objects.get(code="temperature"), kind="measured",
@@ -163,8 +163,8 @@ class AdminTests(EnteredTestCase):
         for name, query, expected in [
             ("admin:repo_material_changelist", {"listed__exact": "1"}, [five_cb]),
             ("admin:repo_material_changelist", {"listed__exact": "0"}, [self.material]),
-            ("admin:repo_reference_changelist", {"public__exact": "1"}, [published]),
-            ("admin:repo_reference_changelist", {"public__exact": "0"}, [self.reference]),
+            ("admin:repo_reference_changelist", {"published__exact": "1"}, [published]),
+            ("admin:repo_reference_changelist", {"published__exact": "0"}, [self.reference]),
             ("admin:repo_series_changelist", {"approved__exact": "0"}, [waiting]),
             ("admin:repo_series_changelist", {"approved__exact": "1"}, []),
         ]:
@@ -174,7 +174,7 @@ class AdminTests(EnteredTestCase):
 
 
 class UnpublishedReferenceTests(DatabaseChecks, TestCase):
-    def test_the_database_refuses_a_public_unpublished_reference(self):
+    def test_the_database_refuses_a_published_unpublished_reference(self):
         unpublished = Reference.objects.create(kind=Reference.Kind.UNPUBLISHED, identifier=UNPUBLISHED_WORK)
 
-        self.assertDatabaseRefuses(Reference.objects.filter(pk=unpublished.pk), "unpublished_is_not_public", public=True)
+        self.assertDatabaseRefuses(Reference.objects.filter(pk=unpublished.pk), "unpublished_is_not_published", published=True)
