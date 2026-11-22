@@ -1,0 +1,22 @@
+{% extends "admin/change_form.html" %}
+{% comment %}
+A waiting save's admin page, which Django finds by this file's path: what the save adds, read-only,
+then Approve and Reject (WaitingSaveAdmin.approve_view and reject_view). Each button has a form of
+its own, after the page's form: one form can't be inside another. Only admins can open the page.
+{% endcomment %}
+{% block content %}
+{{ block.super }}
+<form method="post" action="{% url 'admin:repo_waitingsave_approve' original.pk %}">
+  {% csrf_token %}
+  <p>Approve ticks approved on its phase sequences and values, keeps its labels as aliases if the
+  reference is public, and takes it out of the queue. Its data is then public, or hidden while the
+  reference isn't public.</p>
+  <input type="submit" value="Approve" class="default">
+</form>
+<form method="post" action="{% url 'admin:repo_waitingsave_reject' original.pk %}">
+  {% csrf_token %}
+  <p>Reject deletes its phase sequences and values, retires each material it leaves with no data,
+  and takes it out of the queue. The deleted phase sequences and values can't be put back.</p>
+  <input type="submit" value="Reject">
+</form>
+{% endblock %}

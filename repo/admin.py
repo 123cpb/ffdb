@@ -16,7 +16,7 @@ from . import chem
 from .forms import MergeForm
 from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
-    RetiredID, Series, Variable, accession, is_admin,
+    RetiredID, Series, Variable, WaitingSave, accession, is_admin,
 )
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
@@ -436,3 +436,119 @@ class SeriesAdmin(NewRowsTicked, EnteredAdmin):
     @admin.display(description="points")
     def point_count(self, obj):
         return obj.points.count()
+
+
+@admin.register(WaitingSave)
+class WaitingSaveAdmin(admin.ModelAdmin):
+    """The review queue: curators' saves waiting for an admin's check, oldest first, for admins only
+    (is_admin()). A save is made only by Save on Add data and leaves only by Approve or Reject, whose
+    buttons are in this model's own change_form.html. So its page is view-only, with no Delete:
+    deleting it would leave its rows unapproved, in no save."""
+
+    list_display = ["__str__", "saved_by", "saved_at", "reference", "material_count", "sequence_count", "series_count"]
+    list_select_related = ["reference", "saved_by"]
+    ordering = ["saved_at"]  # here, not in the model's Meta, which would need a migration
+    fields = ["reference", "saved_by", "saved_at", "material_list", "sequence_list", "series_list"]
+    readonly_fields = fields
+    actions = None  # each save is looked at on its own page first
+
+    def has_view_permission(self, request, obj=None):
+        return is_admin(request.user)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description="materials")
+    def material_count(self, obj):
+        return obj.materials().count()
+
+    @admin.display(description="phase sequences")
+    def sequence_count(self, obj):
+        return obj.phase_sequences.count()
+
+    @admin.display(description="blocks of values")
+    def series_count(self, obj):
+        return obj.series.count()
+
+    # What the save adds, one to a line: the admin escapes a read-only field's text and turns its
+    # line breaks into <br>. Plain, for now: block A.12 shows it as the public pages would.
+
+    @admin.display(description="materials")
+    def material_list(self, obj):
+        """Each material, with the label held for it, if any."""
+        return "\n".join(
+            f"{m}, label to keep: {obj.labels[str(m.pk)]}" if str(m.pk) in obj.labels else str(m)
+            for m in obj.materials().order_by("pk")
+        ) or "None"
+
+    @admin.display(description="phase sequences")
+    def sequence_list(self, obj):
+        sequences = obj.phase_sequences.select_related("material")
+        return "\n".join(f"{s.material.accession}: {s.sequence} ({s.run_text()})" for s in sequences) or "None"
+
+    @admin.display(description="blocks of values")
+    def series_list(self, obj):
+        series = obj.series.select_related("material", "property", "variable", "reference").annotate(
+            n=models.Count("points")
+        )
+        return "\n".join(f"{s} ({s.n} point{pluralize(s.n)})" for s in series) or "None"
+
+    def get_urls(self):
+        """Django's addresses for waiting saves, with a save's approve/ and reject/ in front, which
+        its buttons post to, as for RetiredIDAdmin's restore/."""
+        approve = self.admin_site.admin_view(require_POST(self.approve_view))
+        reject = self.admin_site.admin_view(require_POST(self.reject_view))
+        return [
+            path("<int:pk>/approve/", approve, name="repo_waitingsave_approve"),
+            path("<int:pk>/reject/", reject, name="repo_waitingsave_reject"),
+            *super().get_urls(),
+        ]
+
+    def waiting_save(self, request, pk):
+        """The save at pk, for an admin only (is_admin()). One approved or rejected since is gone: 404."""
+        if not is_admin(request.user):
+            raise PermissionDenied
+        return get_object_or_404(WaitingSave.objects.select_related("reference"), pk=pk)
+
+    def approve_view(self, request, pk):
+        """Approve the save (WaitingSave.approve()), say what became of its data and labels, and go
+        back to the queue. The save is deleted, so its history page would go with it: its
+        reference's history records who approved it, as for Mark published."""
+        saved = self.waiting_save(request, pk)
+        reference = saved.reference
+        kept, refused = saved.approve()
+        if reference.is_public():
+            outcome = "its data is public."
+        else:
+            outcome = f"its data stays hidden, because {reference} isn't published. Marking it published makes it public."
+        self.message_user(request, f"Approved save {pk} from {reference}: {outcome}", messages.SUCCESS)
+        for lcr, label in kept:
+            self.message_user(request, f"{label} is kept as one of {lcr}'s aliases.", messages.SUCCESS)
+        for lcr, label, why in refused:
+            self.message_user(request, f"{label} wasn't kept as one of {lcr}'s aliases: {why}.", messages.WARNING)
+        self.log_change(request, reference, f"Approved save {pk}.")
+        return redirect("admin:repo_waitingsave_changelist")
+
+    def reject_view(self, request, pk):
+        """Reject the save (WaitingSave.reject()), say what it retired, and go back to the queue.
+        Its reference's history records who rejected it, as for approve_view()."""
+        saved = self.waiting_save(request, pk)
+        reference = saved.reference
+        retired = saved.reject(request.user)
+        self.message_user(
+            request, f"Rejected save {pk} from {reference}: its phase sequences and values are deleted.", messages.SUCCESS
+        )
+        for material in retired:
+            self.message_user(
+                request,
+                f"{material} is retired, because the save left it with no data. It isn't public, so its address answers not found.",
+                messages.SUCCESS,
+            )
+        self.log_change(request, reference, f"Rejected save {pk}." + (f" Retired {', '.join(retired)}." if retired else ""))
+        return redirect("admin:repo_waitingsave_changelist")

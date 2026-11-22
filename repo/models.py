@@ -784,8 +784,8 @@ class WaitingSave(models.Model):
     which reference. The phase sequences and series it added point to it (their waiting_save)
     and are saved unapproved, so they are hidden. It also holds the labels its cards gave
     materials already in FFDB, which become aliases only when it is approved. Approving or
-    rejecting it deletes it, so every save in this table is waiting. An admin's Save is
-    approved at once and makes none."""
+    rejecting it (approve(), reject()) deletes it, so every save in this table is waiting. An
+    admin's Save is approved at once and makes none."""
 
     # CASCADE: the save's rows already stop the reference being deleted (PROTECT), so this
     # deletes only a save with no rows left.
@@ -806,6 +806,78 @@ class WaitingSave(models.Model):
 
     def __str__(self):
         return f"Save {self.pk} from {self.reference}"
+
+    def materials(self):
+        """The materials its sequences and series are for. pk__in, as in Material.objects.public(),
+        gives each once."""
+        return Material.objects.filter(
+            Q(pk__in=self.phase_sequences.values("material")) | Q(pk__in=self.series.values("material"))
+        )
+
+    def approve(self):
+        """Tick approved on its sequences and series, keep its labels as aliases (keep_labels()),
+        and delete it, which leaves its rows with no waiting save (SET_NULL). All of it or none.
+        Its data is then public, or hidden while its reference isn't public. Returns what
+        keep_labels() returns."""
+        with transaction.atomic():
+            # update(), as in Material.merge_into(): one query per table. save() isn't run, and
+            # needn't be: nothing it works out depends on the switch.
+            self.phase_sequences.update(approved=True)
+            self.series.update(approved=True)
+            kept, refused = self.keep_labels()
+            self.delete()
+        return kept, refused
+
+    def keep_labels(self):
+        """Add each label it holds to its material's aliases, where Material.alias_problem() allows,
+        asked again because the material's names may have changed since the save. Only under a
+        public reference, as for an admin's own Save, asked once the rows are approved: a reference
+        with no public data until now is public with them (CompoundCard.save()). Returns (kept,
+        refused): [(LCR ID, label), ...] and [(LCR ID, label, why), ...]."""
+        public = self.reference.is_public()
+        kept, refused = [], []
+        for number, label in self.labels.items():
+            lcr = accession(int(number))
+            material = Material.objects.filter(pk=number).first()
+            if material is None:
+                problem = f"{lcr} is no longer in FFDB"  # retired or merged since the save
+            elif not public:
+                problem = "the reference isn't public"
+            else:
+                problem = material.alias_problem(label)
+            if problem:
+                refused.append((lcr, label, problem))
+            else:
+                material.add_aliases([label])
+                material.save(update_fields=["aliases"])
+                kept.append((lcr, label))
+        return kept, refused
+
+    def reject(self, user):
+        """Delete its sequences and series, which takes their transitions and points with them,
+        retire (Material.retire(), by user) each of its materials left with nothing, and delete
+        it. All of it or none. Left with nothing: no sequence or series, not listed, and not a
+        component of a mixture, which PROTECT would refuse to retire anyway. This can be a
+        material the save didn't add, if it had nothing before the save either. Returns the
+        retired materials, as text, since retiring takes their pks."""
+        with transaction.atomic():
+            # Read before the rows go, which takes the materials out of materials(). Mixtures
+            # first (False sorts before True), so a compound only in one of them can go after it.
+            materials = sorted(self.materials().order_by("pk"), key=lambda m: m.kind != Material.Kind.MIXTURE)
+            self.phase_sequences.all().delete()
+            self.series.all().delete()
+            retired = []
+            for material in materials:
+                if material.listed or material.phase_sequences.exists() or material.series.exists():
+                    continue
+                if material.in_mixtures.exists():
+                    continue
+                retired.append(str(material))
+                # It isn't public now, so its retired ID isn't either (was_public), and its address
+                # answers 404.
+                material.retire(user)
+            self.delete()
+        return retired
 
 
 class PhaseSequence(Entered):
