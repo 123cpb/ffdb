@@ -294,7 +294,11 @@ class SaveTests(CardTestCase):
         self.client.force_login(self.admin)
         response = self.send(FIVE_CB_HEATING, "save", follow=True, smiles="C[C@@H](O)CCCCCC", name="R-2-octanol")
         new = Material.objects.get(name="R-2-octanol")
-        self.assertTrue(self.messages(response)[1].startswith(f"{new.accession} {warning}"))
+        message = self.messages(response)[1]
+        # An admin's warning counts every material, the curator's waiting rac-2-octanol too, and
+        # which comes first depends on how the database sorts names, so check only that it is there.
+        self.assertTrue(message.startswith(f"{new.accession} has the same connectivity as "))
+        self.assertIn(f"{s_octanol.accession} (S-2-octanol)", message)
 
 
 class AccessTests(CardTestCase):
