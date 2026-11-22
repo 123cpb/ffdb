@@ -8,7 +8,7 @@
 <p>
   {% if reference.link %}<a href="{{ reference.link }}">{{ reference.identifier }}</a>{% else %}{{ reference.identifier }}{% endif %}
   · <a href="{% url 'repo:reference' reference.pk %}">Public page</a>
-  {% if user.is_staff %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
+  {% if user|is_admin %}· <a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a>{% endif %}
 </p>
 
 <p>Add this reference's compounds and mixtures, their phase sequences, and its property values and curves here, on

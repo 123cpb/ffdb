@@ -5,9 +5,10 @@ from django.test import TestCase
 from django.urls import reverse
 
 from repo.models import Material, PhaseSequence, Reference
-from repo.tests.test_sequences import RM734, RM734_SUMMARY
+from repo.tests.test_compound_card import RM734_COOLING
+from repo.tests.test_sequences import RM734
+from repo.tests.test_several_cards import CardsTestCase
 
-ACTIONS = ["add", "change", "delete"]
 ADD = reverse("repo:add")
 LOGIN = reverse("login")
 LOGOUT = reverse("logout")
@@ -25,41 +26,10 @@ class CuratorTests(TestCase):
         cls.curator.groups.add(cls.curators)
         cls.other = User.objects.create_user("other", password="a-test-password")
 
-    def test_curators_can_add_change_and_delete_the_data_but_not_delete_materials(self):
+    def test_curators_may_only_add_references(self):
+        """Adding a reference is what lets them use Add data (migration 0032)."""
         codenames = set(self.curators.permissions.values_list("codename", flat=True))
-        expected = {
-            f"{action}_{model}"
-            for action in ACTIONS
-            for model in ["material", "reference", "phasesequence", "series", "measurement", "mixturecomponent"]
-        } - {"delete_material"}  # only admins delete materials (migration 0021)
-        self.assertEqual(codenames, expected)
-
-    def test_curators_can_work_on_every_section_of_rows_on_their_admin_pages(self):
-        """The admin leaves out a section of rows (an inline) whose model the user has no
-        permission on, and with it any rules checked in that section. So each section on a
-        page curators can change needs the group's permissions too, including a section
-        added after migration 0013 made the group."""
-        for model in apps.get_app_config("repo").get_models():
-            if not admin.site.is_registered(model):
-                continue
-            if not self.curator.has_perm(f"repo.change_{model._meta.model_name}"):
-                continue  # not a curators' page, like the vocabularies
-            for inline in admin.site.get_model_admin(model).inlines:
-                for action in ACTIONS:
-                    codename = f"{action}_{inline.model._meta.model_name}"
-                    with self.subTest(page=model.__name__, permission=codename):
-                        self.assertTrue(self.curator.has_perm(f"repo.{codename}"))
-
-    def test_curator_with_staff_status_can_add_data_in_the_admin(self):
-        self.curator.is_staff = True  # set on the user's admin page; a group can't give it
-        self.curator.save()
-        self.client.force_login(self.curator)
-
-        for model in ["material", "reference", "series"]:
-            with self.subTest(model=model):
-                self.assertEqual(self.client.get(reverse(f"admin:repo_{model}_add")).status_code, 200)
-        # Not the vocabularies: those stay with admins.
-        self.assertEqual(self.client.get(reverse("admin:repo_phase_add")).status_code, 403)
+        self.assertEqual(codenames, {"add_reference"})
 
     def test_curator_logs_in_sees_add_data_and_logs_out(self):
         response = self.client.post(
@@ -101,27 +71,17 @@ class CuratorTests(TestCase):
 
 
 class MaterialDeleteTests(TestCase):
-    """Only admins delete materials: deleting one deletes its sequences and values too.
-    A curator can still delete a single sequence."""
+    """Only admins delete materials: deleting one deletes its sequences and values too. Curators
+    can't open the admin at all now (CuratorAdminTests), but the refusal is tested here too."""
 
     @classmethod
     def setUpTestData(cls):
         cls.material = Material.objects.create(name="RM734", smiles=RM734)
-        cls.reference = Reference.objects.create(
-            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
-        )
-        cls.sequence = PhaseSequence.objects.create(material=cls.material, reference=cls.reference, sequence=RM734_SUMMARY)
         cls.curator = User.objects.create_user("curator", password="a-test-password", is_staff=True)
         cls.curator.groups.add(Group.objects.get(name="Curators"))
         cls.admin = User.objects.create_superuser("admin", password="a-test-password")
         cls.change_url = reverse("admin:repo_material_change", args=[cls.material.pk])
         cls.delete_url = reverse("admin:repo_material_delete", args=[cls.material.pk])
-
-    def test_a_curator_is_offered_no_way_to_delete_a_material(self):
-        self.client.force_login(self.curator)
-
-        self.assertNotContains(self.client.get(self.change_url), self.delete_url)  # no Delete button
-        self.assertNotContains(self.client.get(reverse("admin:repo_material_changelist")), "delete_selected")
 
     def test_a_curator_who_sends_the_delete_form_is_refused(self):
         self.client.force_login(self.curator)
@@ -135,32 +95,54 @@ class MaterialDeleteTests(TestCase):
         )
         self.assertTrue(Material.objects.filter(pk=self.material.pk).exists())
 
-    def test_a_curator_can_still_delete_a_sequence(self):
-        """Tick Delete on the sequence's row on the material's page, and save. Every field is
-        sent as the page would send it; the row's other fields aren't checked once it is ticked."""
-        self.client.force_login(self.curator)
-        data = {
-            "kind": "compound", "name": "RM734", "aliases": "", "smiles": RM734, "notes": "",
-            "composition_status": "listed", "other_components": "",
-            "components-TOTAL_FORMS": "0", "components-INITIAL_FORMS": "0",
-            "phase_sequences-TOTAL_FORMS": "1", "phase_sequences-INITIAL_FORMS": "1",
-            "phase_sequences-0-id": str(self.sequence.pk),
-            "phase_sequences-0-material": str(self.material.pk),
-            "phase_sequences-0-reference": str(self.reference.pk),
-            "phase_sequences-0-direction": "summary",
-            "phase_sequences-0-sequence": RM734_SUMMARY,
-            "phase_sequences-0-DELETE": "on",
-        }
-
-        response = self.client.post(self.change_url, data)
-
-        self.assertEqual(response.status_code, 302)  # saved, and sent back to the list
-        self.assertFalse(PhaseSequence.objects.filter(pk=self.sequence.pk).exists())
-        self.assertTrue(Material.objects.filter(pk=self.material.pk).exists())
-
     def test_an_admin_can_delete_a_material(self):
         self.client.force_login(self.admin)
 
         self.assertContains(self.client.get(self.change_url), self.delete_url)
         self.client.post(self.delete_url, {"post": "yes"})
         self.assertFalse(Material.objects.filter(pk=self.material.pk).exists())
+
+
+class CuratorAdminTests(CardsTestCase):
+    """Curators are out of the admin: their Group has only add reference (migration 0032), which
+    lets them use Add data, where their saves wait for an admin's check. They ask an admin for
+    corrections. This curator kept staff status, which lets a user into the admin, and is shown
+    nothing there."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.curator.is_staff = True
+        cls.curator.save()
+
+    def test_the_admin_shows_a_curator_with_staff_status_nothing(self):
+        index = self.client.get(reverse("admin:index"))
+
+        self.assertEqual(index.context["app_list"], [])  # "You don't have permission to view or edit anything."
+        for model in apps.get_models():
+            if not admin.site.is_registered(model):
+                continue
+            for page in ["changelist", "add"]:
+                name = f"admin:{model._meta.app_label}_{model._meta.model_name}_{page}"
+                with self.subTest(name):
+                    self.assertEqual(self.client.get(reverse(name)).status_code, 403)
+
+    def test_a_curator_cant_open_or_save_an_admin_change_page(self):
+        url = reverse("admin:repo_material_change", args=[self.rm734.pk])
+        references = Reference.objects.count()
+
+        self.assertEqual(self.client.get(url).status_code, 403)
+        # Only the fields that would change: the admin refuses before it reads the form.
+        self.assertEqual(self.client.post(url, {"name": "RM734 corrected"}).status_code, 403)
+        add = self.client.post(reverse("admin:repo_reference_add"), {"kind": "patent", "identifier": "EP0000001A1"})
+        self.assertEqual(add.status_code, 403)
+
+        self.assertEqual(Material.objects.get(pk=self.rm734.pk).name, "RM734")
+        self.assertEqual(Reference.objects.count(), references)
+
+    def test_a_curator_can_still_save_on_add_data(self):
+        response = self.send(RM734_COOLING, "save", material="RM734")
+
+        self.assertRedirects(response, self.add_page(self.article))
+        sequence = PhaseSequence.objects.get()
+        self.assertEqual((sequence.material, sequence.approved), (self.rm734, False))  # waiting

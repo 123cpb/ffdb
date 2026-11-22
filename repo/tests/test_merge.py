@@ -181,8 +181,8 @@ class MergeTests(RetiredTestCase):
         before = all_rows()
         self.client.force_login(curator)
 
-        change_page = self.client.get(reverse("admin:repo_material_change", args=[self.duplicate.pk]))
-        self.assertNotContains(change_page, self.merge_url(self.duplicate))
+        # The material's page, with its Merge link, is refused too: curators are out of the admin.
+        self.assertEqual(self.client.get(reverse("admin:repo_material_change", args=[self.duplicate.pk])).status_code, 403)
         self.assertEqual(self.preview(self.duplicate, self.rm734.accession).status_code, 403)
         self.assertEqual(self.merge(self.duplicate, self.rm734.accession).status_code, 403)
         self.assertEqual(all_rows(), before)

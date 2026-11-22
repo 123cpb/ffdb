@@ -1,4 +1,4 @@
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
@@ -65,10 +65,15 @@ class MaterialPageTests(TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_edit_in_admin_link_is_for_staff_only(self):
+    def test_edit_in_admin_link_is_for_admins_only(self):
         edit_url = reverse("admin:repo_material_change", args=[self.material.pk])
 
         self.assertNotContains(self.client.get(self.url), edit_url)
 
-        self.client.force_login(User.objects.create_user("curator", is_staff=True))
+        # Not for a curator who kept staff status: the admin shows them nothing (migration 0032).
+        curator = User.objects.create_user("curator", is_staff=True)
+        curator.groups.add(Group.objects.get(name="Curators"))
+        self.client.force_login(curator)
+        self.assertNotContains(self.client.get(self.url), edit_url)
+        self.client.force_login(User.objects.create_superuser("admin"))
         self.assertContains(self.client.get(self.url), edit_url)

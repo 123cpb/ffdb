@@ -1,4 +1,5 @@
 {% extends "repo/base.html" %}
+{% load repo_tags %}
 {% block title %}{{ reference.label }}{% endblock %}
 {% block content %}
 <p class="reference-kind">{{ reference.get_kind_display }}</p>
@@ -26,7 +27,7 @@
 {% if perms.repo.add_reference %}
 <p><a href="{% url 'repo:add_from_reference' reference.pk %}">Add data from this reference</a></p>
 {% endif %}
-{% if user.is_staff %}
+{% if user|is_admin %}
 <p><a href="{% url 'admin:repo_reference_change' reference.pk %}">Edit in admin</a></p>
 {% endif %}
 {% endblock %}

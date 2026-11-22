@@ -321,6 +321,12 @@ class ReferenceAdmin(NewRowsTicked, EnteredAdmin):
     # The list's Action menu, after Django's own "Delete selected references".
     actions = ["mark_published", "mark_not_published"]
 
+    def has_add_permission(self, request):
+        """Only admins (is_admin()) add references here. Curators have add reference too, because
+        it is what lets them use Add data, which is where they add them. Without this, a curator
+        with staff status would find an Add reference page in the admin (migration 0032)."""
+        return is_admin(request.user) and super().has_add_permission(request)
+
     def has_admin_permission(self, request):
         """For the actions with permissions=["admin"]: Django offers them only when this is
         True. Only admins (is_admin()), as for merging and restoring materials."""

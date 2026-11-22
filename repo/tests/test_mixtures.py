@@ -1,6 +1,6 @@
 """Mixtures: materials with no structure, made of components. Each test is one rule."""
 
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import ProtectedError
@@ -141,11 +141,8 @@ class AdminTests(MixtureTestCase):
     add_url = reverse("admin:repo_material_add")
 
     def setUp(self):
-        # A curator, not a superuser: a superuser has every permission, so the admin would
-        # show them sections a curator doesn't get.
-        curator = User.objects.create_user("curator", password="pw", is_staff=True)
-        curator.groups.add(Group.objects.get(name="Curators"))
-        self.client.force_login(curator)
+        # Curators can't use the admin (migration 0032).
+        self.client.force_login(User.objects.create_superuser("admin", password="pw"))
 
     def add_mixture(self, name, rows, status=LISTED, other=""):
         """Fill in the admin's Add material form for a mixture, one component row for each
@@ -205,8 +202,6 @@ class AdminTests(MixtureTestCase):
         self.assertFalse(Material.objects.filter(name="F8").exists())
 
     def test_a_compound_in_a_mixture_is_not_deleted(self):
-        # Only admins delete materials (migration 0021), so a superuser rather than the curator.
-        self.client.force_login(User.objects.create_superuser("admin", password="pw"))
         url = reverse("admin:repo_material_delete", args=[self.cb5.pk])
 
         self.assertContains(self.client.get(url), "protected related objects")

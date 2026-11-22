@@ -154,15 +154,17 @@ class IsAdminTests(TestCase):
 
     def test_the_admins_pages_ask_the_is_admin_filter(self):
         admin = User.objects.create_superuser("admin")
-        curator = User.objects.create_user("curator", is_staff=True)
-        curator.groups.add(Group.objects.get(name="Curators"))
+        # Curators can't open a material's admin page (migration 0032). Someone an admin gave change
+        # material to, but not delete material, can, and isn't an admin.
+        editor = User.objects.create_user("editor", is_staff=True)
+        editor.user_permissions.add(Permission.objects.get(content_type__app_label="repo", codename="change_material"))
         rm734 = Material.objects.create(name="RM734", smiles=RM734)
         cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB)
         number = cb5.pk  # before retiring, which takes its pk
         cb5.retire(admin)
         merge = reverse("admin:repo_material_merge", args=[rm734.pk])
 
-        self.client.force_login(curator)  # curators can still open a material's admin page, until block A.9
+        self.client.force_login(editor)
         self.assertNotContains(self.client.get(reverse("admin:repo_material_change", args=[rm734.pk])), merge)
         self.client.force_login(admin)
         self.assertContains(self.client.get(reverse("admin:repo_material_change", args=[rm734.pk])), merge)

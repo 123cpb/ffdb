@@ -3,7 +3,7 @@ published, its undo. Only admins are offered them, and each change goes in the r
 admin history."""
 
 from django.contrib.admin.models import LogEntry
-from django.contrib.auth.models import Group, User
+from django.contrib.auth.models import Permission, User
 from django.test import TestCase
 from django.urls import reverse
 
@@ -103,16 +103,20 @@ class MarkNotPublishedTests(MakePublicTestCase):
 
 
 class WhoMayUseThemTests(MakePublicTestCase):
-    def test_a_curator_isnt_offered_them_and_cant_use_them(self):
-        curator = User.objects.create_user("curator", is_staff=True)
-        curator.groups.add(Group.objects.get(name="Curators"))
-        self.client.force_login(curator)
+    def test_someone_who_may_change_references_but_isnt_an_admin_isnt_offered_them_and_cant_use_them(self):
+        """Curators can't open the References list at all (migration 0032). Someone an admin gave
+        change reference to on their user page, but not delete material, can, and isn't an admin."""
+        editor = User.objects.create_user("editor", is_staff=True)
+        editor.user_permissions.add(Permission.objects.get(content_type__app_label="repo", codename="change_reference"))
+        self.client.force_login(editor)
 
-        offered = dict(self.client.get(REFERENCES).context["action_form"].fields["action"].choices)
+        page = self.client.get(REFERENCES)
         self.act("mark_published", self.article)
 
-        self.assertNotIn("mark_published", offered)
-        self.assertNotIn("mark_not_published", offered)
+        # The list opens, but its Action menu offers neither. With nothing to offer, Django leaves
+        # the menu out.
+        self.assertNotContains(page, "mark_published")
+        self.assertNotContains(page, "mark_not_published")
         self.assertFalse(self.published(self.article))
 
     def test_each_change_is_in_the_references_history_and_nothing_else(self):

@@ -666,7 +666,7 @@ def fill_from_crossref(reference):
     """Fill in a new reference's details and abstract from Crossref, before it is saved.
     Returns what happened, for the curator. If Crossref can't help, the reference is added
     without details, which fetch_reference_details can fill in later."""
-    later = "Add its details in the admin, or run fetch_reference_details later."
+    later = "An admin can add its details, or run fetch_reference_details later."
     if not settings.CROSSREF_MAILTO:
         return f"Crossref wasn't asked, because CROSSREF_MAILTO isn't set. {later}"
     try:

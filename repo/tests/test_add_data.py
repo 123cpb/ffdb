@@ -109,7 +109,7 @@ class FindReferenceTests(AddDataTestCase):
         self.assertEqual(self.messages(response), [
             f"Added to FFDB: {UNKNOWN}",
             "Crossref doesn't know this DOI, so it has no details. "
-            "Add its details in the admin, or run fetch_reference_details later.",
+            "An admin can add its details, or run fetch_reference_details later.",
         ])
 
     def test_without_a_connection_the_doi_is_added_without_details_and_the_page_says_so(self):

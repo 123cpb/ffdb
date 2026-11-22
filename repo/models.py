@@ -269,7 +269,7 @@ class Material(models.Model):
         if not name_key(name):
             return "it has no letters or digits to compare with other names"
         if len(", ".join(self.alias_list() + [name])) > self._meta.get_field("aliases").max_length:
-            return "its aliases are full: tidy them in the admin"
+            return "its aliases are full: an admin can tidy them"
         return ""
 
     def clean(self):

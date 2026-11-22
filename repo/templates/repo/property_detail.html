@@ -70,7 +70,7 @@
   {% endif %}
 </section>
 
-{% if user.is_staff %}
+{% if user|is_admin %}
 <p><a href="{% url 'admin:repo_property_change' property.pk %}">Edit in admin</a></p>
 {% endif %}
 {% endblock %}
