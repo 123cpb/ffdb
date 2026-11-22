@@ -78,7 +78,7 @@ class CardTestCase(AddDataTestCase):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734, listed=True)
 
     def setUp(self):
         super().setUp()
@@ -128,8 +128,8 @@ class CheckTests(CardTestCase):
                 self.assertEqual(self.card(self.send(RM734_COOLING, material=text)).material_form.found, self.rm734)
 
     def test_an_unknown_or_shared_name_says_why_it_found_nothing(self):
-        Material.objects.create(name="Twin", smiles="CCO")
-        Material.objects.create(name="Twin", smiles="CCCO")
+        Material.objects.create(name="Twin", smiles="CCO", listed=True)
+        Material.objects.create(name="Twin", smiles="CCCO", listed=True)
         for text, problem in [
             ("XYZ", "Nothing in FFDB is called XYZ. Check it, or give the SMILES of a new compound."),
             ("Twin", "More than one material is called Twin"),
@@ -162,7 +162,7 @@ class CheckTests(CardTestCase):
         self.assertContains(response, "10b won't be kept as an alias: a bare compound number")
 
     def test_a_new_structure_with_the_connectivity_of_one_in_ffdb_is_warned_about(self):
-        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
+        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC", listed=True)
 
         response = self.send(FIVE_CB_HEATING, smiles="CC(O)CCCCCC", name="rac-2-octanol")
 
@@ -235,7 +235,7 @@ class SaveTests(CardTestCase):
 
         five_cb = Material.objects.get(name="5CB")
         self.assertEqual(five_cb.smiles, FIVE_CB)
-        self.assertEqual(self.messages(response), [f"Added 5CB as {five_cb.accession}, with a phase sequence.", WAITING])
+        self.assertEqual(self.messages(response), ["Added 5CB, with a phase sequence.", WAITING])  # no LCR ID
         run = five_cb.phase_sequences.get()
         self.assertEqual((run.standard_sequence, run.lowest_temperature_c), ("Iso 35 N", 0))
 
@@ -283,13 +283,18 @@ class SaveTests(CardTestCase):
         self.rm734.refresh_from_db()
         self.assertEqual(self.rm734.aliases, "")
 
-    def test_the_stereochemistry_warning_names_the_new_material_once_saved(self):
-        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
+    def test_the_stereochemistry_warning_once_saved_names_the_new_material_only_for_an_admin(self):
+        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC", listed=True)
+        warning = f"has the same connectivity as {s_octanol.accession}"
 
+        # A curator's: the warning Check showed, with no LCR ID for the material added.
         response = self.send(FIVE_CB_HEATING, "save", follow=True, smiles="CC(O)CCCCCC", name="rac-2-octanol")
+        self.assertTrue(self.messages(response)[1].startswith(f"This structure {warning}"))
 
-        new = Material.objects.get(name="rac-2-octanol")
-        self.assertTrue(self.messages(response)[1].startswith(f"{new.accession} has the same connectivity as {s_octanol.accession}"))
+        self.client.force_login(self.admin)
+        response = self.send(FIVE_CB_HEATING, "save", follow=True, smiles="C[C@@H](O)CCCCCC", name="R-2-octanol")
+        new = Material.objects.get(name="R-2-octanol")
+        self.assertTrue(self.messages(response)[1].startswith(f"{new.accession} {warning}"))
 
 
 class AccessTests(CardTestCase):
@@ -372,7 +377,7 @@ class PhaseBuilderAndDrawTests(CardTestCase):
                 self.assertNotContains(response, '<option value="K">')
 
     def test_suggestions_are_each_phase_by_its_code_then_its_other_labels(self):
-        suggestions = CompoundCards(None, self.article).phase_suggestions()
+        suggestions = CompoundCards(None, self.article, self.curator).phase_suggestions()
 
         self.assertEqual(
             suggestions[:4],

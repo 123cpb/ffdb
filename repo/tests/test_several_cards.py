@@ -33,7 +33,7 @@ class CardsTestCase(CardTestCase):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.aya = Material.objects.create(name="Aya_5B", smiles=DIO)
+        cls.aya = Material.objects.create(name="Aya_5B", smiles=DIO, listed=True)
 
     def send_cards(self, *cards, button="check", follow=False, total=None):
         """Post a page of cards with the Check or Save button. Each card is a dict of
@@ -59,14 +59,13 @@ class OneSaveTests(CardsTestCase):
         response = self.send_cards(*THREE_CARDS, button="save", follow=True)
 
         self.assertRedirects(response, self.add_page(self.article))
-        five_cb = Material.objects.get(name="5CB")
         self.assertEqual(
             self.messages(response),
             [
                 f"Saved a phase sequence and 1 block of values for {self.rm734}.",
                 f"Saved a phase sequence for {self.aya}. DIO is held with the save, to be kept as one of its aliases "
                 "if an admin approves it.",
-                f"Added 5CB as {five_cb.accession}, with a phase sequence.",
+                "Added 5CB, with a phase sequence.",
                 WAITING,
             ],
         )

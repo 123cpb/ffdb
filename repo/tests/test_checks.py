@@ -149,7 +149,7 @@ class MaterialTests(ChecksTestCase):
         self.assertContains(self.ask("card_material", smiles=FIVE_CB, name="5CB"), "New compound, named 5CB")
 
     def test_a_new_structure_with_the_connectivity_of_one_in_ffdb_is_warned_about_before_its_label(self):
-        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
+        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC", listed=True)
 
         answer = self.ask("card_material", smiles="CC(O)CCCCCC")
 

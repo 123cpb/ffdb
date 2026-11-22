@@ -1,6 +1,8 @@
 {% comment %}
 The question a new mixture's form, MixtureForm (as form), asks when mixtures with its name are in
 FFDB: which, with their compositions, and whether it is one of them. Nothing when there are none.
+The mixtures and their components are those the user sees (MixtureForm): a component they don't
+is counted, never named, as on the mixture's public page.
 A compound card's material answer (_card_material_result.html) includes it. That answer is inside
 the cards' form, so the answer to the question is sent too.
 {% endcomment %}
@@ -14,7 +16,7 @@ the cards' form, so the answer to the question is sent too.
     {% for mixture in form.same_name %}
     <li>
       <a href="{% url 'repo:material' mixture.pk %}">{{ mixture.accession }}</a> {{ mixture.name }}{% if mixture.aliases %}, also called {{ mixture.aliases }}{% endif %}
-      {% include "repo/_composition.html" with material=mixture components=mixture.components.all %}
+      {% include "repo/_composition.html" with material=mixture components=mixture.shown_components hidden_components=mixture.hidden_components %}
     </li>
     {% endfor %}
   </ul>

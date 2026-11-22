@@ -92,7 +92,7 @@ class MakeCardsTestCase(CardTestCase):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.aya = Material.objects.create(name="Aya_5B", smiles=DIO)
+        cls.aya = Material.objects.create(name="Aya_5B", smiles=DIO, listed=True)
 
     def setUp(self):
         super().setUp()
@@ -166,7 +166,8 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
 
     def test_the_cards_are_saved_with_a_value_added_to_one(self):
         # The cards as the page sends them back, with a block of values typed on RM734's.
-        data = CompoundTableForm(self.table_data(self.three_lines()), reference=self.article).cards_data()
+        form = CompoundTableForm(self.table_data(self.three_lines()), reference=self.article, user=self.curator)
+        data = form.cards_data()
         data.update({f"card-1-block-0-{name}": value for name, value in PS_BLOCK.items()})
 
         response = self.client.post(self.page, {**data, "save": ""})
@@ -180,8 +181,11 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
         self.assertEqual(Material.objects.get(pk=self.aya.pk).aliases, "")  # held until an admin approves the save
 
     def test_a_sequence_ffdb_already_has_from_this_reference_is_left_off_the_card(self):
-        PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence="K 139.8 NF 132.7 N 187.9 I")
-        data = CompoundTableForm(self.table_data(self.three_lines()), reference=self.article).cards_data()
+        PhaseSequence.objects.create(
+            material=self.rm734, reference=self.article, sequence="K 139.8 NF 132.7 N 187.9 I", approved=True
+        )
+        form = CompoundTableForm(self.table_data(self.three_lines()), reference=self.article, user=self.curator)
+        data = form.cards_data()
 
         self.assertNotIn("card-1-run-direction", data)  # RM734's card: its material and label, but no sequence
         self.assertEqual((data["card-1-material"], data["card-1-name"]), (self.rm734.accession, "RM734"))

@@ -99,7 +99,7 @@ class Command(BaseCommand):
                 return self.skip(where, name, problem), None
             material = Material.objects.create(name=name, smiles=smiles)
             self.added.append(material.pk)
-            warning = material.stereo_warning()
+            warning = material.stereo_warning(Material.objects.all())
             if warning:
                 self.stdout.write(f"{where}: {warning}")
             return "material added", material

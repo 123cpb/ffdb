@@ -89,6 +89,14 @@ def is_admin(user):
     return user.has_perm("repo.delete_material")
 
 
+def seen_by(user, rows):
+    """rows, a query set, as user's Add data sees them: every row for an admin, whose saves go
+    straight in, and only the public ones (the model's public()) for anyone else. So a curator's
+    checks never say that hidden data exists, and a compound whose structure is hidden reads as
+    new (CardMaterialForm.read_structure())."""
+    return rows if is_admin(user) else rows.public()
+
+
 # What is public, said here once and nowhere else: every public page, search, chart and
 # download starts from one of these methods, e.g. Material.objects.public(). Each model's
 # objects is made from its query set below (as_manager()), so the method is there on
@@ -347,19 +355,21 @@ class Material(models.Model):
                 problems.append(f"The fractions add up to {total:g} {units.pop()}, more than 100.")
         return problems
 
-    def possible_stereo_variants(self):
-        """Other materials with the same connectivity: the same skeleton with different or
-        missing stereochemistry. They are kept as separate materials."""
+    def possible_stereo_variants(self, among):
+        """Other materials, of those in among (a query set), with the same connectivity: the same
+        skeleton with different or missing stereochemistry. They are kept as separate materials.
+        The admin and the import look among every material, Add data among those its user sees
+        (seen_by())."""
         if not self.inchikey:
             return Material.objects.none()
         skeleton = chem.skeleton_key(self.inchikey)
-        return Material.objects.filter(inchikey__startswith=skeleton + "-").exclude(pk=self.pk)
+        return among.filter(inchikey__startswith=skeleton + "-").exclude(pk=self.pk)
 
-    def stereo_warning(self):
-        """The warning shown when possible_stereo_variants() finds any, or "" when it finds none.
-        The admin, the import and the compound table show it; the table also asks it of a
+    def stereo_warning(self, among):
+        """The warning shown when possible_stereo_variants() finds any in among, or "" when it
+        finds none. The admin, the import and Add data show it; Add data also asks it of a
         material not saved yet, which is called "This structure"."""
-        variants = self.possible_stereo_variants()
+        variants = self.possible_stereo_variants(among)
         if not variants:
             return ""
         others = ", ".join(f"{v.accession} ({v.name})" for v in variants)
@@ -487,18 +497,17 @@ class Material(models.Model):
         return refused
 
 
-def materials_named(name, kind=None):
-    """The materials with this name or alias, compared by name_key(), in LCR ID order: only
-    those of kind (one of Material.Kind), if given. Python compares the names, because
-    name_key() drops characters in a way the database can't, using only its ordinary
-    features, so every material is read. A name with no letters or digits fits none."""
+def materials_named(name, among):
+    """The materials in among (a query set) with this name or alias, compared by name_key(), in
+    LCR ID order. Add data looks among those its user sees (seen_by()), and only the mixtures for
+    a new mixture's name. Python compares the names, because name_key() drops characters in a way
+    the database can't, using only its ordinary features, so every material in among is read. A
+    name with no letters or digits fits none."""
     if not name_key(name):
         return []
     # only(): just the fields compared, which is several times quicker than reading every
     # SMILES too. The few materials found read any other field when it is first used.
-    materials = Material.objects.order_by("pk").only("kind", "name", "aliases")
-    if kind:
-        materials = materials.filter(kind=kind)
+    materials = among.order_by("pk").only("kind", "name", "aliases")
     return [material for material in materials if material.has_name(name)]
 
 
@@ -768,16 +777,6 @@ class Reference(Entered):
     def is_public(self):
         """Whether this reference is public now, by the rule (ReferenceQuerySet.public())."""
         return Reference.objects.public().filter(pk=self.pk).exists()
-
-    def materials(self):
-        """The materials this reference gives sequences or values for, in LCR ID order. Each |
-        joins the two ways a material links to a reference, so a material with both a sequence
-        and a value from it comes back more than once: distinct() keeps one."""
-        return (
-            Material.objects.filter(Q(phase_sequences__reference=self) | Q(series__reference=self))
-            .distinct()
-            .order_by("pk")
-        )
 
 
 class WaitingSave(models.Model):

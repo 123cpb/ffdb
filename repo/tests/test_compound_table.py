@@ -69,7 +69,7 @@ class CompoundTableTestCase(AddDataTestCase):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734, listed=True)
 
     def send(self, table, button="check", follow=False, direction="summary", rate="", method=""):
         """Post the table with the Check button, or the one button names, as summaries unless
@@ -121,7 +121,7 @@ class CheckTests(CompoundTableTestCase):
                 self.assertIn(problem, line.problem)
 
     def test_a_new_structure_with_the_connectivity_of_one_in_ffdb_is_warned_about(self):
-        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")
+        s_octanol = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC", listed=True)
 
         line = self.line("rac-2-octanol\tCC(O)CCCCCC")
 
@@ -129,7 +129,7 @@ class CheckTests(CompoundTableTestCase):
         self.assertTrue(line.stereo_warning.startswith(f"This structure has the same connectivity as {s_octanol.accession}"))
 
     def test_a_sequence_already_there_from_this_reference_is_marked(self):
-        PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence=SEQUENCE)
+        PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence=SEQUENCE, approved=True)
 
         response = self.send(f"RM734\t{RM734}\tK 139.8 Nf 132.7 N 187.9 I")  # Nf is NF
 
@@ -191,7 +191,8 @@ class LcrIdLineTests(CompoundTableTestCase):
     def setUpTestData(cls):
         super().setUpTestData()
         cls.f7 = Material.objects.create(
-            kind=Material.Kind.MIXTURE, name="F7", composition_status=Material.CompositionStatus.NOT_DISCLOSED
+            kind=Material.Kind.MIXTURE, name="F7", composition_status=Material.CompositionStatus.NOT_DISCLOSED,
+            listed=True,
         )
 
     def test_a_material_in_ffdb_can_be_given_by_its_lcr_id_in_place_of_a_smiles(self):
@@ -217,7 +218,8 @@ class LcrIdLineTests(CompoundTableTestCase):
 
     def test_a_mixtures_line_makes_a_card_whose_run_makes_it_one_of_the_references_materials(self):
         table = {"table": f"F7, {self.f7.accession}, Iso 120 N 95 NF 40 Cr", "direction": "cooling", "rate": "", "method": ""}
-        cards = CompoundTableForm(table, reference=self.article).cards_data()  # the cards, as Make cards sends them back
+        # The cards, as Make cards sends them back.
+        cards = CompoundTableForm(table, reference=self.article, user=self.curator).cards_data()
         self.client.force_login(self.admin)  # an admin's save is approved at once, so the page shows it
 
         response = self.client.post(reverse("repo:add_compound", args=[self.article.pk]), {**cards, "save": ""}, follow=True)

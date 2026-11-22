@@ -230,7 +230,9 @@ class ReferenceAddPageTests(AddDataTestCase):
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
         cls.dio = Material.objects.create(name="DIO", smiles=DIO)
         cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
-        PhaseSequence.objects.create(material=cls.rm734, reference=cls.article, sequence="K 139.8 NF 132.7 N 187.9 I")
+        PhaseSequence.objects.create(
+            material=cls.rm734, reference=cls.article, sequence="K 139.8 NF 132.7 N 187.9 I", approved=True
+        )
         add(cls.dio, cls.article, "ps", method="current reversal", conditions={"frequency_Hz": 50, "cell_gap_um": 8},
             ).points.create(value=6.08, temperature_c=60)
 

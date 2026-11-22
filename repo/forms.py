@@ -33,6 +33,7 @@ from .models import (
     materials_named,
     name_key,
     pk_from_accession,
+    seen_by,
 )
 from .phases import (
     ISOTROPIC, SOLIDS, PhaseSequenceError, is_unknown_temperature, normalise_label, run_falls, tokenise,
@@ -100,10 +101,12 @@ class FindReferenceForm(forms.Form):
         return cleaned
 
 
-def material_with_lcr_id(pk):
-    """The material with this primary key, as (material, ""), or (None, why none was found).
-    Pass the number pk_from_accession() reads from an LCR ID."""
-    material = Material.objects.filter(pk=pk).first()
+def material_with_lcr_id(pk, among):
+    """The material with this primary key among those in among (a query set), as (material, ""),
+    or (None, why none was found). Pass the number pk_from_accession() reads from an LCR ID. A
+    material not in among gets the same answer as a number never given out, so a curator's
+    check, which looks among public materials (seen_by()), can't tell a hidden one is there."""
+    material = among.filter(pk=pk).first()
     return (material, "") if material else (None, f"No material has the LCR ID {accession(pk)}.")
 
 
@@ -197,11 +200,16 @@ def read_sequence(text, direction, synonyms=None):
     return parsed
 
 
-def read_lines(rows, reference, direction):
+def read_lines(rows, direction, among, sequences):
     """Read each row from table_rows() as a TableLine: check its cells and sequence, and find
     its material in FFDB, by the LCR ID or by the structure. Each sequence is read as
     direction says (one of PhaseSequence.Direction). Nothing is saved. A line gets one
-    problem, the first found, so each check can rely on those before it."""
+    problem, the first found, so each check can rely on those before it.
+
+    Materials are looked for in among, and stereo warnings name only those, and a sequence is
+    already there only if it is in sequences, the reference's: for a curator, only the public
+    ones (seen_by()). A structure that isn't in among reads as new, and its card then finds it
+    (CardMaterialForm.read_structure())."""
     synonyms = Phase.synonym_map()  # read once, for every line's sequence
     first_seen = {}  # a material in FFDB's pk, or a new structure's InChIKey -> the number of the line it was first on
     lines = []
@@ -223,7 +231,7 @@ def read_lines(rows, reference, direction):
         # No SMILES reads as an LCR ID, because L isn't an element, so the two can't be confused.
         pk = pk_from_accession(line.identifier)
         if pk is not None:
-            line.match, line.problem = material_with_lcr_id(pk)
+            line.match, line.problem = material_with_lcr_id(pk, among)
             if line.problem:
                 continue
             # Drawn from the structure FFDB has, so the curator sees it is the one they meant.
@@ -235,7 +243,7 @@ def read_lines(rows, reference, direction):
             except chem.StructureError as exc:
                 line.problem = str(exc)
                 continue
-            line.match = Material.objects.filter(inchikey=inchikey).first()
+            line.match = among.filter(inchikey=inchikey).first()
             if line.match is None:
                 line.problem = RetiredID.structure_problem(inchikey)
                 if line.problem:
@@ -255,12 +263,12 @@ def read_lines(rows, reference, direction):
         if line.match:
             line.alias_problem = line.match.alias_problem(line.label)
             # The direction too: a heating run and a summary can be written the same way.
-            line.sequence_already_there = bool(line.sequence) and reference.phase_sequences.filter(
+            line.sequence_already_there = bool(line.sequence) and sequences.filter(
                 material=line.match, direction=direction, standard_sequence=line.standard_sequence
             ).exists()
         else:
             # A material not saved: the InChIKey is all stereo_warning() needs.
-            line.stereo_warning = Material(inchikey=inchikey).stereo_warning()
+            line.stereo_warning = Material(inchikey=inchikey).stereo_warning(among)
     return lines
 
 
@@ -269,7 +277,8 @@ class CompoundTableForm(forms.Form):
     FFDB, such as a mixture, given by its LCR ID in place of the SMILES. A valid form's
     cleaned_data has table, the lines read as TableLine objects (read_lines()), and header
     is the number of the line read as a header, or None. Every sequence in the table has the
-    direction, rate and method chosen once above it. Pass the reference the lines are from."""
+    direction, rate and method chosen once above it. Pass the reference the lines are from, and the
+    user checking them: a curator's lines find only public materials and sequences (seen_by())."""
 
     EMPTY = "Paste at least one line: a label, a SMILES or LCR ID and, optionally, a phase sequence."
     NO_DIRECTION = "This table has phase sequences: choose what they are, summaries or cooling or heating runs."
@@ -296,9 +305,9 @@ class CompoundTableForm(forms.Form):
         f"needs tabs or commas. A first line without digits is read as a header. At most {MAX_TABLE_LINES} lines.",
     )
 
-    def __init__(self, *args, reference, **kwargs):
+    def __init__(self, *args, reference, user, **kwargs):
         super().__init__(*args, **kwargs)
-        self.reference = reference
+        self.reference, self.user = reference, user
         self.header = None
 
     def clean_table(self):
@@ -313,7 +322,8 @@ class CompoundTableForm(forms.Form):
         # cells[2:] is the sequence and anything after it: empty for a line of label and SMILES.
         if not direction and any(cells[2:] for _, _, cells in rows):
             raise ValidationError(self.NO_DIRECTION)
-        return read_lines(rows, self.reference, direction)
+        materials = seen_by(self.user, Material.objects.all())
+        return read_lines(rows, direction, materials, seen_by(self.user, self.reference.phase_sequences.all()))
 
     # Make cards: the table's lines as compound cards. The cards are further down.
     NO_CARDS = "No cards made: fix the table, then press Make cards again."
@@ -584,13 +594,19 @@ class CardMaterialForm(forms.Form):
     mixture, and is kept as an alias of a material in FFDB unless Material.alias_problem() says
     why not, or the save waits or its reference isn't public (CompoundCard.save()).
 
+    Pass the user checking it. The card looks only among the materials they see (seen_by()): a
+    curator's finds only public ones by LCR ID, name or structure. A structure that is a hidden
+    material reads as new, with no ID or name, but is found all the same, with shown_as_new set,
+    because a structure has one ID: Save adds the card's data to it.
+
     A new mixture is read by MixtureForm, in mixture, with its rules and messages. Its boxes have the card's prefix too, so its name box is the card's label box. When
     FFDB has mixtures of that name, it asks whether this is one of them, and "Yes" finds that one.
 
     A valid form has found, the material in FFDB, or None for a new compound or mixture, which is
     then in new, not saved, with its stereo_warning; and alias_problem, "" when the label will be
-    kept. A SMILES that reads but isn't in FFDB also gives canonical_smiles, for the drawing, and
-    the stereo_warning, even when something else is wrong, such as the label not given yet."""
+    kept. A SMILES that reads but isn't among the materials the user sees also gives
+    canonical_smiles, for the drawing, and the stereo_warning, even when something else is wrong,
+    such as the label not given yet."""
 
     NO_MATERIAL = (
         "Give the LCR ID or name of a material in FFDB, the SMILES of a new compound, or the composition of a new mixture."
@@ -614,8 +630,9 @@ class CardMaterialForm(forms.Form):
         "optional, and kept as another name for it where it can be: a bare compound number such as 10a isn't.",
     )
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
+        self.user, self.materials = user, seen_by(user, Material.objects.all())
         sent = self.mixture_form(self.data) if self.is_bound else None
         # Whether any of a new mixture's own boxes is filled in. When none is, the mixture is drawn
         # empty, as on a page not sent, and never checked, so a card for a compound shows no
@@ -623,6 +640,7 @@ class CardMaterialForm(forms.Form):
         self.is_mixture = sent is not None and any(name in sent.changed_data for name in self.MIXTURE_BOXES)
         self.mixture = sent if self.is_mixture else self.mixture_form(None)
         self.found = self.new = None  # set by clean()
+        self.shown_as_new = False  # set by read_structure() when found is a material the user doesn't see
         self.alias_problem = self.stereo_warning = self.canonical_smiles = ""
 
     def mixture_form(self, data):
@@ -631,7 +649,7 @@ class CardMaterialForm(forms.Form):
         mixture's empty, which the browser mustn't refuse. Its name box is the card's label box, so
         it takes that box's label, which its problems then name. The label is set before anything
         reads the form, because Django keeps each box's label from the first read."""
-        form = MixtureForm(data, prefix=self.prefix, use_required_attribute=False)
+        form = MixtureForm(data, prefix=self.prefix, user=self.user, use_required_attribute=False)
         form.fields["name"].label = self.fields["name"].label
         return form
 
@@ -657,7 +675,8 @@ class CardMaterialForm(forms.Form):
         if not any(filled):
             raise ValidationError(self.NO_MATERIAL)
         if text:
-            self.found, problem = find_material(text, "Check it, or give the SMILES of a new compound.")
+            advice = "Check it, or give the SMILES of a new compound."
+            self.found, problem = find_material(text, advice, self.materials)
             if problem:
                 self.add_error("material", problem)
         elif smiles:
@@ -677,24 +696,32 @@ class CardMaterialForm(forms.Form):
             self.new = None if self.found else self.mixture.mixture
 
     def read_structure(self, smiles, name):
-        """Find the material in FFDB with this structure, or build a new compound, not saved, and
-        check it by the model's rules, with their messages: a structure retired from FFDB is
-        refused, as in the admin."""
+        """Find the material the user sees with this structure, or build a new compound, not
+        saved, and check it by the model's rules, with their messages: a structure retired from
+        FFDB is refused, as in the admin. A structure that is a material the user doesn't see, a
+        hidden one for a curator, is found once there is a label, as a new compound would be, and
+        shown as new (shown_as_new): everything the curator sees is what a new compound gives."""
         try:
             canonical, inchikey = chem.standardise(smiles)
         except chem.StructureError as exc:
             self.add_error("smiles", str(exc))
             return
-        self.found = Material.objects.filter(inchikey=inchikey).first()
+        self.found = self.materials.filter(inchikey=inchikey).first()
         if self.found is not None:
             return
         # Before the label is asked for: the label box comes after the SMILES box, so a check as
         # the curator types shows the drawing and the warning before there is a label. A
         # material not saved: the InChIKey is all stereo_warning() needs, as in the table.
         self.canonical_smiles = canonical
-        self.stereo_warning = Material(inchikey=inchikey).stereo_warning()
+        self.stereo_warning = Material(inchikey=inchikey).stereo_warning(self.materials)
         if not name:
             self.add_error("name", "Give the label the reference prints for this compound: it becomes its name.")
+            return
+        # A structure has one ID, so a hidden material with it takes the card's data. The model's
+        # rules aren't run: they would refuse a second material with this structure, naming the first.
+        hidden = Material.objects.filter(inchikey=inchikey).first()
+        if hidden is not None:
+            self.found, self.shown_as_new = hidden, True
             return
         new = Material(name=name, smiles=smiles)
         check_rules(self, new)
@@ -702,7 +729,7 @@ class CardMaterialForm(forms.Form):
             self.new = new
 
     def drawing(self):
-        """The structure typed, when it isn't in FFDB, for Check."""
+        """The structure typed, when it isn't among the materials the user sees, for Check."""
         return inline_drawing(self.canonical_smiles)
 
 
@@ -719,14 +746,14 @@ class CompoundCard:
     its blocks of values (ValueBlockFormSet). Each part's names start with the card's prefix,
     card- and its index from 0: card-0-material, card-0-run-direction, card-0-block-0-property.
     Its number, in its heading and its problems, is its index + 1, and never changes: a card
-    removed before it leaves a gap. Pass the data sent, or None for an empty card, the reference the data is from
-    and the card's index, or TEMPLATE_INDEX for the empty card cards.js copies.
+    removed before it leaves a gap. Pass the data sent, or None for an empty card, the reference the data is from,
+    the user checking and saving it, and the card's index, or TEMPLATE_INDEX for the empty card cards.js copies.
 
     Remove (cards.js) sets its removed box, card-0-removed, and hides it. A removed card is never
     checked or saved."""
 
-    def __init__(self, data, reference, index=0):
-        self.reference, self.index, self.prefix = reference, index, f"card-{index}"
+    def __init__(self, data, reference, user, index=0):
+        self.reference, self.user, self.index, self.prefix = reference, user, index, f"card-{index}"
         # cards.js puts the number in the copy too, as it can't be worked out here.
         self.number = "__cardnumber__" if index == TEMPLATE_INDEX else index + 1
         self.removed = data is not None and data.get(f"{self.prefix}-removed") == "1"
@@ -735,7 +762,7 @@ class CompoundCard:
         # filled in. Django asks for use_required_attribute=False with it, so the browser doesn't
         # ask for boxes the card can leave empty.
         optional = {"empty_permitted": True, "use_required_attribute": False}
-        self.material_form = CardMaterialForm(data, prefix=self.prefix, **optional)
+        self.material_form = CardMaterialForm(data, prefix=self.prefix, user=user, **optional)
         self.run_form = RunForm(data, prefix=f"{self.prefix}-run", reference=reference, **optional)
         self.block_forms = ValueBlockFormSet(data, prefix=f"{self.prefix}-block", form_kwargs={"reference": reference})
         self.run = self.ribbon = None  # set by is_valid()
@@ -777,10 +804,12 @@ class CompoundCard:
             return form.found.pk
         return ("mixture", name_key(form.new.name)) if form.is_mixture else form.new.inchikey
 
-    def save(self, user, waiting_save=None):
+    def save(self, waiting_save=None):
         """Add everything on the card in one transaction, so a failure partway keeps none of it:
         a new compound, named by its label, or a new mixture with its components, and then its
-        phase sequence and each block of values, recorded as entered by user. Inside the page's
+        phase sequence and each block of values, recorded as entered by the card's user. A
+        structure shown as new that is a hidden material gets the rows, as one found does: a
+        structure has one ID (CardMaterialForm.read_structure()). Inside the page's
         transaction (CompoundCards.save()) it is part of that one. Call it only on a valid card.
 
         An admin's save passes no waiting_save: its rows are approved, and the label of a
@@ -802,12 +831,12 @@ class CompoundCard:
             if self.run:
                 self.run.material = material
                 self.run.approved, self.run.waiting_save = approved, waiting_save
-                self.run.mark_entered(user)
+                self.run.mark_entered(self.user)
                 self.run.save()
             for block in self.blocks:
                 block.series.material = material
                 block.series.approved, block.series.waiting_save = approved, waiting_save
-                block.save(user)  # SeriesForm.save(): its transaction is part of this one
+                block.save(self.user)  # SeriesForm.save(): its transaction is part of this one
             label = ""
             # A label for a material in FFDB that alias_problem() would keep. A mixture's never is.
             if not added and not form.is_mixture and name and not form.alias_problem:
@@ -829,14 +858,15 @@ class CompoundCards:
     """The compound cards of one page, sent as one form, with one Save for all of them. The
     hidden box TOTAL says how many cards the page has, removed ones included, so each is read by
     its index; cards.js adds one for each card it adds, up to MAX. Pass the data sent, or None for
-    a page of one empty card, and the reference the data is from."""
+    a page of one empty card, the reference the data is from, and the user checking and saving
+    the cards: an admin's look among every material, a curator's among public ones (seen_by())."""
 
     TOTAL = "card-TOTAL"
     MAX = MAX_CARDS
     NOTHING = "Fill in a card: a material, and a phase sequence or at least one block of values."
 
-    def __init__(self, data, reference):
-        self.data, self.reference, self.problems = data, reference, []
+    def __init__(self, data, reference, user):
+        self.data, self.reference, self.user, self.problems = data, reference, user, []
         total = 1
         if data is not None:
             try:
@@ -847,13 +877,13 @@ class CompoundCards:
                 self.problems.append(f"A page can have at most {self.MAX} cards, and this one has {total}.")
                 total = self.MAX
         self.total = max(total, 1)
-        self.cards = [CompoundCard(data, reference, index) for index in range(self.total)]
+        self.cards = [CompoundCard(data, reference, user, index) for index in range(self.total)]
         self.filled = []  # set by is_valid()
         self.waiting_save = None  # set by save()
 
     def template_card(self):
         """The empty card cards.js copies to add one, for the page's <template>."""
-        return CompoundCard(None, self.reference, TEMPLATE_INDEX)
+        return CompoundCard(None, self.reference, self.user, TEMPLATE_INDEX)
 
     def phase_suggestions(self):
         """The labels the phase sequences' boxes suggest, for the page's <datalist>, as [(label,
@@ -891,7 +921,7 @@ class CompoundCards:
             self.problems.append(f"Nothing has been saved: see the problems on compound{s} {', '.join(bad)}.")
         return not self.problems
 
-    def save(self, user):
+    def save(self):
         """Add every card filled in, in one transaction, so a problem on any card keeps all of
         them out of FFDB. Call it only once is_valid() is true. Returns each card with what its
         save() returns: [(card, material, added, label), ...].
@@ -901,9 +931,9 @@ class CompoundCards:
         their labels. waiting_save is that save, or None for an admin's."""
         with transaction.atomic():
             self.waiting_save = None
-            if not is_admin(user):
-                self.waiting_save = WaitingSave.objects.create(reference=self.reference, saved_by=user)
-            saved = [(card, *card.save(user, self.waiting_save)) for card in self.filled]
+            if not is_admin(self.user):
+                self.waiting_save = WaitingSave.objects.create(reference=self.reference, saved_by=self.user)
+            saved = [(card, *card.save(self.waiting_save)) for card in self.filled]
             if self.waiting_save is not None and self.waiting_save.labels:
                 self.waiting_save.save(update_fields=["labels"])
             return saved
@@ -1410,15 +1440,16 @@ class ComponentLine:
     problem: str = ""  # why the line can't be read, or "" when it can
 
 
-def find_material(text, advice):
-    """The material that text names, by its LCR ID or by a name or alias that fits it alone,
-    as (material, ""), or (None, why none was found). advice ends the message when nothing has
-    the name, saying what to do instead. A mixture's components and a compound card both find
-    their materials with this."""
+def find_material(text, advice, among):
+    """The material among those in among (a query set) that text names, by its LCR ID or by a
+    name or alias that fits it alone, as (material, ""), or (None, why none was found). advice
+    ends the message when nothing has the name, saying what to do instead. A mixture's
+    components and a compound card both find their materials with this, among those their user
+    sees (seen_by())."""
     pk = pk_from_accession(text)
     if pk is not None:
-        return material_with_lcr_id(pk)
-    found = materials_named(text)
+        return material_with_lcr_id(pk, among)
+    found = materials_named(text, among)
     if len(found) == 1:
         return found[0], ""
     if found:
@@ -1426,11 +1457,11 @@ def find_material(text, advice):
     return None, f"Nothing in FFDB is called {text}. {advice}"
 
 
-def read_components(text):
-    """A mixture's component lines, each read as a ComponentLine: the compound, its fraction
-    and its unit. Blank lines are skipped but still counted, so the numbers are the typed
-    text's. Nothing is saved. A line gets one problem, the first found, so each check can
-    rely on those before it."""
+def read_components(text, among):
+    """A mixture's component lines, each read as a ComponentLine: the compound, found among
+    those in among (a query set), its fraction and its unit. Blank lines are skipped but still
+    counted, so the numbers are the typed text's. Nothing is saved. A line gets one problem, the
+    first found, so each check can rely on those before it."""
     lines, first_seen = [], {}  # first_seen: a compound's pk -> the number of the line it was first on
     for number, text_line in enumerate(text.splitlines(), start=1):
         if not text_line.strip():
@@ -1456,7 +1487,7 @@ def read_components(text):
         # Whether it is a compound is left to MixtureComponent.clean(), below.
         line.material, line.problem = find_material(
             name, "Add it first on a card of its own, with its data from this reference, or describe it under Other "
-            "components."
+            "components.", among,
         )
         if line.problem:
             continue
@@ -1484,7 +1515,12 @@ class MixtureForm(forms.Form):
     clean() reads the lines, builds the mixture, not saved, and checks it by the rules for
     mixtures, so it is refused with the same messages as in the admin. The form is valid,
     and can be saved, only when every line reads. A compound card's new mixture is read by it
-    (CardMaterialForm), with the card's prefix."""
+    (CardMaterialForm), with the card's prefix.
+
+    Pass the user checking it. Its components and the mixtures of the same name are looked for
+    among the materials they see (seen_by()): for a curator, only public ones. Each mixture of
+    the same name has shown_components, its components the user sees, and hidden_components, how
+    many it has that they don't, which the question counts but never names."""
 
     DIFFERENT = "different"
 
@@ -1519,13 +1555,20 @@ class MixtureForm(forms.Form):
         error_messages={"required": "Say whether this is one of them or a different mixture."},
     )  # __init__ gives it its choices, or removes it when no mixture has this name
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
+        self.materials = seen_by(user, Material.objects.all())
         # The question's choices depend on the name, so it is read as posted, before it is
         # cleaned. Cleaning only strips spaces, which name_key() ignores anyway. An unbound
         # form has no name, which fits no mixture.
         # add_prefix: on a compound card the boxes' names start with the card's, card-0-name.
-        self.same_name = materials_named(self.data.get(self.add_prefix("name"), ""), Material.Kind.MIXTURE)
+        name = self.data.get(self.add_prefix("name"), "")
+        self.same_name = materials_named(name, self.materials.filter(kind=Material.Kind.MIXTURE))
+        for mixture in self.same_name:
+            # As on a mixture's public page: largest first, each with its compound, in one query.
+            rows = mixture.components.select_related("component")
+            mixture.shown_components = rows.filter(component__in=self.materials)
+            mixture.hidden_components = rows.exclude(component__in=self.materials).count()
         if self.same_name:
             self.fields["same_as"].choices = [
                 *[(str(mixture.pk), f"Yes, it's {mixture.accession}") for mixture in self.same_name],
@@ -1539,7 +1582,7 @@ class MixtureForm(forms.Form):
     def clean_components(self):
         """The component lines, read. One line with a problem refuses the box: each line's
         problem is shown with the lines."""
-        self.lines = read_components(self.cleaned_data["components"])
+        self.lines = read_components(self.cleaned_data["components"], self.materials)
         self.problem_lines = [line for line in self.lines if line.problem]
         if self.problem_lines:
             raise ValidationError("Nothing is saved until every line reads: fix or delete the lines marked below.")
@@ -1595,7 +1638,7 @@ class MergeForm(forms.Form):
         pk = pk_from_accession(self.cleaned_data["into"])
         if pk is None:
             raise ValidationError("Give an LCR ID, e.g. LCR-00012.")
-        target, why = material_with_lcr_id(pk)
+        target, why = material_with_lcr_id(pk, Material.objects.all())  # the admin's: every material
         if target is None:
             raise ValidationError(why)
         problems = self.duplicate.merge_problems(target)

@@ -1,20 +1,25 @@
 """The leak test: hidden data, each piece carrying a marker, and every public address
 requested, as a visitor and as an admin, failing if the marker or anything that identifies a
 hidden material appears. Later blocks add their addresses to LeakTests.addresses(), and their
-hidden pieces to HiddenData."""
+hidden pieces to HiddenData. A curator's Add data checks are swept the same way, with what they
+would type of the hidden data (CuratorChecksTests)."""
 
 import csv
 import io
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
-from django.contrib.auth.models import User
+from django.contrib.auth.models import Group, User
 from django.test import TestCase
 from django.urls import resolve, reverse
+from django.utils.html import escape
 
+from repo.forms import CompoundCards
 from repo.models import (
     Material, MixtureComponent, PhaseSequence, Property, Reference, RetiredID, Series, Variable, WaitingSave, accession,
 )
 from repo.urls import urlpatterns
+from repo.tests.test_add_data import WAITING
+from repo.tests.test_compound_card import EMPTY_RUN, FIVE_CB_HEATING
 from repo.tests.test_import import ARTICLE, FIVE_CB
 from repo.tests.test_merge import DUPLICATE_SUMMARY, EIGHT_CB, WRONG_RM734
 from repo.tests.test_sequences import RM734, RM734_SUMMARY
@@ -23,6 +28,8 @@ from repo.tests.test_switches import UNPUBLISHED_WORK
 # In every hidden piece: a name, a method or a reference's identifier, each shown on a page if it leaks.
 MARKER = "LEAKMARKER"
 EIGHT_OCB = "CCCCCCCCOc1ccc(-c2ccc(C#N)cc2)cc1"
+# 2-Octanol with its stereochemistry given: S is hidden, and R has the same connectivity.
+S_OCTANOL, R_OCTANOL = "C[C@H](O)CCCCCC", "C[C@@H](O)CCCCCC"
 # The Materials page, then its three downloads. Each takes the page's search.
 MATERIALS_PAGES = ["repo:materials", "repo:materials_csv", "repo:sequences_csv", "repo:values_csv"]
 # The References page searches aimed at the hidden references: the marker, in both their
@@ -43,7 +50,8 @@ def csv_rows(response):
 
 class HiddenData(TestCase):
     """RM734, public, with hidden data too; a compound with only waiting data; one whose only
-    data is under unpublished work; a hidden mixture whose component, RM734, is public; and a
+    data is under unpublished work; S-2-octanol, whose only data waits, for the stereochemistry
+    warning; a hidden mixture whose component, RM734, is public; and a
     public mixture, one of whose components is hidden. RM734's waiting series is a Ps value,
     a property no public series has. It and RM734's waiting sequence from the paper are a curator's
     waiting save, which holds a label for RM734. Two hidden references: the unpublished work, and a
@@ -86,6 +94,10 @@ class HiddenData(TestCase):
         cls.unpublished_compound = Material.objects.create(name=f"{MARKER} unpublished compound", smiles=EIGHT_OCB)
         cls.sequence(cls.unpublished_compound, cls.unpublished, "K 54 SmA 67 N 80 I")
 
+        # No SmA, and no phase forming between 75 and 85 °C, which the searches below look for.
+        cls.stereo = Material.objects.create(name=f"{MARKER} stereo compound", smiles=S_OCTANOL)
+        cls.sequence(cls.stereo, cls.paper, "K 10 N 40 I", approved=False)
+
         cls.hidden_mixture = Material.objects.create(kind=Material.Kind.MIXTURE, name=f"{MARKER} hidden mixture")
         MixtureComponent.objects.create(mixture=cls.hidden_mixture, component=cls.rm734, fraction=50, unit="mol%")
         cls.hidden_mixture_series = cls.series(cls.hidden_mixture, cls.paper, approved=False)
@@ -95,7 +107,7 @@ class HiddenData(TestCase):
         MixtureComponent.objects.create(mixture=cls.public_mixture, component=cls.waiting, fraction=30, unit="mol%")
         cls.public_mixture_sequence = cls.sequence(cls.public_mixture, cls.paper, "K 30 NF 90 N 120 I")
 
-        cls.hidden = [cls.waiting, cls.unpublished_compound, cls.hidden_mixture]
+        cls.hidden = [cls.waiting, cls.unpublished_compound, cls.stereo, cls.hidden_mixture]
         cls.admin = User.objects.create_superuser("admin", password="a-test-password")
 
         deleted = Material.objects.create(name=f"{MARKER} deleted compound", smiles=EIGHT_CB)
@@ -352,3 +364,205 @@ class ReferenceAndPropertyTests(HiddenData):
 
         self.assertEqual(series_ids("birefringence"), [str(self.public_series.pk)])
         self.assertEqual(series_ids("ps"), [])
+
+
+class CuratorChecksTests(HiddenData):
+    """A curator's Add data checks look only among public data (models.seen_by()), so what they
+    type of hidden data finds nothing hidden: each hidden material's SMILES, LCR ID, name and
+    alias, retired or not, the held label, and the mixtures' names. A hidden structure reads as
+    new, and saving it adds the card's data to it. A reference's Add data page lists only its
+    public data. An admin's checks still find hidden materials, because their saves go straight in."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.curator = User.objects.create_user("curator")
+        cls.curator.groups.add(Group.objects.get(name="Curators"))
+
+    def setUp(self):
+        self.client.force_login(self.curator)
+
+    def hidden_materials(self):
+        """Each hidden material, retired or not, by its number."""
+        return {material.pk: material for material in self.hidden} | self.hidden_retired
+
+    def typed_ids(self):
+        return [accession(number) for number in self.hidden_materials()]
+
+    def typed_smiles(self):
+        """Each hidden compound's SMILES, and R-2-octanol's, whose only stereo variant is hidden."""
+        return [material.smiles for material in self.hidden_materials().values() if material.smiles] + [R_OCTANOL]
+
+    def typed_names(self):
+        """Each hidden material's names, and the label held for RM734 until its save is approved."""
+        names = [name for material in self.hidden_materials().values() for name in material.names()]
+        return names + [label for saved in WaitingSave.objects.all() for label in saved.labels.values()]
+
+    def secrets(self):
+        """What a curator must never see: the marker, and each hidden material's LCR ID and address."""
+        found = [MARKER]
+        for number in self.hidden_materials():
+            found += [accession(number), reverse("repo:material", args=[number])]
+        return found
+
+    def assert_no_secrets(self, response, typed):
+        """None of secrets() in response, once what the curator typed is taken out: it is shown back
+        to them, and tells them nothing new. A hidden material found by what was typed would still
+        show, by its address, and by whichever of its name and LCR ID wasn't typed."""
+        self.assertIn(response.status_code, (200, 422))  # 422: a table that makes no cards
+        text = response.content.decode()
+        for value in sorted(typed, key=len, reverse=True):  # longest first, so no part of one is left
+            text = text.replace(escape(value), "").replace(value, "")
+        for secret in self.secrets():
+            with self.subTest(address=response.request["PATH_INFO"], typed=typed, secret=secret):
+                self.assertNotIn(secret, text)
+
+    def card(self, index=0, run=EMPTY_RUN, **boxes):
+        """A card's boxes as the page sends them: boxes are its material's, by name, and its one
+        block is left empty."""
+        prefix = f"card-{index}"
+        data = {f"{prefix}-block-TOTAL_FORMS": "1", f"{prefix}-block-INITIAL_FORMS": "0"}
+        data.update({f"{prefix}-run-{name}": value for name, value in run.items()})
+        data.update({f"{prefix}-{name}": value for name, value in boxes.items()})
+        return data
+
+    def check_material(self, **boxes):
+        """The material check's answer for one card with these boxes."""
+        address = reverse("repo:check_card_material", args=[self.paper.pk])
+        return self.client.post(f"{address}?card=0", self.card(**boxes))
+
+    def check_cards(self, *cards):
+        """The paper's Check for a page of cards, each a dict of card()'s boxes."""
+        data = {CompoundCards.TOTAL: str(len(cards)), "check": ""}
+        for index, boxes in enumerate(cards):
+            data.update(self.card(index, **boxes))
+        return self.client.post(reverse("repo:add_compound", args=[self.paper.pk]), data)
+
+    def check_table(self, table, direction=""):
+        address = reverse("repo:check_table", args=[self.paper.pk])
+        return self.client.post(address, {"table": table, "direction": direction})
+
+    def table(self, identifiers):
+        """A table of one line per identifier, a SMILES or an LCR ID, each labelled by its line."""
+        return "\n".join(f"line{number}\t{identifier}" for number, identifier in enumerate(identifiers, start=1))
+
+    def mixture(self, name, components):
+        """A card's boxes for a new mixture called name, with these component lines."""
+        lines = "\n".join(f"{component}, 10, mol%" for component in components)
+        return {"name": name, "composition_status": Material.CompositionStatus.LISTED, "components": lines}
+
+    def test_no_add_data_check_shows_a_curator_hidden_data(self):
+        ids, smiles, names = self.typed_ids(), self.typed_smiles(), self.typed_names()
+        mixtures = [self.hidden_mixture.name, self.public_mixture.name]  # F7, public, has a hidden component
+        make_cards = f"{reverse('repo:make_cards', args=[self.paper.pk])}?start=0"
+        answers = [
+            (self.check_table(self.table(ids + smiles)), ids + smiles),
+            (self.client.post(make_cards, {"table": self.table(smiles), "direction": ""}), smiles),
+        ]
+        answers += [(self.check_material(material=text), [text]) for text in ids + names]
+        answers += [(self.check_material(smiles=text, name="10a"), [text]) for text in smiles]
+        answers += [(self.check_material(**self.mixture(name, ids + names)), [name, *ids, *names]) for name in mixtures]
+        cards = [
+            *[{"material": text} for text in ids + names],
+            *[{"smiles": text, "name": "10a"} for text in smiles],
+            *[self.mixture(name, ids + names) for name in mixtures],
+        ]
+        answers.append((self.check_cards(*cards), ids + names + smiles + mixtures))
+        # A reference's own identifier is on its page: the curator typed it on Add data to get there.
+        for reference in [self.paper, *self.hidden_references]:
+            page = self.client.get(reverse("repo:add_from_reference", args=[reference.pk]))
+            answers.append((page, [reference.identifier]))
+        for response, typed in answers:
+            self.assert_no_secrets(response, typed)
+
+    def test_a_hidden_materials_lcr_id_name_or_alias_finds_nothing_in_any_box(self):
+        for text in self.typed_ids() + self.typed_names():
+            with self.subTest(text=text):
+                form = self.check_material(material=text).context["form"]
+                self.assertIsNone(form.found)
+                not_found = ("No material has the LCR ID", "Nothing in FFDB is called")
+                self.assertTrue(form.errors["material"][0].startswith(not_found))
+        answer = self.check_material(**self.mixture("F9", self.typed_ids() + self.typed_names()))
+        lines = answer.context["form"].mixture.lines
+        self.assertTrue(all(line.problem and line.material is None for line in lines))
+        table_lines = self.check_table(self.table(self.typed_ids())).context["lines"]
+        self.assertTrue(all(line.problem.startswith("No material has the LCR ID") for line in table_lines))
+
+    def test_a_hidden_structure_reads_as_a_new_compound_with_no_id_or_name(self):
+        answer = self.check_material(smiles=FIVE_CB, name="5CB")
+
+        self.assertTrue(answer.context["form"].shown_as_new)
+        self.assertContains(answer, "New compound, named 5CB")
+        self.assertNotContains(answer, "In FFDB")
+        # As for a new compound, the label is asked for before anything else.
+        answer = self.check_material(smiles=FIVE_CB)
+        label = "Give the label the reference prints for this compound: it becomes its name."
+        self.assertEqual(answer.context["form"].errors["name"], [label])
+        lines = self.check_table(self.table(self.typed_smiles())).context["lines"]
+        self.assertEqual({line.status for line in lines}, {"new"})
+
+    def test_saving_a_hidden_structure_adds_the_cards_data_to_it_and_holds_the_label(self):
+        before = Material.objects.count()
+        data = {CompoundCards.TOTAL: "1", "save": "", **self.card(run=FIVE_CB_HEATING, smiles=FIVE_CB, name="5CB")}
+
+        response = self.client.post(reverse("repo:add_compound", args=[self.paper.pk]), data, follow=True)
+
+        self.assertEqual(Material.objects.count(), before)
+        saved = WaitingSave.objects.get(saved_by=self.curator)
+        run = self.waiting.phase_sequences.get(waiting_save=saved)
+        self.assertEqual((run.standard_sequence, run.approved), ("Cr 24 N 35.3 Iso", False))
+        self.assertEqual(saved.labels, {str(self.waiting.pk): "5CB"})
+        # As a new compound's: no LCR ID, and nothing about aliases.
+        messages = [str(message) for message in response.context["messages"]]
+        self.assertEqual(messages, ["Added 5CB, with a phase sequence.", WAITING])
+        self.assert_no_secrets(response, [FIVE_CB, "5CB"])
+
+    def test_the_same_name_question_offers_only_public_mixtures_and_names_only_public_components(self):
+        hidden = self.check_material(**self.mixture(self.hidden_mixture.name, [])).context["form"].mixture
+        self.assertEqual(hidden.same_name, [])
+
+        answer = self.check_material(**self.mixture("F7", []))
+
+        self.assertEqual(answer.context["form"].mixture.same_name, [self.public_mixture])
+        self.assertContains(answer, f'<a href="/material/{self.rm734.pk}/">{self.rm734.accession}</a> RM734, 70 mol%')
+        self.assertContains(answer, "<li>1 more component in FFDB isn't public yet.</li>", html=True)
+
+    def test_a_stereo_warning_names_only_public_materials(self):
+        self.assertEqual(self.check_material(smiles=R_OCTANOL, name="R-2-octanol").context["form"].stereo_warning, "")
+        [line] = self.check_table(self.table([R_OCTANOL])).context["lines"]
+        self.assertEqual(line.stereo_warning, "")
+
+    def test_a_sequence_is_already_there_only_if_it_is_public(self):
+        # RM734's waiting summary from the paper.
+        answer = self.check_table(f"RM734\t{self.rm734.accession}\tK 80 SmA 120 I", direction="summary")
+        [line] = answer.context["lines"]
+
+        self.assertFalse(line.sequence_already_there)
+
+    def test_a_references_add_data_page_lists_only_its_public_data(self):
+        page = self.client.get(reverse("repo:add_from_reference", args=[self.paper.pk])).context
+        self.assertEqual(list(page["materials"]), [self.rm734, self.public_mixture])
+        self.assertEqual(list(page["sequences"]), [self.public_sequence, self.public_mixture_sequence])
+        series = [one for group, members in page["value_sections"] for prop, rows, charts in members for one in rows]
+        self.assertEqual(series, [self.public_series])
+
+        # RM734 is public, but its only data from the waiting paper waits.
+        response = self.client.get(reverse("repo:add_from_reference", args=[self.waiting_paper.pk]))
+        self.assertEqual((list(response.context["materials"]), list(response.context["sequences"])), ([], []))
+        self.assertContains(response, "No materials from this reference yet.")
+
+    def test_an_admins_checks_still_find_hidden_materials(self):
+        self.client.force_login(self.admin)
+        found = f'In FFDB as <a href="/material/{self.waiting.pk}/">{self.waiting.accession}</a>'
+
+        self.assertContains(self.check_material(smiles=FIVE_CB, name="5CB"), found)
+        self.assertContains(self.check_material(material=self.waiting.accession), found)
+        table = f"5CB\t{FIVE_CB}\nRM734\t{self.rm734.accession}\tK 80 SmA 120 I"
+        lines = self.check_table(table, direction="summary").context["lines"]
+        found = [(line.status, line.match) for line in lines]
+        self.assertEqual(found, [("in_ffdb", self.waiting), ("in_ffdb", self.rm734)])
+        self.assertTrue(lines[1].sequence_already_there)
+        warning = self.check_material(smiles=R_OCTANOL, name="R-2-octanol").context["form"].stereo_warning
+        self.assertTrue(warning.startswith(f"This structure has the same connectivity as {self.stereo.accession}"))
+        page = self.client.get(reverse("repo:add_from_reference", args=[self.waiting_paper.pk]))
+        self.assertEqual(list(page.context["materials"]), [self.rm734])

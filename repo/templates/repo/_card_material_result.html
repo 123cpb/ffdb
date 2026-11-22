@@ -1,13 +1,15 @@
 {% comment %}
 What the server makes of a compound card's material, forms.CardMaterialForm (as form): the
 material in FFDB, or the structure typed, drawn, with whether it is new and any stereochemistry
-warning. For a new mixture, its component lines as read and, when FFDB has mixtures of its name,
-the question whether it is one of them (_component_lines.html, _same_name_question.html); this box is inside the cards'
+warning. A structure that is a material the user doesn't see, a hidden one for a curator, is
+shown exactly as a new compound is (form.shown_as_new), with no ID or name. For a new mixture,
+its component lines as read and, when FFDB has mixtures of its name, the question whether it is
+one of them (_component_lines.html, _same_name_question.html); this box is inside the cards'
 form, so the answer is sent with Check and Save. The card shows it under its material: Check
 fills it when the page comes back, and views.check_card_material as the curator types. An empty
 card shows nothing.
 {% endcomment %}
-{% if form.found %}
+{% if form.found and not form.shown_as_new %}
 <div class="card-material">
   {% if form.found.kind == "compound" %}
   <img src="{{ form.found.thumbnail_url }}" alt="Structure of {{ form.found.name }}" width="200" height="128">
@@ -25,11 +27,12 @@ card shows nothing.
   </p>
 </div>
 {% elif form.canonical_smiles %}
-{# A structure that read but isn't in FFDB. It is a new compound once it has its label and the model's rules pass. #}
+{# A structure that read but isn't among the materials the user sees. It is a new compound once it has its label #}
+{# and the model's rules pass. Its name is the label either way: a new compound's name is its label. #}
 <div class="card-material">
-  <div role="img" aria-label="Structure {% if form.new %}of {{ form.new.name }}{% else %}from the SMILES{% endif %}">{{ form.drawing }}</div>
+  <div role="img" aria-label="Structure {% if form.new or form.shown_as_new %}of {{ form.cleaned_data.name }}{% else %}from the SMILES{% endif %}">{{ form.drawing }}</div>
   <p>
-    {% if form.new %}New compound, named {{ form.new.name }}{% else %}Not in FFDB{% endif %}
+    {% if form.new or form.shown_as_new %}New compound, named {{ form.cleaned_data.name }}{% else %}Not in FFDB{% endif %}
     {% if form.stereo_warning %}<span class="cell-note stereo-warning">{{ form.stereo_warning }}</span>{% endif %}
   </p>
 </div>

@@ -183,7 +183,7 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
     def save_model(self, request, obj, form, change):
         """Save, then warn if another material has the same connectivity."""
         super().save_model(request, obj, form, change)
-        warning = obj.stereo_warning()
+        warning = obj.stereo_warning(Material.objects.all())
         if warning:
             self.message_user(request, warning, messages.WARNING)
 

@@ -40,7 +40,8 @@ class ReadingTests(TestCase):
         cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
 
     def test_a_line_finds_its_compound_by_lcr_id_or_by_a_name_or_alias_as_names_are_compared(self):
-        lines = read_components(f"{self.five_cb.accession}, 70, mol%\nrm-734\t20\tmol%\naya 5b, 10, Mol %")
+        text = f"{self.five_cb.accession}, 70, mol%\nrm-734\t20\tmol%\naya 5b, 10, Mol %"
+        lines = read_components(text, Material.objects.all())
 
         self.assertEqual(
             [(line.material, line.fraction, line.unit, line.problem) for line in lines],
@@ -50,7 +51,7 @@ class ReadingTests(TestCase):
     def test_a_name_with_a_comma_in_it_stays_whole(self):
         form_b = Material.objects.create(name="DIO, form B", smiles="CCO")
 
-        [line] = read_components("DIO, form B, 30, wt%")
+        [line] = read_components("DIO, form B, 30, wt%", Material.objects.all())
 
         self.assertEqual((line.material, line.fraction, line.unit), (form_b, 30, "wt%"))
 
@@ -66,27 +67,27 @@ class ReadingTests(TestCase):
             ("DIO, 100.1, mol%", "A fraction is more than 0 and at most 100."),
         ]:
             with self.subTest(bad):
-                [line] = read_components(bad)
+                [line] = read_components(bad, Material.objects.all())
 
                 self.assertIn(problem, line.problem)
 
     def test_a_name_that_fits_two_materials_asks_for_the_lcr_id(self):
         other = Material.objects.create(name="DIO-F", aliases="DIO", smiles="CCO")
 
-        [line] = read_components("DIO, 70, mol%")
+        [line] = read_components("DIO, 70, mol%", Material.objects.all())
 
         self.assertEqual(line.problem, f"More than one material is called DIO ({self.dio}, {other}): give its LCR ID.")
-        self.assertEqual(read_components(f"{other.accession}, 70, mol%")[0].material, other)
+        self.assertEqual(read_components(f"{other.accession}, 70, mol%", Material.objects.all())[0].material, other)
 
     def test_a_mixture_is_not_a_component(self):
         Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED)
 
-        [line] = read_components("M5, 10, wt%")
+        [line] = read_components("M5, 10, wt%", Material.objects.all())
 
         self.assertIn("is a mixture, and a component must be a compound", line.problem)
 
     def test_each_compound_is_given_once(self):
-        lines = read_components(f"DIO, 60, mol%\n\n{self.dio.accession}, 40, mol%")
+        lines = read_components(f"DIO, 60, mol%\n\n{self.dio.accession}, 40, mol%", Material.objects.all())
 
         self.assertEqual(lines[1].number, 3)  # the blank line is counted
         self.assertEqual(lines[1].problem, "Same compound as line 1: give each compound once.")
@@ -116,7 +117,6 @@ class SaveTests(MixtureCardTestCase):
 
         self.assertRedirects(response, self.add_page(self.article))
         [f7] = self.mixtures()
-        five_cb = Material.objects.get(name="5CB")
         self.assertEqual((f7.name, f7.composition_status), ("F7", LISTED))
         self.assertEqual(
             sorted((row.component.name, row.fraction, row.unit) for row in f7.components.all()),
@@ -128,7 +128,7 @@ class SaveTests(MixtureCardTestCase):
         )
         self.assertEqual(
             self.messages(response),
-            [f"Added F7 as {f7.accession}, with a phase sequence.", f"Added 5CB as {five_cb.accession}, with a phase sequence.", WAITING],
+            ["Added F7, with a phase sequence.", "Added 5CB, with a phase sequence.", WAITING],
         )
 
     def test_a_mixture_not_disclosed_has_no_components(self):
@@ -141,7 +141,7 @@ class SaveTests(MixtureCardTestCase):
         self.assertEqual((mixture.name, mixture.notes, mixture.components.count()), ("MLC-2132", "Commercial.", 0))
 
     def test_a_ps_value_for_a_mixture_in_ffdb_by_its_lcr_id_shows_on_the_ps_page_under_its_name(self):
-        f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED)
+        f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED, listed=True)
         self.client.force_login(self.admin)  # an admin's save is approved at once, so the page shows it
 
         self.send_cards({"blocks": [PS_VALUE], "material": f7.accession}, button="save")
@@ -235,10 +235,11 @@ class SameNameTests(MixtureCardTestCase):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.old_f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED)
+        cls.old_f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED, listed=True)
 
     def test_mixture_form_finds_mixtures_of_its_name_with_a_prefix(self):
-        self.assertEqual(MixtureForm({"card-0-name": "f-7"}, prefix="card-0").same_name, [self.old_f7])
+        form = MixtureForm({"card-0-name": "f-7"}, prefix="card-0", user=self.curator)
+        self.assertEqual(form.same_name, [self.old_f7])
 
     def test_check_asks_whether_it_is_the_mixture_ffdb_has(self):
         response = self.send_cards({"run": DIO_HEATING, **F7})
@@ -279,7 +280,7 @@ class SameNameTests(MixtureCardTestCase):
         self.assertEqual(self.material_form(response).mixture.same_name, [self.old_f7])
 
     def test_a_compound_with_the_name_doesnt_ask(self):
-        Material.objects.create(name="M5", smiles="CCO")
+        Material.objects.create(name="M5", smiles="CCO", listed=True)
 
         self.send_cards({"run": DIO_HEATING, "name": "M5", "composition_status": NOT_DISCLOSED}, button="save")
 

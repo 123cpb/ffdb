@@ -3,7 +3,8 @@ A mixture's composition: its components in FFDB, largest first, each linked to i
 then its other components, or that it isn't disclosed. Include it with material=the mixture
 and components=its MixtureComponent rows. The material page includes it, passing only the
 public components, and hidden_components, how many it left out, which are counted but never
-named. The mixture form's question about mixtures with the same name includes it too.
+named. The mixture form's question about mixtures with the same name includes it too, passing
+the components its user sees, and the count of the rest.
 {% endcomment %}
 {% load repo_tags %}
 {% if material.composition_status == "not_disclosed" %}

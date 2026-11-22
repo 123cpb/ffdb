@@ -28,7 +28,9 @@ from .models import (
     RetiredID,
     Series,
     group_properties,
+    is_admin,
     pk_from_accession,
+    seen_by,
 )
 
 
@@ -691,9 +693,10 @@ def fill_from_crossref(reference):
 @permission_required("repo.add_reference", raise_exception=True)
 def add_from_reference(request, pk):
     """A reference's Add data page: its compound cards, a box for a table of its compounds that
-    makes cards, and what FFDB already has from it. Its materials are those it gives sequences or
-    values for. A number with no reference gives a 404. The cards are the one way to add data
-    here; the table only fills them.
+    makes cards, and what FFDB already has from it, as the user sees it (seen_by()): a curator
+    sees only its public sequences and values, an admin all of them. Its materials are those the
+    sequences and values shown are for. A number with no reference gives a 404. The cards are the
+    one way to add data here; the table only fills them.
 
     Check reads the table and shows each line, saving nothing. Make cards (a POST with cards in
     it) is the page without JavaScript's: with cards.js, make_cards() answers it. Once every line
@@ -702,9 +705,10 @@ def add_from_reference(request, pk):
     made, and why, above the table's lines."""
     # Any reference, public or not: curators add data under references that aren't public yet.
     reference = get_object_or_404(Reference, pk=pk)
-    form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference)
+    user = request.user
+    form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference, user=user)
     # A page of one empty compound card, sent to add_compound, unless the table makes cards.
-    cards, cards_problems = CompoundCards(None, reference), []
+    cards, cards_problems = CompoundCards(None, reference, user), []
     if "cards" in request.POST:
         try:
             cards = cards_from_table(form)
@@ -715,18 +719,24 @@ def add_from_reference(request, pk):
             messages.success(
                 request, f"Made {n} card{pluralize(n)} from the table: add their values, then Check and Save the cards."
             )
-            form = CompoundTableForm(reference=reference)
+            form = CompoundTableForm(reference=reference, user=user)
+    sequences, series = seen_by(user, reference.phase_sequences.all()), seen_by(user, reference.series.all())
+    # From the rows shown, not the public materials: a public material whose only data from this
+    # reference is hidden mustn't be listed. pk__in, as in Material.objects.public(), gives each once.
+    materials = Material.objects.filter(
+        Q(pk__in=sequences.values("material")) | Q(pk__in=series.values("material"))
+    ).order_by("pk")
     context = {
         "nav": "add",
         "reference": reference,
         "form": form,
         **table_reading(form),
         "cards_problems": cards_problems,
-        "materials": reference.materials(),
+        "materials": materials,
         "cards": cards,
         # This curator's saves from the reference still waiting for an admin's check. An admin's never wait.
-        "waiting": reference.waiting_saves.filter(saved_by=request.user).count(),
-        **reference_tables(reference.phase_sequences.all(), reference.series.all()),
+        "waiting": reference.waiting_saves.filter(saved_by=user).count(),
+        **reference_tables(sequences, series),
     }
     return render(request, "repo/add_from_reference.html", context)
 
@@ -754,7 +764,7 @@ def cards_from_table(form, start=0):
     line, from index start, each as Check shows it, with any problem it would have at Save, such
     as a card with no sequence yet. Raises ValidationError, saying why, when the table can't make
     them (CompoundTableForm.cards_data())."""
-    cards = CompoundCards(form.cards_data(start), form.reference)
+    cards = CompoundCards(form.cards_data(start), form.reference, form.user)
     made = cards.cards[start:]
     for card in made:
         card.is_valid()
@@ -794,7 +804,7 @@ def card_sent(request, pk):
     """Card ?card= (its index from 0, as in its prefix, card-0) of the compound cards sent, built
     as views.add_compound builds it: only that card is read."""
     reference = get_object_or_404(Reference, pk=pk)
-    return CompoundCard(request.POST, reference, number_param(request, "card", MAX_CARDS))
+    return CompoundCard(request.POST, reference, request.user, number_param(request, "card", MAX_CARDS))
 
 
 def checked_card(request, pk):
@@ -838,7 +848,7 @@ def check_card_runs(request, pk):
 def check_table(request, pk):
     """What the server makes of a compound table, as its Check shows it. With the table empty
     the answer is empty, rather than a message asking for a line."""
-    form = CompoundTableForm(request.POST, reference=get_object_or_404(Reference, pk=pk))
+    form = CompoundTableForm(request.POST, reference=get_object_or_404(Reference, pk=pk), user=request.user)
     if not request.POST.get("table", "").strip():
         return HttpResponse()
     return check_answer(request, [("", form)], "repo/_table_lines.html", {"form": form, **table_reading(form)})
@@ -855,7 +865,7 @@ def make_cards(request, pk):
     422 (Unprocessable Content: the request is understood, but can't be done), so the script can
     tell the two apart."""
     reference = get_object_or_404(Reference, pk=pk)
-    form = CompoundTableForm(request.POST, reference=reference)
+    form = CompoundTableForm(request.POST, reference=reference, user=request.user)
     start = number_param(request, "start", MAX_CARDS + 1)  # a page already full gets cards_data()'s message
     try:
         cards = cards_from_table(form, start)
@@ -906,21 +916,31 @@ def card_saved(request, card, material, added, label):
     """Say what Save added from one compound card, leaving out a part the card didn't have:
     "Added 10a as LCR-00512, with a phase sequence and 2 blocks of values." The arguments are
     what CompoundCards.save() gives for the card: label says what became of a material in FFDB's
-    label (CompoundCard.save())."""
+    label (CompoundCard.save()).
+
+    A curator's message names no LCR ID for a material the card added, or for a hidden one it
+    showed as new (CardMaterialForm.read_structure()), so the two read the same: "Added 10a, with a
+    phase sequence." Until an admin approves the save, their checks wouldn't find it by its ID anyway."""
     parts = []
     if card.run:
         parts.append("a phase sequence")
     if card.blocks:
         parts.append(f"{len(card.blocks)} block{pluralize(len(card.blocks))} of values")
     saved = " and ".join(parts)
-    if added:
+    form = card.material_form
+    name = form.cleaned_data["name"]
+    if (added or form.shown_as_new) and not is_admin(request.user):
+        messages.success(request, f"Added {name}, with {saved}.")
+        # The warning Check showed, which names only public materials and calls this one "This structure".
+        if form.stereo_warning:
+            messages.warning(request, form.stereo_warning)
+    elif added:
         messages.success(request, f"Added {material.name} as {material.accession}, with {saved}.")
         # Asked again now it is saved, so the warning names it by its LCR ID.
-        warning = material.stereo_warning()
+        warning = material.stereo_warning(Material.objects.all())
         if warning:
             messages.warning(request, warning)
     else:
-        name = card.material_form.cleaned_data["name"]
         alias = {
             "kept": f" {name} is kept as one of its aliases.",
             "held": f" {name} is held with the save, to be kept as one of its aliases if an admin approves it.",
@@ -943,9 +963,9 @@ def add_compound(request, pk):
     last message says so; an admin's is approved at once (CompoundCards.save()). A number with no
     reference gives a 404."""
     reference = get_object_or_404(Reference, pk=pk)
-    cards = CompoundCards(request.POST if request.method == "POST" else None, reference)
+    cards = CompoundCards(request.POST if request.method == "POST" else None, reference, request.user)
     if cards.is_valid() and "save" in request.POST:
-        for saved in cards.save(request.user):
+        for saved in cards.save():
             card_saved(request, *saved)
         if cards.waiting_save is not None:
             messages.info(request, "Your save is waiting for an admin's check: none of it is public until an admin approves it.")
