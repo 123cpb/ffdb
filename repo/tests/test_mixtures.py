@@ -19,13 +19,14 @@ MOL, WT = MixtureComponent.Unit.MOL, MixtureComponent.Unit.WT
 
 
 class MixtureTestCase(TestCase):
-    """Two compounds, RM734 and 5CB, and F7, a mixture of them at 70 and 30 mol%."""
+    """Two compounds, RM734 and 5CB, and F7, a mixture of them at 70 and 30 mol%. None has
+    data, so all three are listed, which makes them public."""
 
     @classmethod
     def setUpTestData(cls):
-        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
-        cls.cb5 = Material.objects.create(name="5CB", smiles=CB5)
-        cls.f7 = Material.objects.create(kind=MIXTURE, name="F7")
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734, listed=True)
+        cls.cb5 = Material.objects.create(name="5CB", smiles=CB5, listed=True)
+        cls.f7 = Material.objects.create(kind=MIXTURE, name="F7", listed=True)
         MixtureComponent.objects.create(mixture=cls.f7, component=cls.rm734, fraction=70, unit=MOL)
         MixtureComponent.objects.create(mixture=cls.f7, component=cls.cb5, fraction=30, unit=MOL)
 
@@ -265,7 +266,7 @@ class MixturePageTests(MixtureTestCase):
 
     def test_other_components_come_after_the_listed_ones_and_partly_known_says_so(self):
         f8 = Material.objects.create(
-            kind=MIXTURE, name="F8", composition_status=PARTLY_KNOWN, other_components="A nematic host"
+            kind=MIXTURE, name="F8", composition_status=PARTLY_KNOWN, other_components="A nematic host", listed=True
         )
         MixtureComponent.objects.create(mixture=f8, component=self.rm734, fraction=10, unit=WT)
 
@@ -277,7 +278,7 @@ class MixturePageTests(MixtureTestCase):
         self.assertLess(text.index("10 wt%"), text.index("Other components"))
 
     def test_a_mixture_whose_composition_is_not_disclosed_says_so(self):
-        m5 = Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED)
+        m5 = Material.objects.create(kind=MIXTURE, name="M5", composition_status=NOT_DISCLOSED, listed=True)
 
         self.assertContains(self.page(m5), "<dd>Not disclosed</dd>", html=True)
 
@@ -288,7 +289,7 @@ class MixturePageTests(MixtureTestCase):
         self.assertContains(response, f"{self.link(self.f7)} F7: 30 mol%")
 
     def test_a_compound_in_no_mixture_has_no_in_mixtures_section(self):
-        lone = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
+        lone = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1", listed=True)
 
         self.assertNotContains(self.page(lone), "In mixtures")
 

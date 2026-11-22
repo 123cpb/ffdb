@@ -25,11 +25,11 @@ class MergeTests(RetiredTestCase):
         super().setUpTestData()
         cls.duplicate = Material.objects.create(name="RM-734", aliases="3, RM734-II", smiles=WRONG_RM734)
         cls.sequence = PhaseSequence.objects.create(
-            material=cls.duplicate, reference=cls.reference, sequence=DUPLICATE_SUMMARY
+            material=cls.duplicate, reference=cls.reference, sequence=DUPLICATE_SUMMARY, approved=True
         )
         cls.series = Series.objects.create(
             material=cls.duplicate, reference=cls.reference, property=Property.objects.get(code="ps"),
-            variable=Variable.objects.get(code="temperature"), kind=Series.Kind.MEASURED,
+            variable=Variable.objects.get(code="temperature"), kind=Series.Kind.MEASURED, approved=True,
         )
         cls.series.points.create(value=5.0, temperature_c=90)
         cls.membership = MixtureComponent.objects.create(

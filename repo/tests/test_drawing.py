@@ -1,3 +1,5 @@
+import base64
+
 from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
@@ -24,7 +26,8 @@ class FormulaTests(SimpleTestCase):
 class StructureDrawingTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.material = Material.objects.create(name="RM734", smiles=RM734)
+        # Listed: with no data, only a listed material is public, and so is its drawing.
+        cls.material = Material.objects.create(name="RM734", smiles=RM734, listed=True)
 
     def test_structure_address_returns_an_svg_browsers_may_keep(self):
         response = self.client.get(reverse("repo:structure", args=[self.material.pk]))
@@ -52,12 +55,15 @@ class StructureDrawingTests(TestCase):
         self.assertContains(response, "C<sub>22</sub>H<sub>17</sub>NO<sub>8</sub>")
         self.assertContains(response, "423.4 g/mol")
 
-    def test_admin_shows_the_drawing(self):
+    def test_the_admin_draws_even_a_hidden_structure_in_its_own_page(self):
+        Material.objects.filter(pk=self.material.pk).update(listed=False)
         self.client.force_login(User.objects.create_superuser("admin", password="pw"))
 
         response = self.client.get(reverse("admin:repo_material_change", args=[self.material.pk]))
 
-        self.assertContains(response, f'<img src="{self.material.structure_url}"')
+        drawing = base64.b64encode(chem.structure_svg(self.material.canonical_smiles).encode()).decode()
+        self.assertContains(response, f'<img src="data:image/svg+xml;base64,{drawing}"')
+        self.assertNotContains(response, "structure.svg")  # the public address, which now gives 404
 
     def test_a_changed_structure_gets_a_new_address(self):
         old_url = self.material.structure_url

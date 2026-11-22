@@ -41,10 +41,12 @@ class MaterialAdminTests(TestCase):
 class MaterialPageTests(TestCase):
     @classmethod
     def setUpTestData(cls):
+        # Listed: with no data, only a listed material has a public page.
         cls.material = Material.objects.create(
             name="RM734",
             aliases="RM-734",
             smiles="COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1",
+            listed=True,
         )
         cls.url = reverse("repo:material", args=[cls.material.pk])
 

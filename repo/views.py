@@ -327,10 +327,12 @@ def sequence_ribbons(sequences, data=None):
 
 
 def material_detail(request, pk):
-    """One material's public page. A compound's page shows its structure and the mixtures it
-    is in; a mixture's, its composition. A merged ID leads to the material it went into, a
-    retired ID gives a page saying what it was, and a number never given out gives a 404."""
-    material = Material.objects.filter(pk=pk).first()
+    """One material's public page, with only its public data. A compound's page shows its
+    structure and the mixtures it is in; a mixture's, its composition. A merged ID leads to
+    the material it went into, a retired ID gives a page saying what it was, and a number
+    never given out gives a 404, as does a material that isn't public: it has no retired
+    record either, so the two can't be told apart."""
+    material = Material.objects.public().filter(pk=pk).first()
     if material is None:
         record = get_object_or_404(RetiredID, number=pk)
         if record.merged_into is not None:
@@ -343,17 +345,25 @@ def material_detail(request, pk):
     formula, mass = "", None  # a mixture has no structure to work them out from
     if material.kind == Material.Kind.COMPOUND:
         formula, mass = chem.formula_and_mass(material.canonical_smiles)
-    # One query for the series with what each row shows of their reference, property and
-    # variable, and one more for the points of all of them (prefetch_related), however
-    # many series there are.
-    series = material.series.select_related("reference", "property__group", "variable").prefetch_related("points")
+    # One query for the public series with what each row shows of their reference, property
+    # and variable, and one more for the points of all of them (prefetch_related), however
+    # many series there are. A point is public with its series, so all their points are.
+    series = (
+        material.series.public()
+        .select_related("reference", "property__group", "variable")
+        .prefetch_related("points")
+    )
     # select_related() fetches each sequence's reference in the same query, instead of one more
     # query for every row the template shows. prefetch_related() fetches the transitions of
     # all of them in one more query, and the phases either side in two more, for the ribbons.
-    sequences = material.phase_sequences.select_related("reference").prefetch_related(
+    sequences = material.phase_sequences.public().select_related("reference").prefetch_related(
         "transitions__upper", "transitions__lower"
     )
     sequence_rows, axis = sequence_ribbons(sequences)
+    public = Material.objects.public()
+    # A mixture's components in FFDB, largest first (MixtureComponent's ordering), each with
+    # its compound fetched in the same query. None for a compound. The page lists the public ones.
+    components = material.components.select_related("component")
     context = {
         "nav": "materials",
         "material": material,
@@ -363,12 +373,12 @@ def material_detail(request, pk):
         "axis": axis,
         "lc_phases": material.liquid_crystal_phases(),
         "value_sections": value_sections(series, with_charts=True),
-        # A mixture's components in FFDB, largest first (MixtureComponent's ordering), each
-        # with its compound fetched in the same query. None for a compound.
-        "components": material.components.select_related("component"),
-        # The mixtures a compound is in, in LCR ID order, each row with its fraction. None
-        # for a mixture: a component must be a compound.
-        "in_mixtures": material.in_mixtures.select_related("mixture").order_by("mixture_id"),
+        "components": components.filter(component__in=public),
+        # Only how many: the composition says some aren't public yet, without naming them.
+        "hidden_components": components.exclude(component__in=public).count(),
+        # The public mixtures a compound is in, in LCR ID order, each row with its fraction.
+        # None for a mixture: a component must be a compound.
+        "in_mixtures": material.in_mixtures.filter(mixture__in=public).select_related("mixture").order_by("mixture_id"),
     }
     return render(request, "repo/material_detail.html", context)
 
@@ -573,8 +583,9 @@ def property_values_csv(request, code):
 def structure(request, pk):
     """A material's structure drawing, as an SVG image of its own: 360 by 220 pixels,
     or 200 by 128 with ?size=thumb (Material.thumbnail_url). A mixture has no structure, so
-    its address gives a 404, as a number with no material does."""
-    material = get_object_or_404(Material, pk=pk, kind=Material.Kind.COMPOUND)
+    its address gives a 404, as a number with no material does, and so does a compound that
+    isn't public: structures are data. The admin draws structures itself (MaterialAdmin)."""
+    material = get_object_or_404(Material.objects.public(), pk=pk, kind=Material.Kind.COMPOUND)
     width, height = (200, 128) if request.GET.get("size") == "thumb" else (360, 220)
     response = HttpResponse(
         chem.structure_svg(material.canonical_smiles, width, height), content_type="image/svg+xml"

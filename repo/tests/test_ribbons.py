@@ -211,11 +211,14 @@ class MaterialPageTests(TestCase):
         cls.material = Material.objects.create(name="RM734", smiles=RM734)
         cls.reference = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017,
-            venue="Phys. & Chem.",
+            venue="Phys. & Chem.", published=True,
         )
 
     def add(self, sequence, **fields):
-        return PhaseSequence.objects.create(material=self.material, reference=self.reference, sequence=sequence, **fields)
+        """A public sequence of RM734: approved, from the published reference."""
+        return PhaseSequence.objects.create(
+            material=self.material, reference=self.reference, sequence=sequence, approved=True, **fields
+        )
 
     def page(self):
         return self.client.get(reverse("repo:material", args=[self.material.pk]))
@@ -272,6 +275,9 @@ class MaterialPageTests(TestCase):
         self.assertIn('<p class="ribbon-row__text">Cr 139.8 N<sub>F</sub> 132.7 N 187.9 Iso', content)
 
     def test_a_material_with_no_sequence_says_so(self):
+        self.material.listed = True  # with no data, only a listed material has a public page
+        self.material.save()
+
         response = self.page()
 
         self.assertContains(response, "No phase sequences yet.")

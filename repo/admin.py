@@ -1,3 +1,5 @@
+import base64
+
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
@@ -9,6 +11,7 @@ from django.urls import path
 from django.utils.html import format_html
 from django.views.decorators.http import require_POST
 
+from . import chem
 from .forms import MergeForm
 from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
@@ -162,13 +165,17 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
 
     @admin.display(description="structure")
     def structure(self, obj):
+        """The drawing, carried in the page itself as a data: address rather than linked to
+        /material/<n>/structure.svg, which answers 404 for a material that isn't public, so
+        admins see hidden structures too. Inside an <img>, an SVG can't run anything."""
         if not obj.pk:
             return "Shown after saving."
         if obj.kind == Material.Kind.MIXTURE:
             return "None: a mixture has no structure."
+        svg = base64.b64encode(chem.structure_svg(obj.canonical_smiles).encode()).decode()
         return format_html(
-            '<img src="{}" alt="Structure of {}" width="360" height="220">',
-            obj.structure_url,
+            '<img src="data:image/svg+xml;base64,{}" alt="Structure of {}" width="360" height="220">',
+            svg,
             obj.name,
         )
 

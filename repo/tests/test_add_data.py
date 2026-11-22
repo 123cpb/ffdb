@@ -19,8 +19,8 @@ FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
 
 @override_settings(CROSSREF_MAILTO="ffdb-tests@example.org")
 class AddDataTestCase(TestCase):
-    """A curator, logged in, and one reference of each kind already in FFDB: no materials or
-    data yet. Crossref is replaced for every test."""
+    """A curator, logged in, and one published reference of each kind already in FFDB, as Add
+    data would have added them: no materials or data yet. Crossref is replaced for every test."""
 
     @classmethod
     def setUpTestData(cls):
@@ -29,9 +29,12 @@ class AddDataTestCase(TestCase):
         cls.article = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1002/chem.201702742",
             first_author="Mandle", year=2017, venue="Chem. Eur. J.", abstract="An abstract only the admin shows.",
+            published=True,
         )
-        cls.patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
-        cls.thesis = Reference.objects.create(kind=Reference.Kind.THESIS, identifier="Mandle 2015, Two nematic phases")
+        cls.patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1", published=True)
+        cls.thesis = Reference.objects.create(
+            kind=Reference.Kind.THESIS, identifier="Mandle 2015, Two nematic phases", published=True
+        )
 
     def setUp(self):
         self.crossref = FakeCrossref()

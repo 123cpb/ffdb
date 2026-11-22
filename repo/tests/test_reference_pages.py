@@ -25,8 +25,11 @@ class ReferenceTestCase(TestCase):
             year=2017,
             venue="Chem. Eur. J.",
             title="A nematic to nematic transformation exhibited by a rod-like liquid crystal",
+            published=True,
         )
-        cls.patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1", year=2016)
+        cls.patent = Reference.objects.create(
+            kind=Reference.Kind.PATENT, identifier="EP3260450A1", year=2016, published=True
+        )
         cls.preprint = Reference.objects.create(
             kind=Reference.Kind.PREPRINT, identifier="10.48550/arxiv.2401.00001", year=2024
         )
@@ -40,8 +43,8 @@ class ReferenceTestCase(TestCase):
             (cls.rm734, "K 140 NX 133 N 188 I"),
             (cls.five_cb, "K 22.5 N 35 I"),
         ]:
-            PhaseSequence.objects.create(material=material, reference=cls.article, sequence=sequence)
-        PhaseSequence.objects.create(material=cls.rm734, reference=cls.patent, sequence="K 140 N 188 I")
+            PhaseSequence.objects.create(material=material, reference=cls.article, sequence=sequence, approved=True)
+        PhaseSequence.objects.create(material=cls.rm734, reference=cls.patent, sequence="K 140 N 188 I", approved=True)
 
     def search(self, **params):
         return self.client.get(reverse("repo:references"), params)
@@ -202,8 +205,13 @@ class UnpublishedResultTests(ReferenceTestCase):
     def test_a_reference_without_deposited_data_has_no_line_for_it(self):
         self.assertNotContains(self.client.get(reverse("repo:reference", args=[self.article.pk])), "Deposited data")
 
-    def test_the_material_page_labels_its_value_unpublished(self):
-        self.assertContains(self.client.get(reverse("repo:material", args=[self.rm734.pk])), self.LABEL)
+    def test_the_material_page_leaves_its_value_out(self):
+        # Unpublished work can't be published, so its data is never public, however it is
+        # labelled. RM734's page still shows its public sequences.
+        response = self.client.get(reverse("repo:material", args=[self.rm734.pk]))
+
+        self.assertNotContains(response, self.LABEL)
+        self.assertNotContains(response, "Dipole moment")
 
     def test_the_values_download_says_it_is_unpublished(self):
         text = self.client.get(reverse("repo:values_csv")).content.decode("utf-8-sig")

@@ -353,11 +353,12 @@ class Material(models.Model):
         )
 
     def liquid_crystal_phases(self):
-        """The liquid-crystal phases in any of this material's sequences, each once, in the
-        vocabulary's order. The database does the work: it follows the links from Phase to
-        this material's sequences, and distinct() drops a phase that two sequences share."""
+        """The liquid-crystal phases in any of this material's public sequences, each once, in
+        the vocabulary's order, as its public page lists them. The database does the work: it
+        follows the links from Phase to those sequences, and distinct() drops a phase that two
+        sequences share."""
         return (
-            Phase.objects.filter(phase_sequences__material=self)
+            Phase.objects.filter(phase_sequences__in=self.phase_sequences.public())
             .exclude(code__in=NOT_LIQUID_CRYSTAL)
             .distinct()
         )

@@ -17,18 +17,22 @@ RM734_COOLING = "Iso 187.9 N 132.7 NF 70 K"
 
 
 class SequenceTestCase(TestCase):
-    """RM734 and one reference. The phases are already in the test database, from the
-    0005_seed_phases migration."""
+    """RM734 and one published reference. The phases are already in the test database, from
+    the 0005_seed_phases migration."""
 
     @classmethod
     def setUpTestData(cls):
         cls.material = Material.objects.create(name="RM734", smiles=RM734)
         cls.reference = Reference.objects.create(
-            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
+            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017,
+            published=True,
         )
 
-    def add(self, sequence, **fields):
-        return PhaseSequence.objects.create(material=self.material, reference=self.reference, sequence=sequence, **fields)
+    def add(self, sequence, approved=True, **fields):
+        """A sequence of RM734 from the reference, approved unless the test says not, so it is public."""
+        return PhaseSequence.objects.create(
+            material=self.material, reference=self.reference, sequence=sequence, approved=approved, **fields
+        )
 
     def add_cooling_run(self):
         return self.add(
@@ -238,9 +242,9 @@ class MaterialPageTests(SequenceTestCase):
         return self.client.get(reverse("repo:material", args=[self.material.pk]))
 
     def test_each_sequence_is_listed_with_its_reference(self):
-        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
+        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1", published=True)
         self.add(RM734_SUMMARY)
-        PhaseSequence.objects.create(material=self.material, reference=patent, sequence="K 140 N 188 I")
+        PhaseSequence.objects.create(material=self.material, reference=patent, sequence="K 140 N 188 I", approved=True)
 
         response = self.page()
 
@@ -278,6 +282,9 @@ class MaterialPageTests(SequenceTestCase):
         self.assertNotContains(self.page(), "Reported as")
 
     def test_a_material_without_sequences_says_so(self):
+        self.material.listed = True  # with no data, only a listed material has a public page
+        self.material.save()
+
         response = self.page()
 
         self.assertContains(response, "No phase sequences yet.")

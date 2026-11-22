@@ -28,7 +28,7 @@ def snapshot_rows(record):
 
 
 class RetiredTestCase(TestCase):
-    """RM734, with a sequence and a series of two points from one reference, and F7, a
+    """RM734, with a public sequence and series of two points from one reference, and F7, a
     mixture with 5CB as a component. An admin is logged in: only admins delete materials."""
 
     @classmethod
@@ -40,12 +40,13 @@ class RetiredTestCase(TestCase):
             mixture=cls.f7, component=cls.cb5, fraction=30, unit=MixtureComponent.Unit.MOL
         )
         cls.reference = Reference.objects.create(
-            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
+            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017,
+            published=True,
         )
-        PhaseSequence.objects.create(material=cls.rm734, reference=cls.reference, sequence=RM734_SUMMARY)
+        PhaseSequence.objects.create(material=cls.rm734, reference=cls.reference, sequence=RM734_SUMMARY, approved=True)
         series = Series.objects.create(
             material=cls.rm734, reference=cls.reference, property=Property.objects.get(code="ps"),
-            variable=Variable.objects.get(code="temperature"), kind=Series.Kind.MEASURED,
+            variable=Variable.objects.get(code="temperature"), kind=Series.Kind.MEASURED, approved=True,
         )
         series.points.create(value=6.0, temperature_c=80)
         series.points.create(value=4.4, temperature_c=100)

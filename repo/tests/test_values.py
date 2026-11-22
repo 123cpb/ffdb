@@ -10,32 +10,38 @@ DIO = "c1c(c(c(cc1C1OCC(CO1)CCC)F)C(=O)Oc1cc(c(cc1)c1cc(c(c(c1)F)F)F)F)F"
 RM734 = "COc1ccc(C(=O)Oc2ccc(C(=O)Oc3ccc([N+](=O)[O-])cc3)cc2)c(OC)c1"
 
 
-def add(material, reference, property_code, variable_code="temperature", kind=Series.Kind.MEASURED, **fields):
-    """A series without points: the test adds them."""
+def add(
+    material, reference, property_code, variable_code="temperature", kind=Series.Kind.MEASURED, approved=True, **fields
+):
+    """A series without points: the test adds them. Approved unless the test says not, so it is
+    public under a published reference."""
     return Series.objects.create(
         material=material,
         reference=reference,
         property=Property.objects.get(code=property_code),
         variable=Variable.objects.get(code=variable_code),
         kind=kind,
+        approved=approved,
         **fields,
     )
 
 
 class ValuesTestCase(TestCase):
     """DIO with a Ps curve from Chen 2022 and a Δn curve from Yadav 2023, three points each,
-    against temperature. RM734 has no values until a test gives it some."""
+    against temperature, all public. RM734 has no values until a test gives it some, and is
+    listed, so its page is public without them."""
 
     @classmethod
     def setUpTestData(cls):
         cls.dio = Material.objects.create(name="DIO", smiles=DIO)
-        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734, listed=True)
         cls.chen = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1080/02678292.2022.2058101",
-            first_author="Chen", year=2022, venue="Liq. Cryst.",
+            first_author="Chen", year=2022, venue="Liq. Cryst.", published=True,
         )
         cls.yadav = Reference.objects.create(
-            kind=Reference.Kind.ARTICLE, identifier="10.1039/d3cp00357d", first_author="Yadav", year=2023, venue="PCCP"
+            kind=Reference.Kind.ARTICLE, identifier="10.1039/d3cp00357d", first_author="Yadav", year=2023, venue="PCCP",
+            published=True,
         )
         ps = add(
             cls.dio, cls.chen, "ps", method="current reversal", conditions={"frequency_Hz": 50, "cell_gap_um": 8},
@@ -144,7 +150,7 @@ class MaterialPageTests(ValuesTestCase):
     def test_more_series_cost_no_more_queries(self):
         with CaptureQueriesContext(connection) as before:
             self.page(self.dio)
-        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
+        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1", published=True)
         series = add(self.dio, patent, "n-e", conditions={"wavelength_nm": 589})
         series.points.create(value=1.7, temperature_c=25)
 
