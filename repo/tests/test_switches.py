@@ -108,7 +108,7 @@ class ImportSeriesTests(ImportTestCase):
 class AddDataTests(CardTestCase):
     def test_a_new_reference_is_published_unless_it_is_unpublished_work(self):
         self.give("doi", PCCP)
-        self.give("unpublished", "")
+        self.give("unpublished", UNPUBLISHED_WORK)
 
         self.assertTrue(Reference.objects.get(identifier=PCCP).published)
         self.assertFalse(Reference.objects.get(kind=Reference.Kind.UNPUBLISHED).published)

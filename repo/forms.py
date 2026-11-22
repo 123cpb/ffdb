@@ -51,9 +51,6 @@ class FindReferenceForm(forms.Form):
     # The same as their Reference.Kind values, so clean() can keep them as they are.
     THESIS = Reference.Kind.THESIS
     UNPUBLISHED = Reference.Kind.UNPUBLISHED
-    # The one reference every unpublished group result goes under, so there is nothing to type.
-    # Its label adds "(unpublished)" (Reference.label).
-    GROUP_RESULTS = "Group results"
 
     kind = forms.ChoiceField(
         label="The data is from",
@@ -69,28 +66,22 @@ class FindReferenceForm(forms.Form):
         widget=forms.RadioSelect,
     )
     identifier = forms.CharField(
-        label="DOI, patent number or thesis",
+        label="DOI, patent number, thesis or unpublished work",
         max_length=Reference._meta.get_field("identifier").max_length,
-        # Not required, so the browser lets an unpublished result through with the box empty.
-        # clean() asks for it for the other kinds.
-        required=False,
+        # Every kind needs it. A box of only spaces counts as empty, because a CharField strips them.
+        error_messages={"required": "Give the DOI, patent number, thesis or unpublished work."},
         help_text="A DOI as you have it, e.g. 10.1002/chem.201702742 or https://doi.org/10.1002/chem.201702742; "
         "a patent number, e.g. EP3260450A1; for a thesis, its author, year and title, "
-        "e.g. Parton-Barr 2027, Fluid ferroelectrics. Leave it empty for an unpublished group result: "
-        f"they all go under one reference, {GROUP_RESULTS}.",
+        "e.g. Parton-Barr 2027, Fluid ferroelectrics; for unpublished work, who it is from, the year "
+        "and what it is, e.g. Mandle group 2026, Computed dipole moments. Each piece of unpublished "
+        "work is a reference of its own, so it can be made public on its own when its paper comes out.",
     )
 
     def clean(self):
         cleaned = super().clean()
         kind, text = cleaned.get("kind"), cleaned.get("identifier")
-        if kind == self.UNPUBLISHED:
-            # Anything typed is ignored. The next page's message names the reference.
-            cleaned["identifier"] = self.GROUP_RESULTS
-            return cleaned
-        if not kind or text is None:
+        if not kind or not text:
             return cleaned  # the field errors already say what is wrong
-        if not text:
-            raise ValidationError({"identifier": "Give the DOI, patent number or thesis."})
         if kind == self.DOI:
             doi = clean_doi(text)
             if not DOI_FORMAT.fullmatch(doi):
@@ -101,8 +92,8 @@ class FindReferenceForm(forms.Form):
         elif kind == self.PATENT:
             cleaned["kind"], cleaned["identifier"] = Reference.Kind.PATENT, clean_patent_number(text)
         else:
-            # A thesis: the text as typed, with its spaces tidied, so the same words find it
-            # again. add_data ignores capitals when it looks.
+            # A thesis or unpublished work: the text as typed, with its spaces tidied, so the
+            # same words find it again. add_data ignores capitals when it looks.
             cleaned["identifier"] = " ".join(text.split())
         return cleaned
 

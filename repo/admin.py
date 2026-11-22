@@ -6,6 +6,7 @@ from django.db import models, transaction
 from django.forms import Textarea
 from django.forms.models import BaseInlineFormSet
 from django.shortcuts import get_object_or_404, redirect
+from django.template.defaultfilters import pluralize
 from django.template.response import TemplateResponse
 from django.urls import path
 from django.utils.html import format_html
@@ -307,7 +308,8 @@ class PhaseAdmin(admin.ModelAdmin):
 @admin.register(Reference)
 class ReferenceAdmin(NewRowsTicked, EnteredAdmin):
     """A reference added here is published unless unticked, as on Add data. Ticked for
-    unpublished work, the form is refused with the database's message (Reference's constraint)."""
+    unpublished work, the form is refused with the database's message (Reference's constraint).
+    On the list, admins can mark the references they tick published, or not published."""
 
     list_display = ["label", "kind", "identifier", "published", *ENTERED]
     list_filter = ["published", *ENTERED_FILTERS]
@@ -316,6 +318,55 @@ class ReferenceAdmin(NewRowsTicked, EnteredAdmin):
     search_fields = ["identifier", "first_author", "title"]
     readonly_fields = ENTERED
     inlines = [ReferenceSequenceInline]
+    # The list's Action menu, after Django's own "Delete selected references".
+    actions = ["mark_published", "mark_not_published"]
+
+    def has_admin_permission(self, request):
+        """For the actions with permissions=["admin"]: Django offers them only when this is
+        True. Only users who may delete materials, as for merging and restoring materials."""
+        return request.user.has_perm("repo.delete_material")
+
+    @admin.action(description="Mark published", permissions=["admin"])
+    def mark_published(self, request, queryset):
+        """Tick published on the references ticked on the list, so their approved data is public.
+        Unpublished work is refused, as the database would refuse it: when its paper comes out,
+        change its kind and identifier to the paper's first. The others are still marked."""
+        unpublished = Reference.Kind.UNPUBLISHED
+        for reference in queryset.filter(kind=unpublished):
+            self.message_user(
+                request,
+                f"{reference} wasn't marked published: it is unpublished work. "
+                "Change its kind and identifier to its paper's on its page first.",
+                messages.ERROR,
+            )
+        n = self.switch(request, queryset.exclude(kind=unpublished), True, "Marked published.")
+        if n:
+            self.message_user(
+                request, f"Marked published: {n} reference{pluralize(n)}. Their approved data is public.", messages.SUCCESS
+            )
+
+    @admin.action(description="Mark not published (hide its data)", permissions=["admin"])
+    def mark_not_published(self, request, queryset):
+        """Untick published on the references ticked on the list, so none of their data is
+        public, and a material with nothing public left answers "not found". The undo for
+        Mark published."""
+        n = self.switch(request, queryset, False, "Marked not published.")
+        self.message_user(
+            request, f"Marked not published: {n} reference{pluralize(n)}. Their data is hidden.", messages.SUCCESS
+        )
+
+    def switch(self, request, queryset, published, message):
+        """Set published on each reference in queryset and return how many there were. Each one
+        changed gets message in its admin history, as a change saved on its page would, so the
+        history says who made data public or hid it. One already set is left alone, so its
+        history doesn't record a change that didn't happen."""
+        references = list(queryset)
+        for reference in references:
+            if reference.published != published:
+                reference.published = published
+                reference.save(update_fields=["published"])
+                self.log_change(request, reference, message)
+        return len(references)
 
 
 @admin.register(PropertyGroup)

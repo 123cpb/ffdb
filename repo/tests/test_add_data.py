@@ -132,12 +132,12 @@ class FindReferenceTests(AddDataTestCase):
         self.assertEqual(Reference.objects.count(), 3)
         self.assertEqual(self.crossref.requests, [])
 
-    def test_a_blank_box_is_refused_for_every_kind_but_an_unpublished_result(self):
-        for kind in ["doi", "patent", "thesis"]:
+    def test_a_blank_box_is_refused_for_every_kind(self):
+        for kind in ["doi", "patent", "thesis", "unpublished"]:
             with self.subTest(kind):
                 response = self.give(kind, "  ", follow=False)
 
-                self.assertContains(response, "Give the DOI, patent number or thesis.")
+                self.assertContains(response, "Give the DOI, patent number, thesis or unpublished work.")
         self.assertEqual(Reference.objects.count(), 3)
 
     def test_a_patent_number_already_in_ffdb_is_found_however_it_is_typed(self):
@@ -166,26 +166,36 @@ class FindReferenceTests(AddDataTestCase):
         self.assertRedirects(response, self.add_page(thesis))
         self.assertEqual(Reference.objects.count(), 4)
 
-    def test_every_unpublished_result_goes_under_one_reference_with_nothing_typed(self):
-        response = self.give("unpublished", "")
-        group = Reference.objects.get(identifier="Group results")
-        self.assertEqual(group.kind, Reference.Kind.UNPUBLISHED)
-        self.assertEqual(group.entered_by, self.curator)
-        self.assertEqual(self.messages(response), ["Added to FFDB: Group results (unpublished)"])
+    def test_two_pieces_of_unpublished_work_make_two_references_that_arent_published(self):
+        first = self.give("unpublished", "Mandle group 2026,  Computed dipole moments")
+        second = self.give("unpublished", "Parton-Barr 2026, Unpublished birefringence")
 
-        # Anything typed is ignored: it is still the one reference.
-        response = self.give("unpublished", "Mandle group 2026, Computed dipole moments")
-
-        self.assertRedirects(response, self.add_page(group))
-        self.assertEqual(self.messages(response), ["Already in FFDB: Group results (unpublished)"])
-        self.assertEqual(Reference.objects.count(), 4)
+        dipoles = Reference.objects.get(identifier="Mandle group 2026, Computed dipole moments")
+        birefringence = Reference.objects.get(identifier="Parton-Barr 2026, Unpublished birefringence")
+        self.assertRedirects(first, self.add_page(dipoles))
+        self.assertRedirects(second, self.add_page(birefringence))
+        self.assertEqual(self.messages(first), ["Added to FFDB: Mandle group 2026, Computed dipole moments (unpublished)"])
+        for reference in (dipoles, birefringence):
+            self.assertEqual(reference.kind, Reference.Kind.UNPUBLISHED)
+            self.assertFalse(reference.published)
+            self.assertEqual(reference.entered_by, self.curator)
         self.assertEqual(self.crossref.requests, [])
 
-    def test_the_browser_lets_the_box_be_sent_empty(self):
+    def test_unpublished_work_is_found_again_in_other_capitals(self):
+        self.give("unpublished", "Mandle group 2026, Computed dipole moments")
+        dipoles = Reference.objects.get(kind=Reference.Kind.UNPUBLISHED)
+
+        response = self.give("unpublished", "mandle group 2026, computed dipole moments")
+
+        self.assertRedirects(response, self.add_page(dipoles))
+        self.assertEqual(self.messages(response), ["Already in FFDB: Mandle group 2026, Computed dipole moments (unpublished)"])
+        self.assertEqual(Reference.objects.count(), 4)
+
+    def test_the_browser_asks_for_the_box(self):
         box = str(self.client.get(ADD).context["form"]["identifier"])
 
         self.assertIn('name="identifier"', box)
-        self.assertNotIn("required", box)
+        self.assertIn("required", box)
 
 
 class AccessTests(AddDataTestCase):
