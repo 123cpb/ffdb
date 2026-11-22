@@ -1,0 +1,5 @@
+{% comment %}
+Where a sequence or series (row) from a save's reference stands, on the save's page
+(change_form.html): waiting in another save, linked, or approved or not. These are its switches,
+not whether it is public: the page's first line says whether the reference is published.
+{% endcomment %}{% if row.waiting_save_id %}waiting in <a href="{% url 'admin:repo_waitingsave_change' row.waiting_save_id %}">save {{ row.waiting_save_id }}</a>{% elif row.approved %}approved{% else %}not approved, in no save{% endif %}

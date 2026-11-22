@@ -1,9 +1,10 @@
 """Possible duplicates, for the admin's page (MaterialAdmin.duplicates_view): pairs of compounds
 that may be one compound entered twice, in two lists. connectivity_pairs() finds compounds with
 the same connectivity; sequence_pairs() finds compounds with matching sequences from one
-reference, which may be one compound entered with two different structures. Nothing here changes
-a material. An admin merges a pair (Material.merge_into()) or marks it not a duplicate
-(NotDuplicate), which takes it off both lists."""
+reference, which may be one compound entered with two different structures. A waiting save's page
+flags the pairs of each of its materials (pairs_of()). Nothing here changes a material. An admin
+merges a pair (Material.merge_into()) or marks it not a duplicate (NotDuplicate), which takes it off
+both lists."""
 
 from collections import defaultdict
 from itertools import combinations
@@ -113,3 +114,19 @@ def sequence_pairs():
         for (reference, a, b), matching in found.items()
     ]
     return sorted(pairs, key=lambda pair: (pair[0].label, pair[0].pk, pair[1].pk, pair[2].pk))
+
+
+def pairs_of(material, connectivity, sequences):
+    """The pairs that include material, from the two lists connectivity_pairs() and sequence_pairs()
+    return, for a waiting save's page (WaitingSaveAdmin.preview()): [(the other compound, heading or
+    reference, the other's matching sequences), ...]. A pair from the first list has no sequences.
+    The lists are passed in, so a page with several materials works them out once."""
+    found = []
+    for heading, a, b in connectivity:
+        if material in (a, b):
+            found.append((b if material == a else a, heading, []))
+    for reference, a, b, matching in sequences:
+        if material in (a, b):
+            other = b if material == a else a
+            found.append((other, reference, [sequence for sequence in matching if sequence.material_id == other.pk]))
+    return found

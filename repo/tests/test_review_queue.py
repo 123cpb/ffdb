@@ -9,7 +9,10 @@ from django.test import TestCase
 from django.urls import reverse
 from django.utils.html import escape
 
-from repo.models import Material, Measurement, MixtureComponent, PhaseSequence, Reference, RetiredID, Series, WaitingSave
+from repo.duplicates import ONE_ONLY
+from repo.models import (
+    Material, Measurement, MixtureComponent, NotDuplicate, PhaseSequence, Reference, RetiredID, Series, WaitingSave,
+)
 from repo.tests.test_import import ARTICLE, FIVE_CB, RM734, RM734_SUMMARY
 from repo.tests.test_several_cards import THREE_CARDS, CardsTestCase
 from repo.tests.test_switches import UNPUBLISHED_WORK
@@ -257,6 +260,7 @@ class PreviewTests(ReviewTestCase):
         self.assertContains(page, "4.1 to 5.2 µC/cm²")
         self.assertContains(page, '<figure class="chart">', count=1)
         self.assertNotContains(page, "Approving makes it public under")
+        self.assertNotContains(page, "Check before approving")  # nothing in FFDB is like what it adds
 
     def test_a_hidden_material_is_warned_of_with_the_curators_label(self):
         # A curator typed DIO's structure: their card showed a new compound named 10a.
@@ -306,6 +310,82 @@ class PreviewTests(ReviewTestCase):
         page = self.client.get(reverse("repo:materials")).content.decode()
 
         self.assertLess(page.index("/static/repo/data.css"), page.index("/static/repo/style.css"))
+
+
+class FlagTests(ReviewTestCase):
+    """A save's page flags, under each of its materials, what may be in FFDB already, hidden data
+    included, as a curator's checks see only public data: its possible duplicates not yet decided,
+    other mixtures with one of its names, and its data from the save's reference outside the save."""
+
+    def entry(self, saved, material):
+        """The page, and the entry for material on it."""
+        page = self.client.get(reverse("admin:repo_waitingsave_change", args=[saved.pk]))
+        return page, next(entry for entry in page.context["entries"] if entry["material"] == material)
+
+    def test_a_possible_duplicate_not_yet_decided_is_flagged_hidden_ones_included(self):
+        rac = Material.objects.create(name="rac-2-octanol", smiles="CC(O)CCCCCC")
+        s = Material.objects.create(name="S-2-octanol", smiles="C[C@H](O)CCCCCC")  # hidden: no data, not listed
+        saved = self.waiting(self.article, sequences=[(rac, "K 10 N 40 I")])
+
+        page, entry = self.entry(saved, rac)
+
+        self.assertEqual(entry["pairs"], [{"other": s, "hidden": True, "heading": ONE_ONLY, "sequences": []}])
+        self.assertContains(page, "Check before approving")
+        self.assertContains(page, f"{s}</a>, hidden:")
+        self.assertContains(page, f"same connectivity. {ONE_ONLY}.")
+        self.assertContains(page, reverse("admin:repo_material_duplicates"))
+
+        NotDuplicate.mark(rac, s, self.admin)
+        page, entry = self.entry(saved, rac)
+        self.assertEqual(entry["pairs"], [])
+        self.assertNotContains(page, "Check before approving")
+
+    def test_a_compound_with_a_matching_sequence_from_the_same_reference_is_flagged(self):
+        pentane = Material.objects.create(name="C5", smiles="CCCCC")
+        hexane = Material.objects.create(name="C6", smiles="CCCCCC")  # hidden: its sequence isn't approved
+        theirs = PhaseSequence.objects.create(material=hexane, reference=self.article, sequence="K 10.3 N 40 I")
+        saved = self.waiting(self.article, sequences=[(pentane, "K 10 N 40 I")])
+
+        page, entry = self.entry(saved, pentane)
+
+        self.assertEqual(entry["pairs"], [{"other": hexane, "hidden": True, "heading": self.article, "sequences": [theirs]}])
+        self.assertContains(page, f"a matching sequence from {self.article}:")
+        self.assertContains(page, "Cr 10.3 N 40 Iso (Summary).")
+
+    def test_other_mixtures_with_one_of_its_names_are_flagged_hidden_ones_included(self):
+        # The curator's own earlier M1, still waiting, so hidden; a public mixture also called M1; and M2.
+        earlier = Material.objects.create(kind=Material.Kind.MIXTURE, name="M1")
+        self.waiting(self.article, sequences=[(earlier, "K 40 N 90 I")])
+        f7 = Material.objects.create(kind=Material.Kind.MIXTURE, name="F7", aliases="M1", listed=True)
+        m2 = Material.objects.create(kind=Material.Kind.MIXTURE, name="M2", listed=True)
+        mixture = Material.objects.create(kind=Material.Kind.MIXTURE, name="M1")
+        saved = self.waiting(self.article, sequences=[(mixture, "K 41 N 92 I")])
+
+        page, entry = self.entry(saved, mixture)
+
+        self.assertEqual(entry["same_name"], [{"other": earlier, "hidden": True}, {"other": f7, "hidden": False}])
+        self.assertContains(page, f"{earlier}</a> (hidden), ")
+        self.assertContains(page, f"{f7}</a>.")
+        self.assertNotContains(page, str(m2))
+
+    def test_data_from_the_same_reference_outside_the_save_is_flagged_waiting_or_not(self):
+        first = self.waiting(self.article, sequences=[(self.rm734, RM734_SUMMARY)])
+        unticked = PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence=RM734_SUMMARY)
+        series = add(self.rm734, self.article, "ps")  # approved
+        second = self.waiting(self.article, sequences=[(self.rm734, RM734_SUMMARY)])
+
+        page, entry = self.entry(second, self.rm734)
+
+        # Not RM734's sequence from the other paper, nor this save's own.
+        self.assertEqual(list(entry["same_reference_sequences"]), [*first.phase_sequences.all(), unticked])
+        self.assertEqual(list(entry["same_reference_series"]), [series])
+        first_page = reverse("admin:repo_waitingsave_change", args=[first.pk])
+        self.assertContains(page, f'(Summary): waiting in <a href="{first_page}">save {first.pk}</a>')
+        self.assertContains(page, "(Summary): not approved, in no save")
+        self.assertContains(page, "Spontaneous polarisation against temperature: approved")
+        # The first save's page flags the second's sequence in turn.
+        _, entry = self.entry(first, self.rm734)
+        self.assertIn(second.phase_sequences.get(), entry["same_reference_sequences"])
 
 
 class OnlyAdminsTests(ReviewTestCase):

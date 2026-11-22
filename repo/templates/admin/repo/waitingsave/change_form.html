@@ -1,8 +1,10 @@
 {% extends "admin/change_form.html" %}
+{% load repo_tags %}
 {% comment %}
 A waiting save's admin page, which Django finds by this file's path: who saved it, when and from
 which reference, then what it adds as the public pages would show it, with their templates
-(WaitingSaveAdmin.preview()), then Approve and Reject (WaitingSaveAdmin.approve_view and
+(WaitingSaveAdmin.preview()), with what may already be in FFDB flagged under each material
+(WaitingSaveAdmin.flags()), then Approve and Reject (WaitingSaveAdmin.approve_view and
 reject_view). The preview sits in a panel with the public pages' colours and font (data.css), so it
 reads the same whichever theme the admin has. Each button has a form of its own, after the page's
 form: one form can't be inside another. Only admins can open the page.
@@ -31,6 +33,36 @@ form: one form can't be inside another. Only admins can open the page.
     <p>Label on the curator's card: {{ entry.label }}.
       {% if entry.label_problem %}It won't be kept as an alias: {{ entry.label_problem }}.{% else %}It will be kept as an alias.{% endif %}
     </p>
+    {% endif %}
+    {% if entry.pairs or entry.same_name or entry.same_reference_sequences or entry.same_reference_series %}
+    <div class="preview-flags">
+      <p class="preview-warning">Check before approving:</p>
+      {% for pair in entry.pairs %}
+      <p>Possible duplicate of <a href="{% url 'admin:repo_material_change' pair.other.pk %}">{{ pair.other }}</a>{% if pair.hidden %}, hidden{% endif %}:
+        {% if pair.sequences %}a matching sequence from {{ pair.heading }}:
+        {% for sequence in pair.sequences %}{{ sequence.standard_sequence|phase_html }} ({{ sequence.run_text }}){% if not forloop.last %}; {% endif %}{% endfor %}.
+        {% else %}same connectivity. {{ pair.heading }}.{% endif %}
+      </p>
+      {% endfor %}
+      {% if entry.pairs %}<p>Merge a pair, or mark it not a duplicate, on the <a href="{% url 'admin:repo_material_duplicates' %}">possible-duplicates page</a>.</p>{% endif %}
+      {% if entry.same_name %}
+      <p>Other mixtures with one of its names:
+        {% for mixture in entry.same_name %}<a href="{% url 'admin:repo_material_change' mixture.other.pk %}">{{ mixture.other }}</a>{% if mixture.hidden %} (hidden){% endif %}{% if not forloop.last %}, {% endif %}{% endfor %}.
+        If it is one of them, merge it into that one from its page.
+      </p>
+      {% endif %}
+      {% if entry.same_reference_sequences or entry.same_reference_series %}
+      <p>Already in FFDB for it from this reference, which may be the same data entered twice:</p>
+      <ul>
+        {% for sequence in entry.same_reference_sequences %}
+        <li>{{ sequence.standard_sequence|phase_html }} ({{ sequence.run_text }}): {% include "admin/repo/waitingsave/_row_status.html" with row=sequence %}</li>
+        {% endfor %}
+        {% for series in entry.same_reference_series %}
+        <li>{{ series.property.name }}{% if not series.is_against_nothing %} against {{ series.variable.name|lower }}{% endif %}: {% include "admin/repo/waitingsave/_row_status.html" with row=series %}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
     {% endif %}
     {% if material.kind == "mixture" %}
     {% include "repo/_composition.html" with components=entry.components hidden_components=0 %}

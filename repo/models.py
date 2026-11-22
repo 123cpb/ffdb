@@ -877,6 +877,17 @@ class WaitingSave(models.Model):
         ).exists()
         return "hidden" if others else "new"
 
+    def same_reference_data(self, material):
+        """What FFDB already has for material from this save's reference that isn't in this save,
+        waiting in another save, hidden or public: (its sequences, its series). The save's page flags
+        it, as it may be the same data entered twice: a curator's Add data shows them only the public
+        data, so saving the same card twice makes two saves. exclude() keeps the rows in no save, as
+        in material_status()."""
+        return (
+            material.phase_sequences.filter(reference=self.reference).exclude(waiting_save=self),
+            material.series.filter(reference=self.reference).exclude(waiting_save=self).select_related("property", "variable"),
+        )
+
     def reject(self, user):
         """Delete its sequences and series, which takes their transitions and points with them,
         retire (Material.retire(), by user) each of its materials left with nothing, and delete

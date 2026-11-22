@@ -18,7 +18,7 @@ from . import chem, duplicates
 from .forms import MergeForm
 from .models import (
     Entered, Material, Measurement, MixtureComponent, NotDuplicate, Phase, PhaseSequence, Property, PropertyGroup,
-    Reference, RetiredID, Series, Variable, WaitingSave, accession, is_admin,
+    Reference, RetiredID, Series, Variable, WaitingSave, accession, is_admin, materials_named,
 )
 from .views import sequence_ribbons, value_sections
 
@@ -567,7 +567,10 @@ class WaitingSaveAdmin(admin.ModelAdmin):
         mixture's components, all of them, as the admin sees hidden data; and the save's own
         sequences and values for it, as the material's public page draws them, with the same
         functions (views.sequence_ribbons(), views.value_sections()). The sequences and values are
-        fetched as that page fetches them, all in a few queries, and shared out by material."""
+        fetched as that page fetches them, all in a few queries, and shared out by material. Each
+        entry also has what may be in FFDB already (flags())."""
+        # Both lists of possible duplicates, worked out once for every material on the page.
+        connectivity, matching = duplicates.connectivity_pairs(), duplicates.sequence_pairs()
         sequences = list(
             saved.phase_sequences.select_related("reference").prefetch_related("transitions__upper", "transitions__lower")
         )
@@ -590,8 +593,37 @@ class WaitingSaveAdmin(admin.ModelAdmin):
                 "sequence_rows": sequence_rows,
                 "axis": axis,
                 "value_sections": value_sections([one for one in series if one.material_id == material.pk], with_charts=True),
+                **self.flags(saved, material, connectivity, matching),
             })
         return {"published": saved.reference.published, "entries": entries}
+
+    def flags(self, saved, material, connectivity, matching):
+        """What the save's page flags for one of its materials, as it may already be in FFDB, hidden
+        data included: a curator's checks on Add data see only public data (seen_by()). As
+        {"pairs": ..., "same_name": ..., "same_reference_sequences": ..., "same_reference_series": ...}:
+        - pairs: its possible duplicates not yet decided, from both lists (duplicates.pairs_of(), given
+          connectivity_pairs() and sequence_pairs()), each {"other", "hidden", "heading", "sequences"};
+        - same_name: for a mixture, the other mixtures with one of its names, each {"other", "hidden"},
+          as a curator is asked only about public ones (MixtureForm), and they have no structure;
+        - its sequences and series from the save's reference that aren't in the save
+          (WaitingSave.same_reference_data())."""
+        pairs = [
+            {"other": other, "hidden": not other.is_public(), "heading": heading, "sequences": sequences}
+            for other, heading, sequences in duplicates.pairs_of(material, connectivity, matching)
+        ]
+        same_name = []
+        if material.kind == Material.Kind.MIXTURE:
+            mixtures = Material.objects.filter(kind=Material.Kind.MIXTURE).exclude(pk=material.pk)
+            # By pk, so a mixture with two of its names is listed once, then in LCR ID order.
+            found = {other.pk: other for name in material.names() for other in materials_named(name, mixtures)}
+            same_name = [{"other": other, "hidden": not other.is_public()} for _, other in sorted(found.items())]
+        same_sequences, same_series = saved.same_reference_data(material)
+        return {
+            "pairs": pairs,
+            "same_name": same_name,
+            "same_reference_sequences": same_sequences,
+            "same_reference_series": same_series,
+        }
 
     def get_urls(self):
         """Django's addresses for waiting saves, with a save's approve/ and reject/ in front, which
