@@ -804,12 +804,15 @@ class CompoundCard:
                 material.add_aliases([name])
                 material.save(update_fields=["aliases"])
                 kept = True
+            # Every save is approved at once, until block A.8 makes a curator's wait for an admin.
             if self.run:
                 self.run.material = material
+                self.run.approved = True
                 self.run.mark_entered(user)
                 self.run.save()
             for block in self.blocks:
                 block.series.material = material
+                block.series.approved = True
                 block.save(user)  # SeriesForm.save(): its transaction is part of this one
         return material, added, kept
 

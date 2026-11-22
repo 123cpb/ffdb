@@ -49,11 +49,16 @@ class Command(BaseCommand):
         # A row can now change two things, its material and its sequence, so each step
         # adds to these counts rather than returning one outcome per row.
         self.counts = Counter()
+        self.added = []  # the primary keys of the materials this run adds
         synonyms = Phase.synonym_map()  # read once, for checking every row's sequence
         # One transaction: if anything goes wrong partway, nothing from this run is kept.
         with transaction.atomic():
             for row in rows:
                 self.import_row(row, synonyms)
+            # A material this run added that has no sequence is in the list for its structure
+            # alone, as LCPROP's are, so it is listed. Its rows had no sequence, or the import
+            # skipped it. Only now: a later row can still give it one.
+            listed = Material.objects.filter(pk__in=self.added, phase_sequences__isnull=True).update(listed=True)
 
         self.stdout.write(f"Rows read: {len(rows)}")
         self.stdout.write(f"Materials added: {self.counts['material added']}")
@@ -64,6 +69,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Sequences added: {self.counts['sequence added']}")
         self.stdout.write(f"Sequences already there: {self.counts['sequence already there']}")
         self.stdout.write(f"Sequences skipped: {self.counts['sequence skipped']}")
+        self.stdout.write(f"Materials listed, with no sequence: {listed}")
 
     def import_row(self, row, synonyms):
         """Import one row: its material, then its reference and sequence if it has one."""
@@ -92,6 +98,7 @@ class Command(BaseCommand):
             if problem:
                 return self.skip(where, name, problem), None
             material = Material.objects.create(name=name, smiles=smiles)
+            self.added.append(material.pk)
             warning = material.stereo_warning()
             if warning:
                 self.stdout.write(f"{where}: {warning}")
@@ -126,7 +133,11 @@ class Command(BaseCommand):
         # Only now, with a sequence to cite it, is the reference added if it's new.
         if kind in (Reference.Kind.ARTICLE, Reference.Kind.PREPRINT):
             identifier = clean_doi(identifier)
-        reference, created = Reference.objects.get_or_create(identifier=identifier, defaults={"kind": kind})
+        # A new reference is public unless it is unpublished work. One already in FFDB keeps
+        # its switch, so an import never undoes an admin hiding it.
+        reference, created = Reference.objects.get_or_create(
+            identifier=identifier, defaults={"kind": kind, "public": kind != Reference.Kind.UNPUBLISHED}
+        )
         self.counts["reference added"] += created  # True counts as 1, False as 0
 
         # The same structure and reference with a different sequence: both are kept. The list
@@ -134,7 +145,10 @@ class Command(BaseCommand):
         summary = PhaseSequence.Direction.SUMMARY
         if reference.phase_sequences.filter(material=material, direction=summary, standard_sequence=standard).exists():
             return "sequence already there"
-        PhaseSequence.objects.create(material=material, reference=reference, direction=summary, sequence=sequence)
+        # Approved, as an admin's own saves are: only an admin runs an import.
+        PhaseSequence.objects.create(
+            material=material, reference=reference, direction=summary, sequence=sequence, approved=True
+        )
         return "sequence added"
 
     def skip(self, where, name, reason, what="skipped"):

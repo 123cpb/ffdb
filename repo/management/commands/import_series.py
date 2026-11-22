@@ -120,7 +120,10 @@ class Command(BaseCommand):
             # A savepoint: if a rule refuses the series or any point, everything this row
             # saved, its reference included, is undone, and the rest of the import carries on.
             with transaction.atomic():
-                reference, created = Reference.objects.get_or_create(identifier=identifier, defaults={"kind": kind})
+                # As in import_materials: a new reference is public unless it is unpublished work.
+                reference, created = Reference.objects.get_or_create(
+                    identifier=identifier, defaults={"kind": kind, "public": kind != Reference.Kind.UNPUBLISHED}
+                )
                 series.reference = reference
                 series.full_clean()
                 series.save()
@@ -175,6 +178,7 @@ class Command(BaseCommand):
             material=material, property=prop, variable=variable, kind=row["kind"], method=row["method"],
             conditions=conditions, direction=row["direction"], taken_from=row["taken_from"],
             location=row["location"], digitised=YES_NO[row["digitised"]], notes=row["notes"],
+            approved=True,  # as in import_materials: only an admin runs an import
         )
         return series, self.read_points(row), identifier, kind
 

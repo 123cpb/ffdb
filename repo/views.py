@@ -611,7 +611,8 @@ def add_data(request):
         if reference:
             messages.info(request, f"Already in FFDB: {reference.label}")
         else:
-            reference = Reference(kind=kind, identifier=identifier)
+            # Public unless it is unpublished work, which the database refuses to make public.
+            reference = Reference(kind=kind, identifier=identifier, public=kind != Reference.Kind.UNPUBLISHED)
             reference.mark_entered(request.user)
             found = fill_from_crossref(reference) if reference.has_doi() else ""
             reference.save()

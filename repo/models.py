@@ -126,6 +126,12 @@ class Material(models.Model):
         "with their fractions if known.",
     )
     notes = models.TextField(blank=True)
+    # Off unless something turns it on, so a material nobody chose to show stays hidden. Not
+    # the composition status above, whose Listed means every component is given.
+    listed = models.BooleanField(
+        default=False,
+        help_text="Shown even with no public sequence or value, e.g. a structure from LCPROP's list.",
+    )
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -605,9 +611,22 @@ class Reference(Entered):
         "https://doi.org/10.5518/1234. Shown on the reference's page.",
     )
     notes = models.TextField(blank=True)
+    # Off unless something turns it on, so a reference nobody said was published stays hidden.
+    public = models.BooleanField(
+        default=False, help_text="The work is published. An unpublished group result can't be public."
+    )
 
     class Meta:
         ordering = ["kind", "identifier"]
+        constraints = [
+            # A CheckConstraint, so PostgreSQL refuses it however the row is written. The
+            # admin's form checks it too, and shows the message.
+            models.CheckConstraint(
+                condition=~Q(kind="unpublished") | Q(public=False),
+                name="unpublished_is_not_public",
+                violation_error_message="An unpublished group result can't be public.",
+            ),
+        ]
 
     def __str__(self):
         return self.label
@@ -706,6 +725,8 @@ class PhaseSequence(Entered):
         help_text="Where the reference gives it, so readers know how far down a phase was looked for.",
     )
     notes = models.CharField(max_length=300, blank=True)
+    # Off unless something turns it on, so a sequence nobody checked stays hidden.
+    approved = models.BooleanField(default=False, help_text="An admin has checked it.")
 
     # Worked out from the sequence on every save (see save()), never typed in.
     standard_sequence = models.CharField(max_length=300, blank=True, editable=False)
@@ -1060,6 +1081,8 @@ class Series(Entered):
     )
     digitised = models.BooleanField("digitised from figure", default=False)
     notes = models.CharField(max_length=300, blank=True)
+    # Off unless something turns it on, so a series nobody checked stays hidden.
+    approved = models.BooleanField(default=False, help_text="An admin has checked it.")
 
     class Meta:
         ordering = ["property__sort_order", "reference__identifier", "id"]

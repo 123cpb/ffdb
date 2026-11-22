@@ -50,12 +50,28 @@ class EnteredAdmin(admin.ModelAdmin):
         formset.save_m2m()
 
 
-class PhaseSequenceInline(admin.TabularInline):
+class NewRowsTicked:
+    """For an admin page or inline whose new rows start with some switches on: the fields named
+    in new_rows_ticked, whose model default is off. Django builds a new row's form without a
+    row to read, so the box shows this initial value, ticked; a saved row's form shows the row's
+    own. An admin can untick it before saving."""
+
+    new_rows_ticked = []
+
+    def formfield_for_dbfield(self, db_field, request, **kwargs):
+        if db_field.name in self.new_rows_ticked:
+            kwargs["initial"] = True
+        return super().formfield_for_dbfield(db_field, request, **kwargs)
+
+
+class PhaseSequenceInline(NewRowsTicked, admin.TabularInline):
     """Phase sequences as rows on another admin page. The worked-out fields are shown,
-    not edited: they are filled in from the sequence when the row is saved."""
+    not edited: they are filled in from the sequence when the row is saved. A sequence added
+    here is approved unless unticked: an admin's own rows need no check."""
 
     model = PhaseSequence
     extra = 1
+    new_rows_ticked = ["approved"]
     readonly_fields = ["standard_sequence", "phase_list", "t_clearing_c", "t_melting_c", *ENTERED]
     # How the sequence was observed, after the sequence itself in each row.
     observed = ["direction", "sequence", "rate_k_per_min", "method", "lowest_temperature_c", "notes"]
@@ -70,14 +86,14 @@ class PhaseSequenceInline(admin.TabularInline):
 class MaterialSequenceInline(PhaseSequenceInline):
     """On a material's page: each row names its reference."""
 
-    fields = ["reference", *PhaseSequenceInline.observed, *PhaseSequenceInline.readonly_fields]
+    fields = ["reference", *PhaseSequenceInline.observed, "approved", *PhaseSequenceInline.readonly_fields]
     autocomplete_fields = ["reference"]
 
 
 class ReferenceSequenceInline(PhaseSequenceInline):
     """On a reference's page: each row names its material."""
 
-    fields = ["material", *PhaseSequenceInline.observed, *PhaseSequenceInline.readonly_fields]
+    fields = ["material", *PhaseSequenceInline.observed, "approved", *PhaseSequenceInline.readonly_fields]
     autocomplete_fields = ["material"]
 
 
@@ -122,14 +138,14 @@ class ComponentInline(admin.TabularInline):
 
 @admin.register(Material)
 class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't record it
-    list_display = ["accession", "name", "kind"]
-    list_filter = ["kind"]
+    list_display = ["accession", "name", "kind", "listed"]
+    list_filter = ["kind", "listed"]
     # Also what the autocomplete box searches when a sequence's material, or a mixture's
     # component, is chosen.
     search_fields = ["name", "aliases", "inchikey"]
     fields = [
         "kind", "name", "aliases", "smiles", "structure", "canonical_smiles", "inchikey",
-        "composition_status", "other_components", "notes",
+        "composition_status", "other_components", "notes", "listed",
     ]
     readonly_fields = ["structure", "canonical_smiles", "inchikey"]
     inlines = [ComponentInline, MaterialSequenceInline]
@@ -272,9 +288,13 @@ class PhaseAdmin(admin.ModelAdmin):
 
 
 @admin.register(Reference)
-class ReferenceAdmin(EnteredAdmin):
-    list_display = ["label", "kind", "identifier", *ENTERED]
-    list_filter = ENTERED_FILTERS
+class ReferenceAdmin(NewRowsTicked, EnteredAdmin):
+    """A reference added here is public unless unticked, as on Add data. Ticked for unpublished
+    work, the form is refused with the database's message (Reference's constraint)."""
+
+    list_display = ["label", "kind", "identifier", "public", *ENTERED]
+    list_filter = ["public", *ENTERED_FILTERS]
+    new_rows_ticked = ["public"]
     # Also what the autocomplete box searches when a sequence's reference is chosen.
     search_fields = ["identifier", "first_author", "title"]
     readonly_fields = ENTERED
@@ -325,9 +345,12 @@ class PointInline(admin.TabularInline):
 
 
 @admin.register(Series)
-class SeriesAdmin(EnteredAdmin):
-    list_display = ["material", "property", "variable", "kind", "reference", "point_count", *ENTERED]
-    list_filter = ["property", "kind", "variable", *ENTERED_FILTERS]
+class SeriesAdmin(NewRowsTicked, EnteredAdmin):
+    """A series added here is approved unless unticked, as a sequence is (PhaseSequenceInline)."""
+
+    list_display = ["material", "property", "variable", "kind", "reference", "point_count", "approved", *ENTERED]
+    list_filter = ["property", "kind", "variable", "approved", *ENTERED_FILTERS]
+    new_rows_ticked = ["approved"]
     # Fetch these with the series, in the same query, rather than one query per row.
     list_select_related = ["material", "property", "variable", "reference", "entered_by"]
     search_fields = ["material__name", "material__aliases", "reference__identifier", "reference__first_author", "method"]
