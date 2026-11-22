@@ -1,11 +1,12 @@
 {% extends "admin/change_form.html" %}
+{% load repo_tags %}
 {% comment %}
 A material's admin page, which Django finds by this file's path: its own page with a link to
-the merge page (MaterialAdmin.merge_view) among the buttons at the top, for users who may
-delete materials. Django shows those buttons only on a saved material's page.
+the merge page (MaterialAdmin.merge_view) among the buttons at the top, for admins
+(models.is_admin()). Django shows those buttons only on a saved material's page.
 {% endcomment %}
 {% block object-tools-items %}
-{% if perms.repo.delete_material %}
+{% if user|is_admin %}
 <li><a href="{% url 'admin:repo_material_merge' original.pk %}">Merge into another material</a></li>
 {% endif %}
 {{ block.super }}

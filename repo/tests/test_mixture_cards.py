@@ -9,7 +9,7 @@ from django.urls import reverse
 
 from repo.forms import CardMaterialForm, MixtureForm, read_components
 from repo.models import Material, PhaseSequence, Series
-from repo.tests.test_add_data import FIVE_CB
+from repo.tests.test_add_data import FIVE_CB, WAITING
 from repo.tests.test_compound_card import FIVE_CB_HEATING, visible
 from repo.tests.test_several_cards import DIO_HEATING, CardsTestCase
 from repo.tests.test_values import DIO, RM734
@@ -128,7 +128,7 @@ class SaveTests(MixtureCardTestCase):
         )
         self.assertEqual(
             self.messages(response),
-            [f"Added F7 as {f7.accession}, with a phase sequence.", f"Added 5CB as {five_cb.accession}, with a phase sequence."],
+            [f"Added F7 as {f7.accession}, with a phase sequence.", f"Added 5CB as {five_cb.accession}, with a phase sequence.", WAITING],
         )
 
     def test_a_mixture_not_disclosed_has_no_components(self):
@@ -142,6 +142,7 @@ class SaveTests(MixtureCardTestCase):
 
     def test_a_ps_value_for_a_mixture_in_ffdb_by_its_lcr_id_shows_on_the_ps_page_under_its_name(self):
         f7 = Material.objects.create(kind=MIXTURE, name="F7", composition_status=NOT_DISCLOSED)
+        self.client.force_login(self.admin)  # an admin's save is approved at once, so the page shows it
 
         self.send_cards({"blocks": [PS_VALUE], "material": f7.accession}, button="save")
 
@@ -268,7 +269,7 @@ class SameNameTests(MixtureCardTestCase):
         self.assertEqual(self.mixtures(), [self.old_f7])
         self.assertEqual(self.old_f7.components.count(), 0)  # what was typed for a new one isn't saved
         self.assertEqual(PhaseSequence.objects.get().material, self.old_f7)
-        self.assertEqual(self.messages(response), [f"Saved a phase sequence for {self.old_f7}."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence for {self.old_f7}.", WAITING])
 
     def test_an_alias_still_asks(self):
         Material.objects.filter(pk=self.old_f7.pk).update(aliases="FMix-7")

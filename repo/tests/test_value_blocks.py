@@ -9,7 +9,7 @@ from django.urls import reverse
 
 from repo.forms import MAX_CURVE_POINTS, NAMED_PROBLEM_LINES, ValueBlockForm, condition_value, read_points
 from repo.models import Measurement, PhaseSequence, Property, Series, must_state
-from repo.tests.test_add_data import AddDataTestCase
+from repo.tests.test_add_data import WAITING, AddDataTestCase
 from repo.tests.test_compound_card import RM734_COOLING, CardTestCase
 
 EXACT, UPPER, LOWER = Measurement.Qualifier.EXACT, Measurement.Qualifier.UPPER, Measurement.Qualifier.LOWER
@@ -172,13 +172,14 @@ class BlockBoxesTests(CardTestCase):
 
 class BlockSaveTests(CardTestCase):
     def test_save_adds_a_single_value_and_a_curve_and_rm734s_page_shows_them(self):
+        self.client.force_login(self.admin)  # an admin's save is approved at once, so the page shows it
         response = self.send(None, "save", True, blocks=[DELTA_EPSILON, PS_BLOCK], material="RM734")
 
         self.assertEqual(self.messages(response), [f"Saved 2 blocks of values for {self.rm734.accession} RM734."])
         value = Series.objects.get(property__code="dielectric-anisotropy")
         self.assertEqual(
             (value.material, value.reference, value.kind, value.direction, value.conditions, value.entered_by),
-            (self.rm734, self.article, "extrapolated", Series.Direction.NOT_APPLICABLE, {"frequency_Hz": 1000}, self.curator),
+            (self.rm734, self.article, "extrapolated", Series.Direction.NOT_APPLICABLE, {"frequency_Hz": 1000}, self.admin),
         )
         self.assertEqual([(p.temperature_c, p.value, p.x) for p in value.points.all()], [(25, 5.2, None)])
         curve = Series.objects.get(property__code="ps")
@@ -191,7 +192,7 @@ class BlockSaveTests(CardTestCase):
     def test_a_run_and_a_block_save_together_and_an_empty_block_is_skipped(self):
         response = self.send(RM734_COOLING, "save", True, blocks=[LENGTH], material="RM734")
 
-        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734.accession} RM734."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734.accession} RM734.", WAITING])
         point = Measurement.objects.get()
         self.assertEqual((point.series.variable.code, point.value, point.temperature_c, point.x), ("none", 2.4, None, None))
         self.assertEqual(PhaseSequence.objects.get().material, self.rm734)

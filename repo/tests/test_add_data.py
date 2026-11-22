@@ -15,17 +15,21 @@ from repo.tests.test_values import DIO, RM734, add
 ADD = reverse("repo:add")
 LOGIN = reverse("login")
 FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
+# The last message after a curator's Save, which waits for an admin's check.
+WAITING = "Your save is waiting for an admin's check: none of it is public until an admin approves it."
 
 
 @override_settings(CROSSREF_MAILTO="ffdb-tests@example.org")
 class AddDataTestCase(TestCase):
-    """A curator, logged in, and one published reference of each kind already in FFDB, as Add
-    data would have added them: no materials or data yet. Crossref is replaced for every test."""
+    """A curator, logged in, an admin, whose saves don't wait, and one published reference of each
+    kind already in FFDB, as Add data would have added them: no materials or data yet. Crossref is
+    replaced for every test."""
 
     @classmethod
     def setUpTestData(cls):
         cls.curator = User.objects.create_user("curator", password="a-test-password")
         cls.curator.groups.add(Group.objects.get(name="Curators"))
+        cls.admin = User.objects.create_superuser("admin", password="a-test-password")
         cls.article = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1002/chem.201702742",
             first_author="Mandle", year=2017, venue="Chem. Eur. J.", abstract="An abstract only the admin shows.",
@@ -273,5 +277,5 @@ class ReferenceAddPageTests(AddDataTestCase):
 
         self.assertNotContains(self.client.get(self.add_page(self.article)), abstract)
         self.assertNotContains(self.client.get(reverse("repo:reference", args=[self.article.pk])), abstract)
-        self.client.force_login(User.objects.create_superuser("admin"))
+        self.client.force_login(self.admin)
         self.assertContains(self.client.get(reverse("admin:repo_reference_change", args=[self.article.pk])), abstract)

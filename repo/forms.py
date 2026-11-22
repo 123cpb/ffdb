@@ -24,10 +24,12 @@ from .models import (
     RetiredID,
     Series,
     Variable,
+    WaitingSave,
     accession,
     clean_doi,
     clean_patent_number,
     group_properties,
+    is_admin,
     materials_named,
     name_key,
     pk_from_accession,
@@ -580,7 +582,7 @@ class CardMaterialForm(forms.Form):
     is filled in says which. A SMILES whose structure is already in FFDB finds that material, as
     in the compound table. The label, as the reference prints it, names a new compound or
     mixture, and is kept as an alias of a material in FFDB unless Material.alias_problem() says
-    why not.
+    why not, or the save waits or its reference isn't public (CompoundCard.save()).
 
     A new mixture is read by MixtureForm, in mixture, with its rules and messages. Its boxes have the card's prefix too, so its name box is the card's label box. When
     FFDB has mixtures of that name, it asks whether this is one of them, and "Yes" finds that one.
@@ -724,7 +726,7 @@ class CompoundCard:
     checked or saved."""
 
     def __init__(self, data, reference, index=0):
-        self.index, self.prefix = index, f"card-{index}"
+        self.reference, self.index, self.prefix = reference, index, f"card-{index}"
         # cards.js puts the number in the copy too, as it can't be worked out here.
         self.number = "__cardnumber__" if index == TEMPLATE_INDEX else index + 1
         self.removed = data is not None and data.get(f"{self.prefix}-removed") == "1"
@@ -775,37 +777,52 @@ class CompoundCard:
             return form.found.pk
         return ("mixture", name_key(form.new.name)) if form.is_mixture else form.new.inchikey
 
-    def save(self, user):
+    def save(self, user, waiting_save=None):
         """Add everything on the card in one transaction, so a failure partway keeps none of it:
-        a new compound, named by its label, a new mixture with its components, or the label as an
-        alias of the material in FFDB, and then its phase sequence and each block of values, recorded as
-        entered by user. Inside the page's transaction (CompoundCards.save()) it is part of that
-        one. Call it only on a valid card. Returns (the material, whether it was added, whether
-        the label was kept as an alias)."""
+        a new compound, named by its label, or a new mixture with its components, and then its
+        phase sequence and each block of values, recorded as entered by user. Inside the page's
+        transaction (CompoundCards.save()) it is part of that one. Call it only on a valid card.
+
+        An admin's save passes no waiting_save: its rows are approved, and the label of a
+        material in FFDB is kept as an alias if the reference is public. A curator's passes the
+        WaitingSave its rows wait in, unapproved, which holds the label instead, not yet saved.
+        Returns (the material, whether it was added, what became of the label): "kept" as an
+        alias, "held" on the waiting save, "not public" when the reference isn't, or "" when
+        there was no label to keep."""
         form = self.material_form
         name = form.cleaned_data["name"]
         with transaction.atomic():
-            material, added, kept = form.found or form.new, form.found is None, False
+            material, added = form.found or form.new, form.found is None
             if form.is_mixture:
                 # MixtureForm's save: the mixture and its components, or the one in FFDB it is.
                 material, added = form.mixture.save()
             elif added:
                 material.save()
-            elif name and not form.alias_problem:
-                material.add_aliases([name])
-                material.save(update_fields=["aliases"])
-                kept = True
-            # Every save is approved at once, until block A.8 makes a curator's wait for an admin.
+            approved = waiting_save is None
             if self.run:
                 self.run.material = material
-                self.run.approved = True
+                self.run.approved, self.run.waiting_save = approved, waiting_save
                 self.run.mark_entered(user)
                 self.run.save()
             for block in self.blocks:
                 block.series.material = material
-                block.series.approved = True
+                block.series.approved, block.series.waiting_save = approved, waiting_save
                 block.save(user)  # SeriesForm.save(): its transaction is part of this one
-        return material, added, kept
+            label = ""
+            # A label for a material in FFDB that alias_problem() would keep. A mixture's never is.
+            if not added and not form.is_mixture and name and not form.alias_problem:
+                if waiting_save is not None:
+                    waiting_save.labels[str(material.pk)] = name
+                    label = "held"
+                # Asked after the rows are saved: a reference with no public data until now is
+                # public with them. Then so is the material, so its alias would be.
+                elif self.reference.is_public():
+                    material.add_aliases([name])
+                    material.save(update_fields=["aliases"])
+                    label = "kept"
+                else:
+                    label = "not public"
+        return material, added, label
 
 
 class CompoundCards:
@@ -832,6 +849,7 @@ class CompoundCards:
         self.total = max(total, 1)
         self.cards = [CompoundCard(data, reference, index) for index in range(self.total)]
         self.filled = []  # set by is_valid()
+        self.waiting_save = None  # set by save()
 
     def template_card(self):
         """The empty card cards.js copies to add one, for the page's <template>."""
@@ -876,9 +894,19 @@ class CompoundCards:
     def save(self, user):
         """Add every card filled in, in one transaction, so a problem on any card keeps all of
         them out of FFDB. Call it only once is_valid() is true. Returns each card with what its
-        save() returns: [(card, material, added, kept), ...]."""
+        save() returns: [(card, material, added, label), ...].
+
+        An admin's save is approved at once. Anyone else's waits for an admin's check: it makes
+        a WaitingSave, from this reference, which every card's rows wait in and which holds
+        their labels. waiting_save is that save, or None for an admin's."""
         with transaction.atomic():
-            return [(card, *card.save(user)) for card in self.filled]
+            self.waiting_save = None
+            if not is_admin(user):
+                self.waiting_save = WaitingSave.objects.create(reference=self.reference, saved_by=user)
+            saved = [(card, *card.save(user, self.waiting_save)) for card in self.filled]
+            if self.waiting_save is not None and self.waiting_save.labels:
+                self.waiting_save.save(update_fields=["labels"])
+            return saved
 
 
 def property_choices(field):

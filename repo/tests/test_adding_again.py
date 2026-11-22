@@ -3,7 +3,6 @@ added or with its SMILES changed, and in the compound table on Add data. Otherwi
 structure would have two IDs. The import skips it too (test_import.py). A material that was
 never public is the exception: it leaves no trace, so its structure can be added again."""
 
-from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 
@@ -21,8 +20,7 @@ class AddingAgainTests(CompoundTableTestCase):
 
     @classmethod
     def setUpTestData(cls):
-        super().setUpTestData()
-        cls.admin = User.objects.create_superuser("admin", password="pw")
+        super().setUpTestData()  # which gives cls.admin
         cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True)
         cls.retired_number = cb5.pk  # before retiring, which takes its pk
         cls.retired = accession(cls.retired_number)

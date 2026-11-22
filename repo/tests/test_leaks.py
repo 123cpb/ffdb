@@ -12,7 +12,7 @@ from django.test import TestCase
 from django.urls import resolve, reverse
 
 from repo.models import (
-    Material, MixtureComponent, PhaseSequence, Property, Reference, RetiredID, Series, Variable, accession,
+    Material, MixtureComponent, PhaseSequence, Property, Reference, RetiredID, Series, Variable, WaitingSave, accession,
 )
 from repo.urls import urlpatterns
 from repo.tests.test_import import ARTICLE, FIVE_CB
@@ -45,7 +45,8 @@ class HiddenData(TestCase):
     """RM734, public, with hidden data too; a compound with only waiting data; one whose only
     data is under unpublished work; a hidden mixture whose component, RM734, is public; and a
     public mixture, one of whose components is hidden. RM734's waiting series is a Ps value,
-    a property no public series has. Two hidden references: the unpublished work, and a
+    a property no public series has. It and RM734's waiting sequence from the paper are a curator's
+    waiting save, which holds a label for RM734. Two hidden references: the unpublished work, and a
     published article whose only data, a sequence of RM734's, waits. Then three retired IDs: a hidden
     compound deleted, a hidden compound merged into RM734, and a listed mixture merged into
     the hidden mixture, whose address must not lead there."""
@@ -67,11 +68,15 @@ class HiddenData(TestCase):
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
         cls.public_sequence = cls.sequence(cls.rm734, cls.paper, RM734_SUMMARY)
         cls.public_series = cls.series(cls.rm734, cls.paper, method="current reversal")
+        # A label held until the save is approved: it mustn't show among RM734's names before then.
+        saved = WaitingSave.objects.create(reference=cls.paper, labels={str(cls.rm734.pk): f"{MARKER} held label"})
         # SmA: a phase that only the waiting sequences have.
-        cls.sequence(cls.rm734, cls.paper, "K 80 SmA 120 I", approved=False, method=f"{MARKER} waiting sequence")
+        cls.sequence(
+            cls.rm734, cls.paper, "K 80 SmA 120 I", approved=False, method=f"{MARKER} waiting sequence", waiting_save=saved
+        )
         cls.sequence(cls.rm734, cls.waiting_paper, "K 80 SmA 120 I", approved=False)
         cls.waiting_series = cls.series(
-            cls.rm734, cls.paper, approved=False, code="ps", method=f"{MARKER} waiting series"
+            cls.rm734, cls.paper, approved=False, code="ps", method=f"{MARKER} waiting series", waiting_save=saved
         )
         cls.unpublished_series = cls.series(cls.rm734, cls.unpublished, method=f"{MARKER} unpublished series")
 

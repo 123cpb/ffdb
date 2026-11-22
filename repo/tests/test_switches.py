@@ -113,7 +113,8 @@ class AddDataTests(CardTestCase):
         self.assertTrue(Reference.objects.get(identifier=PCCP).published)
         self.assertFalse(Reference.objects.get(kind=Reference.Kind.UNPUBLISHED).published)
 
-    def test_a_saved_cards_sequence_and_values_are_approved(self):
+    def test_an_admins_saved_cards_sequence_and_values_are_approved(self):
+        self.client.force_login(self.admin)  # a curator's wait for an admin's check (test_waiting_saves)
         self.send(RM734_COOLING, "save", blocks=[DELTA_EPSILON], material=self.rm734.accession)
 
         self.assertTrue(PhaseSequence.objects.get().approved)

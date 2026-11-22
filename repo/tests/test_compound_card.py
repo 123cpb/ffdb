@@ -13,7 +13,7 @@ from django.urls import reverse
 from repo import chem
 from repo.forms import RUN_PHASES, CompoundCards, RunForm, steps_text
 from repo.models import Material, PhaseSequence, RetiredID
-from repo.tests.test_add_data import FIVE_CB, LOGIN, AddDataTestCase
+from repo.tests.test_add_data import FIVE_CB, LOGIN, WAITING, AddDataTestCase
 from repo.tests.test_values import RM734
 
 
@@ -213,6 +213,7 @@ class CheckTests(CardTestCase):
 
 class SaveTests(CardTestCase):
     def test_save_adds_rm734s_cooling_run_and_its_page_shows_it(self):
+        self.client.force_login(self.admin)  # an admin's save is approved at once, so the page shows it
         response = self.send(RM734_COOLING, "save", follow=True, material=self.rm734.accession)
 
         self.assertRedirects(response, self.add_page(self.article))
@@ -222,7 +223,7 @@ class SaveTests(CardTestCase):
             (run.material, run.reference, run.direction, run.sequence, run.standard_sequence, run.rate_k_per_min,
              run.method, run.entered_by),
             (self.rm734, self.article, "cooling", "Iso 187.9 N 132.7 NF 70 Cr", "Iso 187.9 N 132.7 NF 70 Cr", 5, "DSC",
-             self.curator),
+             self.admin),
         )
         page = self.client.get(reverse("repo:material", args=[self.rm734.pk]))
         self.assertContains(page, '<span class="ribbon-row__run">Cooling, 5 K/min, DSC</span>', html=True)
@@ -234,7 +235,7 @@ class SaveTests(CardTestCase):
 
         five_cb = Material.objects.get(name="5CB")
         self.assertEqual(five_cb.smiles, FIVE_CB)
-        self.assertEqual(self.messages(response), [f"Added 5CB as {five_cb.accession}, with a phase sequence."])
+        self.assertEqual(self.messages(response), [f"Added 5CB as {five_cb.accession}, with a phase sequence.", WAITING])
         run = five_cb.phase_sequences.get()
         self.assertEqual((run.standard_sequence, run.lowest_temperature_c), ("Iso 35 N", 0))
 
@@ -257,6 +258,7 @@ class SaveTests(CardTestCase):
         self.assertEqual((run.standard_sequence, run.t_melting_c), ("Cr 139.8 NF 132.7 N 187.9 Iso", 139.8))
 
     def test_the_label_is_kept_as_an_alias_of_a_material_in_ffdb(self):
+        self.client.force_login(self.admin)  # a curator's label waits (test_waiting_saves)
         response = self.send(RM734_COOLING, "save", follow=True, material="RM734", name="MB-1")
 
         self.rm734.refresh_from_db()

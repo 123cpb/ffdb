@@ -1,7 +1,8 @@
 {% extends "admin/change_form.html" %}
+{% load repo_tags %}
 {% comment %}
 A retired ID's admin page, which Django finds by this file's path: its own page with a
-Restore button under it, for users who may delete materials (RetiredIDAdmin.restore_view).
+Restore button under it, for admins (models.is_admin(), RetiredIDAdmin.restore_view).
 The button has a form of its own, after the page's form, which saves the reason: one form
 can't be inside another. A merged ID has no Restore: its rows were moved, not deleted, so
 they aren't in the snapshot (RetiredID.restore()).
@@ -10,7 +11,7 @@ they aren't in the snapshot (RetiredID.restore()).
 {{ block.super }}
 {% if original.merged_into is not None %}
 <p>{{ original.accession }} was merged into another material, so Restore doesn't apply: its sequences and values are there now.</p>
-{% elif perms.repo.delete_material %}
+{% elif user|is_admin %}
 <form method="post" action="{% url 'admin:repo_retiredid_restore' original.pk %}">
   {% csrf_token %}
   <p>Restore puts the material back as {{ original.accession }}, with everything deleted with it, and removes this record.</p>

@@ -81,6 +81,14 @@ PREPRINT_DOIS = ("10.48550/arxiv.", "10.26434/chemrxiv")
 ROUNDING_ALLOWANCE = 0.5
 
 
+def is_admin(user):
+    """Whether user is an admin, said here once and nowhere else: one who may delete materials.
+    Admins merge and restore materials, make references public or hide them, and their saves on
+    Add data are approved at once, while a curator's wait for an admin's check. Superusers have
+    every permission, so they are admins. Templates ask with the is_admin filter (repo_tags)."""
+    return user.has_perm("repo.delete_material")
+
+
 # What is public, said here once and nowhere else: every public page, search, chart and
 # download starts from one of these methods, e.g. Material.objects.public(). Each model's
 # objects is made from its query set below (as_manager()), so the method is there on
@@ -757,6 +765,10 @@ class Reference(Entered):
         elif self.kind == self.Kind.PATENT:
             self.identifier = clean_patent_number(self.identifier)
 
+    def is_public(self):
+        """Whether this reference is public now, by the rule (ReferenceQuerySet.public())."""
+        return Reference.objects.public().filter(pk=self.pk).exists()
+
     def materials(self):
         """The materials this reference gives sequences or values for, in LCR ID order. Each |
         joins the two ways a material links to a reference, so a material with both a sequence
@@ -766,6 +778,35 @@ class Reference(Entered):
             .distinct()
             .order_by("pk")
         )
+
+
+class WaitingSave(models.Model):
+    """A curator's Save on Add data, waiting for an admin's check: who saved it, when, and from
+    which reference. The phase sequences and series it added point to it (their waiting_save)
+    and are saved unapproved, so they are hidden. It also holds the labels its cards gave
+    materials already in FFDB, which become aliases only when it is approved. Approving or
+    rejecting it deletes it, so every save in this table is waiting. An admin's Save is
+    approved at once and makes none."""
+
+    # CASCADE: the save's rows already stop the reference being deleted (PROTECT), so this
+    # deletes only a save with no rows left.
+    reference = models.ForeignKey(Reference, on_delete=models.CASCADE, related_name="waiting_saves")
+    # SET_NULL, as for Entered.entered_by: deleting the account keeps the save.
+    saved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    # auto_now_add: a waiting save is only ever made by Save, never by an import.
+    saved_at = models.DateTimeField(auto_now_add=True)
+    # {"12": "MB-1"}: an LCR number, as text because JSON's keys are, and the label to keep as
+    # one of that material's aliases. By number, not a ForeignKey: retiring and restoring the
+    # material keeps it.
+    labels = models.JSONField(
+        default=dict, blank=True,
+        help_text="The labels to keep as aliases when it is approved, by the material's LCR number.",
+    )
+
+    def __str__(self):
+        return f"Save {self.pk} from {self.reference}"
 
 
 class PhaseSequence(Entered):
@@ -807,6 +848,10 @@ class PhaseSequence(Entered):
     notes = models.CharField(max_length=300, blank=True)
     # Off unless something turns it on, so a sequence nobody checked stays hidden.
     approved = models.BooleanField(default=False, help_text="An admin has checked it.")
+    # The curator's save it waits in. SET_NULL: approving deletes the save and keeps the sequence.
+    waiting_save = models.ForeignKey(
+        WaitingSave, on_delete=models.SET_NULL, null=True, blank=True, editable=False, related_name="phase_sequences"
+    )
 
     # Worked out from the sequence on every save (see save()), never typed in.
     standard_sequence = models.CharField(max_length=300, blank=True, editable=False)
@@ -1165,6 +1210,10 @@ class Series(Entered):
     notes = models.CharField(max_length=300, blank=True)
     # Off unless something turns it on, so a series nobody checked stays hidden.
     approved = models.BooleanField(default=False, help_text="An admin has checked it.")
+    # As for a sequence: the curator's save it waits in.
+    waiting_save = models.ForeignKey(
+        WaitingSave, on_delete=models.SET_NULL, null=True, blank=True, editable=False, related_name="series"
+    )
 
     objects = SeriesQuerySet.as_manager()
 
@@ -1456,8 +1505,10 @@ class RetiredID(models.Model):
             raise ValidationError(f"the snapshot no longer fits FFDB's tables ({exc}).")
         missing = missing_links(rows)
         # A deleted account doesn't stop it: entered by goes back blank, as SET_NULL would
-        # have left it had the material stayed (see Entered.entered_by).
+        # have left it had the material stayed (see Entered.entered_by). Nor does a waiting
+        # save that has gone, approved or rejected since: the link goes back blank too.
         gone_users = missing.pop(get_user_model(), set())
+        gone_saves = missing.pop(WaitingSave, set())
         problems = []
         if self.inchikey:  # a compound's: a mixture's is blank
             clash = Material.objects.filter(inchikey=self.inchikey).first()
@@ -1480,6 +1531,8 @@ class RetiredID(models.Model):
             for row in rows:  # each parent before its children, as snapshot() wrote them
                 if isinstance(row.object, Entered) and row.object.entered_by_id in gone_users:
                     row.object.entered_by = None
+                if isinstance(row.object, (PhaseSequence, Series)) and row.object.waiting_save_id in gone_saves:
+                    row.object.waiting_save = None
                 # A raw save: the model's own save() isn't run, so nothing is worked out again
                 # and each row comes back as it was. force_insert: add the row, never change
                 # one that is already there.

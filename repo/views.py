@@ -724,6 +724,8 @@ def add_from_reference(request, pk):
         "cards_problems": cards_problems,
         "materials": reference.materials(),
         "cards": cards,
+        # This curator's saves from the reference still waiting for an admin's check. An admin's never wait.
+        "waiting": reference.waiting_saves.filter(saved_by=request.user).count(),
         **reference_tables(reference.phase_sequences.all(), reference.series.all()),
     }
     return render(request, "repo/add_from_reference.html", context)
@@ -900,10 +902,11 @@ def check_block_boxes(request, pk):
     return render(request, "repo/_block_boxes.html", {"form": form})
 
 
-def card_saved(request, card, material, added, kept):
+def card_saved(request, card, material, added, label):
     """Say what Save added from one compound card, leaving out a part the card didn't have:
     "Added 10a as LCR-00512, with a phase sequence and 2 blocks of values." The arguments are
-    what CompoundCards.save() gives for the card."""
+    what CompoundCards.save() gives for the card: label says what became of a material in FFDB's
+    label (CompoundCard.save())."""
     parts = []
     if card.run:
         parts.append("a phase sequence")
@@ -917,7 +920,12 @@ def card_saved(request, card, material, added, kept):
         if warning:
             messages.warning(request, warning)
     else:
-        alias = f" {card.material_form.cleaned_data['name']} is kept as one of its aliases." if kept else ""
+        name = card.material_form.cleaned_data["name"]
+        alias = {
+            "kept": f" {name} is kept as one of its aliases.",
+            "held": f" {name} is held with the save, to be kept as one of its aliases if an admin approves it.",
+            "not public": f" {name} isn't kept as one of its aliases, because the reference isn't public.",
+        }.get(label, "")
         messages.success(request, f"Saved {saved} for {material}.{alias}")
 
 
@@ -931,12 +939,16 @@ def add_compound(request, pk):
     ribbon, as the material's page will show them, and each problem on its card, saving nothing.
     Save (a POST with save in it) reads them again and adds every card, in one transaction, or
     nothing while any card has a problem, and sends the curator back to the Add data page with a
-    redirect, so reloading can't save twice. A number with no reference gives a 404."""
+    redirect, so reloading can't save twice. A curator's save waits for an admin's check, and the
+    last message says so; an admin's is approved at once (CompoundCards.save()). A number with no
+    reference gives a 404."""
     reference = get_object_or_404(Reference, pk=pk)
     cards = CompoundCards(request.POST if request.method == "POST" else None, reference)
     if cards.is_valid() and "save" in request.POST:
         for saved in cards.save(request.user):
             card_saved(request, *saved)
+        if cards.waiting_save is not None:
+            messages.info(request, "Your save is waiting for an admin's check: none of it is public until an admin approves it.")
         return redirect("repo:add_from_reference", reference.pk)
     show_runs(cards.cards)
     context = {"nav": "add", "reference": reference, "cards": cards}

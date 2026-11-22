@@ -16,7 +16,7 @@ from . import chem
 from .forms import MergeForm
 from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
-    RetiredID, Series, Variable, accession,
+    RetiredID, Series, Variable, accession, is_admin,
 )
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
@@ -207,8 +207,8 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
         """Merge a duplicate into another material (Material.merge_into()). The ID box is sent
         with GET, which changes nothing, so the page can show what will move first. Its Merge
         button posts to the same address, with the ID, and the merge is checked again then.
-        Only users who may delete materials may merge them."""
-        if not request.user.has_perm("repo.delete_material"):
+        Only admins may merge them (is_admin())."""
+        if not is_admin(request.user):
             raise PermissionDenied
         duplicate = get_object_or_404(Material, pk=pk)
         data = request.POST if request.method == "POST" else (request.GET or None)
@@ -286,8 +286,8 @@ class RetiredIDAdmin(admin.ModelAdmin):
 
     def restore_view(self, request, number):
         """Put the material back (RetiredID.restore()) and go to its page, or say why it can't
-        be and stay on the record's. Only users who may delete materials may restore them."""
-        if not request.user.has_perm("repo.delete_material"):
+        be and stay on the record's. Only admins may restore them (is_admin())."""
+        if not is_admin(request.user):
             raise PermissionDenied
         record = get_object_or_404(RetiredID, number=number)
         try:
@@ -323,8 +323,8 @@ class ReferenceAdmin(NewRowsTicked, EnteredAdmin):
 
     def has_admin_permission(self, request):
         """For the actions with permissions=["admin"]: Django offers them only when this is
-        True. Only users who may delete materials, as for merging and restoring materials."""
-        return request.user.has_perm("repo.delete_material")
+        True. Only admins (is_admin()), as for merging and restoring materials."""
+        return is_admin(request.user)
 
     @admin.action(description="Mark published", permissions=["admin"])
     def mark_published(self, request, queryset):

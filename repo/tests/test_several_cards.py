@@ -9,7 +9,7 @@ from django.urls import reverse
 
 from repo.forms import CardMaterialForm, CompoundCards
 from repo.models import Material, PhaseSequence, Series
-from repo.tests.test_add_data import FIVE_CB
+from repo.tests.test_add_data import FIVE_CB, WAITING
 from repo.tests.test_compound_card import FIVE_CB_HEATING, RM734_COOLING, CardTestCase, run_fields, visible
 from repo.tests.test_value_blocks import PS_BLOCK
 from repo.tests.test_values import DIO, RM734
@@ -64,8 +64,10 @@ class OneSaveTests(CardsTestCase):
             self.messages(response),
             [
                 f"Saved a phase sequence and 1 block of values for {self.rm734}.",
-                f"Saved a phase sequence for {self.aya}. DIO is kept as one of its aliases.",
+                f"Saved a phase sequence for {self.aya}. DIO is held with the save, to be kept as one of its aliases "
+                "if an admin approves it.",
                 f"Added 5CB as {five_cb.accession}, with a phase sequence.",
+                WAITING,
             ],
         )
         self.assertEqual(
@@ -73,7 +75,7 @@ class OneSaveTests(CardsTestCase):
             [("5CB", "Cr 24 N 35.3 Iso"), ("Aya_5B", "Cr 68.8 NF 84.5 N 174 Iso"), ("RM734", "Iso 187.9 N 132.7 NF 70 Cr")],
         )
         self.assertEqual(Series.objects.get().material, self.rm734)
-        self.assertEqual(Material.objects.get(pk=self.aya.pk).aliases, "DIO")
+        self.assertEqual(Material.objects.get(pk=self.aya.pk).aliases, "")  # held until an admin approves the save
 
     def test_a_typo_on_the_third_card_saves_nothing_and_shows_on_that_card_only(self):
         cards = [*THREE_CARDS[:2], {**THREE_CARDS[2], "run": TYPO}]
@@ -122,7 +124,7 @@ class OneSaveTests(CardsTestCase):
     def test_a_card_left_empty_is_ignored_and_shows_no_problems(self):
         response = self.send_cards({}, THREE_CARDS[0], button="save", follow=True)
 
-        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734}."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734}.", WAITING])
 
     def test_a_page_of_empty_cards_asks_for_one_to_be_filled_in(self):
         response = self.send_cards({}, {}, button="save")
@@ -138,7 +140,7 @@ class RemovedCardTests(CardsTestCase):
             THREE_CARDS[0], {**THREE_CARDS[2], "run": TYPO, "removed": "1"}, THREE_CARDS[1], button="save", follow=True
         )
 
-        self.assertEqual(len(self.messages(response)), 2)
+        self.assertEqual(len(self.messages(response)), 3)  # a card's, the other card's, and WAITING
         self.assertFalse(Material.objects.filter(name="5CB").exists())
         self.assertEqual(PhaseSequence.objects.count(), 2)
 
@@ -161,7 +163,7 @@ class RemovedBlockTests(CardsTestCase):
 
         response = self.send_cards({"run": RM734_COOLING, "blocks": [removed], "material": "RM734"}, button="save", follow=True)
 
-        self.assertEqual(self.messages(response), [f"Saved a phase sequence for {self.rm734}."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence for {self.rm734}.", WAITING])
         self.assertEqual(PhaseSequence.objects.get().direction, "cooling")
         self.assertFalse(Series.objects.exists())
 
@@ -185,7 +187,7 @@ class LimitTests(CardsTestCase):
 
         response = self.client.post(self.page, {**data, "save": ""}, follow=True)
 
-        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734}."])
+        self.assertEqual(self.messages(response), [f"Saved a phase sequence and 1 block of values for {self.rm734}.", WAITING])
 
     def test_a_page_of_more_than_100_cards_is_refused(self):
         response = self.send_cards(THREE_CARDS[0], button="save", total=101)

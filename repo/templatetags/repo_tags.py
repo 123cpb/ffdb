@@ -6,11 +6,17 @@ from django import template
 from django.utils.html import escape, format_html
 from django.utils.safestring import mark_safe
 
-from .. import ribbons
+from .. import models, ribbons
 from ..models import CONDITION_NAMES, CONDITION_UNITS, Measurement, Series
 from ..phases import ISOTROPIC, SUBSCRIPTS
 
 register = template.Library()
+
+
+@register.filter
+def is_admin(user):
+    """{% if user|is_admin %}: whether user is an admin, by models.is_admin(), the one place it is said."""
+    return models.is_admin(user)
 
 
 @register.filter

@@ -218,6 +218,7 @@ class LcrIdLineTests(CompoundTableTestCase):
     def test_a_mixtures_line_makes_a_card_whose_run_makes_it_one_of_the_references_materials(self):
         table = {"table": f"F7, {self.f7.accession}, Iso 120 N 95 NF 40 Cr", "direction": "cooling", "rate": "", "method": ""}
         cards = CompoundTableForm(table, reference=self.article).cards_data()  # the cards, as Make cards sends them back
+        self.client.force_login(self.admin)  # an admin's save is approved at once, so the page shows it
 
         response = self.client.post(reverse("repo:add_compound", args=[self.article.pk]), {**cards, "save": ""}, follow=True)
 

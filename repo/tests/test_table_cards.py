@@ -177,7 +177,7 @@ class WithoutJavaScriptTests(MakeCardsTestCase):
             [("5CB", "Cr 24 N 35.3 I"), ("Aya_5B", "Cr 68.8 NF 84.5 N 174 I"), ("RM734", "Cr 139.8 NF 132.7 N 187.9 I")],
         )
         self.assertEqual(Series.objects.get().material, self.rm734)
-        self.assertEqual(Material.objects.get(pk=self.aya.pk).aliases, "DIO")
+        self.assertEqual(Material.objects.get(pk=self.aya.pk).aliases, "")  # held until an admin approves the save
 
     def test_a_sequence_ffdb_already_has_from_this_reference_is_left_off_the_card(self):
         PhaseSequence.objects.create(material=self.rm734, reference=self.article, sequence="K 139.8 NF 132.7 N 187.9 I")

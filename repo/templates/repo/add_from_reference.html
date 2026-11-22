@@ -14,6 +14,11 @@
 <p>Add this reference's compounds and mixtures, their phase sequences, and its property values and curves here, on
 cards. A table of its compounds can make the cards.</p>
 
+{# views.add_from_reference counts the curator's own saves from this reference that wait for an admin's check. #}
+{% if waiting %}
+<p>{{ waiting }} of your saves from this reference {{ waiting|pluralize:"is,are" }} waiting for an admin's check.</p>
+{% endif %}
+
 <section>
   <h2>Add compounds on cards</h2>
   <p>A card for each compound or mixture, with its phase sequence, built from its phases, hottest first, and its values.
