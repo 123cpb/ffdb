@@ -1,11 +1,53 @@
 {% extends "admin/change_form.html" %}
 {% comment %}
-A waiting save's admin page, which Django finds by this file's path: what the save adds, read-only,
-then Approve and Reject (WaitingSaveAdmin.approve_view and reject_view). Each button has a form of
-its own, after the page's form: one form can't be inside another. Only admins can open the page.
+A waiting save's admin page, which Django finds by this file's path: who saved it, when and from
+which reference, then what it adds as the public pages would show it, with their templates
+(WaitingSaveAdmin.preview()), then Approve and Reject (WaitingSaveAdmin.approve_view and
+reject_view). The preview sits in a panel with the public pages' colours and font (data.css), so it
+reads the same whichever theme the admin has. Each button has a form of its own, after the page's
+form: one form can't be inside another. Only admins can open the page.
 {% endcomment %}
 {% block content %}
 {{ block.super }}
+<div class="public-preview">
+  <p>
+    {% if published %}Approving makes this save's data public.
+    {% else %}Approving keeps this save's data hidden, because {{ original.reference }} isn't published. Marking it published makes it public.{% endif %}
+  </p>
+  {% for entry in entries %}
+  {% with material=entry.material %}
+  <section class="preview-material">
+    <h2>{{ material.accession }}{% if material.name %} {{ material.name }}{% endif %}</h2>
+    {% if material.aliases %}<p class="aliases">Also called {{ material.aliases }}</p>{% endif %}
+    {% if entry.status == "public" %}
+    <p>Public: this save adds to its page.</p>
+    {% elif entry.status == "new" %}
+    <p>New: it has no data but this save's, and rejecting the save retires it.</p>
+    {% else %}
+    <p>Hidden: it isn't public, and has data that isn't in this save.</p>
+    {% if published %}<p class="preview-warning">Approving makes it public under its current name{% if material.name %}, {{ material.name }}{% endif %}.</p>{% endif %}
+    {% endif %}
+    {% if entry.label %}
+    <p>Label on the curator's card: {{ entry.label }}.
+      {% if entry.label_problem %}It won't be kept as an alias: {{ entry.label_problem }}.{% else %}It will be kept as an alias.{% endif %}
+    </p>
+    {% endif %}
+    {% if material.kind == "mixture" %}
+    {% include "repo/_composition.html" with components=entry.components hidden_components=0 %}
+    {% else %}
+    <figure class="structure">{{ entry.drawing }}</figure>
+    {% endif %}
+    {% if entry.sequence_rows %}
+    <section class="phases">
+      <h2>Phase sequences</h2>
+      {% include "repo/_ribbon_rows.html" with sequence_rows=entry.sequence_rows axis=entry.axis %}
+    </section>
+    {% endif %}
+    {% include "repo/_values.html" with value_sections=entry.value_sections empty="No property values in this save." %}
+  </section>
+  {% endwith %}
+  {% endfor %}
+</div>
 <form method="post" action="{% url 'admin:repo_waitingsave_approve' original.pk %}">
   {% csrf_token %}
   <p>Approve ticks approved on its phase sequences and values, keeps its labels as aliases if the

@@ -22,7 +22,7 @@ MARKERS = ["o", "s", "^", "D"]
 # first one's colour and marker, so a legend could no longer tell them apart: the table
 # under the chart lists the series instead.
 LABELLED_LINES = len(COLOURS)
-# The page's own colours (style.css): white surface, ink for text, hairline for the grid.
+# The page's own colours (data.css): white surface, ink for text, hairline for the grid.
 SURFACE, INK, INK_2, HAIRLINE = "#ffffff", "#17202a", "#4a5664", "#d9dfe4"
 
 # Settings for every chart, set once, when this module is first imported.

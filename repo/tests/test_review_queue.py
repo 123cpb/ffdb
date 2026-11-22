@@ -7,6 +7,7 @@ from django.contrib.admin.models import LogEntry
 from django.contrib.auth.models import Group, Permission, User
 from django.test import TestCase
 from django.urls import reverse
+from django.utils.html import escape
 
 from repo.models import Material, Measurement, MixtureComponent, PhaseSequence, Reference, RetiredID, Series, WaitingSave
 from repo.tests.test_import import ARTICLE, FIVE_CB, RM734, RM734_SUMMARY
@@ -199,12 +200,112 @@ class QueueTests(ReviewTestCase):
 
         page = self.client.get(change)
 
-        self.assertContains(page, f"{self.rm734}, label to keep: MB-1")
-        self.assertContains(page, f"{self.rm734.accession}: {RM734_SUMMARY} (Summary)")
+        self.assertContains(page, f"<h2>{self.rm734}</h2>", html=True)
+        self.assertContains(page, "Label on the curator's card: MB-1.")
+        self.assertContains(page, 'class="ribbon"', count=1)
         self.assertContains(page, 'value="Approve"')
         self.assertContains(page, 'value="Reject"')
         self.assertNotContains(page, reverse("admin:repo_waitingsave_delete", args=[saved.pk]))
         self.assertNotContains(page, 'name="_save"')
+
+
+class PreviewTests(ReviewTestCase):
+    """A save's page shows what it adds as the public pages would, with their templates: each
+    material with its status, the label held for it and its drawing, its sequences with their
+    ribbons, and its values with their charts. It says whether approving makes the data public,
+    and warns of a hidden material that approving would make public."""
+
+    def page(self, saved):
+        return self.client.get(reverse("admin:repo_waitingsave_change", args=[saved.pk]))
+
+    def hidden_dio(self):
+        """DIO, hidden: its only data is a sequence from unpublished work."""
+        dio = Material.objects.create(name="DIO", smiles=DIO)
+        PhaseSequence.objects.create(material=dio, reference=self.work, sequence=DIO_SUMMARY, approved=True)
+        return dio
+
+    def test_a_saves_page_shows_its_materials_ribbons_values_and_charts(self):
+        mixture = Material.objects.create(kind=Material.Kind.MIXTURE, name="M1")
+        MixtureComponent.objects.create(mixture=mixture, component=self.rm734, fraction=50, unit="mol%")
+        saved = self.waiting(
+            self.article, labels={self.rm734: "MB-1"},
+            sequences=[(self.rm734, RM734_SUMMARY), (self.five_cb, FIVE_CB_SUMMARY), (mixture, "K 40 N 90 I")],
+        )
+        curve = add(self.five_cb, self.article, "ps", approved=False, waiting_save=saved)
+        for temperature, value in [(25, 4.1), (30, 4.6), (34, 5.2)]:
+            Measurement.objects.create(series=curve, value=value, temperature_c=temperature)
+
+        page = self.page(saved)
+
+        self.assertContains(page, "/static/repo/data.css")
+        self.assertContains(page, "Approving makes this save's data public.")
+        statuses = {entry["material"]: entry["status"] for entry in page.context["entries"]}
+        self.assertEqual(statuses, {self.rm734: "public", self.five_cb: "new", mixture: "new"})
+        self.assertContains(page, "Public: this save adds to its page.", count=1)
+        self.assertContains(page, "New: it has no data but this save's", count=2)
+        for material in [self.rm734, self.five_cb, mixture]:
+            self.assertContains(page, f"<h2>{material}</h2>", html=True)
+        self.assertContains(page, "Label on the curator's card: MB-1.")
+        self.assertContains(page, "It will be kept as an alias.")
+        # Each compound drawn in the page, as its structure.svg answers 404 while it is hidden, and
+        # the mixture's composition in its place.
+        self.assertContains(page, 'src="data:image/svg+xml;base64,', count=2)
+        self.assertContains(page, f"{self.rm734.accession}</a> RM734, 50 mol%")
+        # Each sequence with its ribbon and standard sequence, and 5CB's curve in its table and chart.
+        self.assertContains(page, 'class="ribbon"', count=3)
+        self.assertContains(page, "Cr 22.5 N 35 Iso")
+        self.assertContains(page, "4.1 to 5.2 µC/cm²")
+        self.assertContains(page, '<figure class="chart">', count=1)
+        self.assertNotContains(page, "Approving makes it public under")
+
+    def test_a_hidden_material_is_warned_of_with_the_curators_label(self):
+        # A curator typed DIO's structure: their card showed a new compound named 10a.
+        dio = self.hidden_dio()
+        saved = self.waiting(
+            self.article, labels={dio: "10a"}, sequences=[(dio, DIO_SUMMARY), (self.five_cb, FIVE_CB_SUMMARY)]
+        )
+
+        page = self.page(saved)
+
+        self.assertContains(page, f"<h2>{dio}</h2>", html=True)
+        self.assertContains(page, "Hidden: it isn't public, and has data that isn't in this save.", count=1)
+        # Only DIO's: 5CB is new, so its name is the label the curator gave it.
+        self.assertContains(page, "Approving makes it public under its current name, DIO.", count=1)
+        self.assertContains(page, "Label on the curator's card: 10a.")
+        self.assertContains(page, "It won't be kept as an alias: a bare compound number means something only inside one paper.")
+
+    def test_under_unpublished_work_approving_keeps_it_hidden_so_nothing_is_warned_of(self):
+        dio = self.hidden_dio()
+        saved = self.waiting(self.work, labels={self.rm734: "MB-1"}, sequences=[(dio, DIO_SUMMARY), (self.rm734, RM734_SUMMARY)])
+
+        page = self.page(saved)
+
+        self.assertContains(
+            page,
+            f"Approving keeps this save's data hidden, because {self.work} isn't published. Marking it published makes it public.",
+        )
+        self.assertContains(page, "Hidden: it isn't public")
+        self.assertNotContains(page, "Approving makes it public under")
+        # The reason is text from the code, so its apostrophe is escaped in the page.
+        reason = escape("the reference isn't public")
+        self.assertContains(page, f"It won't be kept as an alias: {reason}.")
+
+    def test_a_materials_status_says_whether_it_is_public_new_or_hidden(self):
+        dio = self.hidden_dio()
+        saved = self.waiting(
+            self.article, sequences=[(self.rm734, RM734_SUMMARY), (self.five_cb, FIVE_CB_SUMMARY), (dio, DIO_SUMMARY)]
+        )
+
+        self.assertEqual([saved.material_status(m) for m in (self.rm734, self.five_cb, dio)], ["public", "new", "hidden"])
+        # Data in another waiting save is outside this one, so 5CB is hidden here now, and Reject
+        # would no longer retire it.
+        self.waiting(self.article, sequences=[(self.five_cb, FIVE_CB_SUMMARY)])
+        self.assertEqual(saved.material_status(self.five_cb), "hidden")
+
+    def test_the_public_pages_link_data_css_before_style_css(self):
+        page = self.client.get(reverse("repo:materials")).content.decode()
+
+        self.assertLess(page.index("/static/repo/data.css"), page.index("/static/repo/style.css"))
 
 
 class OnlyAdminsTests(ReviewTestCase):

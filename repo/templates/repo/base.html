@@ -4,6 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{% endblock %} | FFDB</title>
+  {# data.css first: style.css uses its colours and fonts. #}
+  <link rel="stylesheet" href="{% static 'repo/data.css' %}">
   <link rel="stylesheet" href="{% static 'repo/style.css' %}">
 </head>
 <body>

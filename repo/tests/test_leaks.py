@@ -517,6 +517,17 @@ class CuratorChecksTests(HiddenData):
         self.assertEqual(messages, ["Added 5CB, with a phase sequence.", WAITING])
         self.assert_no_secrets(response, [FIVE_CB, "5CB"])
 
+    def test_a_hidden_structures_label_is_held_even_if_it_wont_be_kept(self):
+        # A bare compound number isn't kept as an alias, but the admin checking the save sees what
+        # the curator called it, as their card called it a new compound named 10a.
+        data = {CompoundCards.TOTAL: "1", "save": "", **self.card(run=FIVE_CB_HEATING, smiles=FIVE_CB, name="10a")}
+
+        response = self.client.post(reverse("repo:add_compound", args=[self.paper.pk]), data, follow=True)
+
+        self.assertEqual(WaitingSave.objects.get(saved_by=self.curator).labels, {str(self.waiting.pk): "10a"})
+        messages = [str(message) for message in response.context["messages"]]
+        self.assertEqual(messages, ["Added 10a, with a phase sequence.", WAITING])
+
     def test_the_same_name_question_offers_only_public_mixtures_and_names_only_public_components(self):
         hidden = self.check_material(**self.mixture(self.hidden_mixture.name, [])).context["form"].mixture
         self.assertEqual(hidden.same_name, [])

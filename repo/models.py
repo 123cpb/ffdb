@@ -783,7 +783,9 @@ class WaitingSave(models.Model):
     """A curator's Save on Add data, waiting for an admin's check: who saved it, when, and from
     which reference. The phase sequences and series it added point to it (their waiting_save)
     and are saved unapproved, so they are hidden. It also holds the labels its cards gave
-    materials already in FFDB, which become aliases only when it is approved. Approving or
+    materials already in FFDB, which become aliases only when it is approved, where they can
+    (label_problem()). Its page in the admin shows the labels, so the admin sees what the curator
+    called a hidden material whose structure they typed (CompoundCard.save()). Approving or
     rejecting it (approve(), reject()) deletes it, so every save in this table is waiting. An
     admin's Save is approved at once and makes none."""
 
@@ -828,23 +830,29 @@ class WaitingSave(models.Model):
             self.delete()
         return kept, refused
 
+    def label_problem(self, material, label):
+        """Why label, held for material, won't be kept as one of its aliases, or "" when it will.
+        Approving keeps a label only under a published reference, as for an admin's own Save, and
+        only where Material.alias_problem() allows, asked when it is approved because the
+        material's names may have changed since the save. The published switch, not
+        Reference.is_public(): a reference with no public data yet is public once this save's rows
+        are approved. The save's page asks it before approving, and keep_labels() as it approves,
+        so the two agree."""
+        if not self.reference.published:
+            return "the reference isn't public"
+        return material.alias_problem(label)
+
     def keep_labels(self):
-        """Add each label it holds to its material's aliases, where Material.alias_problem() allows,
-        asked again because the material's names may have changed since the save. Only under a
-        public reference, as for an admin's own Save, asked once the rows are approved: a reference
-        with no public data until now is public with them (CompoundCard.save()). Returns (kept,
-        refused): [(LCR ID, label), ...] and [(LCR ID, label, why), ...]."""
-        public = self.reference.is_public()
+        """Add each label it holds to its material's aliases, unless label_problem() says why not.
+        Returns (kept, refused): [(LCR ID, label), ...] and [(LCR ID, label, why), ...]."""
         kept, refused = [], []
         for number, label in self.labels.items():
             lcr = accession(int(number))
             material = Material.objects.filter(pk=number).first()
             if material is None:
                 problem = f"{lcr} is no longer in FFDB"  # retired or merged since the save
-            elif not public:
-                problem = "the reference isn't public"
             else:
-                problem = material.alias_problem(label)
+                problem = self.label_problem(material, label)
             if problem:
                 refused.append((lcr, label, problem))
             else:
@@ -852,6 +860,20 @@ class WaitingSave(models.Model):
                 material.save(update_fields=["aliases"])
                 kept.append((lcr, label))
         return kept, refused
+
+    def material_status(self, material):
+        """What approving this save means for one of its materials, for the save's page: "public"
+        when it is public already, and the save adds to its page; "new" when it isn't, and has no
+        data but this save's, which is what Reject would retire; "hidden" when it isn't public and
+        has other data, such as a hidden material whose structure a curator typed, which their card
+        showed as new (CardMaterialForm.read_structure()). exclude() keeps the rows in no save: a
+        nullable link that isn't this save is any other save or none."""
+        if material.is_public():
+            return "public"
+        others = material.phase_sequences.exclude(waiting_save=self).exists() or material.series.exclude(
+            waiting_save=self
+        ).exists()
+        return "hidden" if others else "new"
 
     def reject(self, user):
         """Delete its sequences and series, which takes their transitions and points with them,

@@ -1,17 +1,9 @@
-/* FFDB. Light theme only: structure drawings are black on white. */
+/* FFDB's pages: the site, its lists and its forms. Light theme only: structure drawings are black
+   on white. The colours and fonts, and the look of the templates that show a material's data, are
+   in data.css, which base.html links first and the admin's waiting-save page links too. */
 
 :root {
   color-scheme: light;
-  --paper: #f3f5f6;
-  --surface: #ffffff;
-  --ink: #17202a;
-  --ink-2: #4a5664;
-  --muted: #6c7782;
-  --hairline: #d9dfe4;
-  --link: #1c5d99;
-  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --serif: Georgia, serif;
-  --mono: ui-monospace, Menlo, Consolas, monospace;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -143,7 +135,7 @@ ul.form-error { padding-left: 32px; }
 .result__no-ribbon { font-size: 13.5px; color: var(--muted); }
 /* The list's axis sits over the ribbons: the same columns as a row, and the same padding and border. */
 .results__axis { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 18px; align-items: end; padding: 0 15px 2px; }
-.results__axis-label, .ribbon-row__axis-label { font-size: 12.5px; color: var(--muted); text-align: right; }
+.results__axis-label { font-size: 12.5px; color: var(--muted); text-align: right; }
 .ribbon-note { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); }
 
 .downloads { margin: 0 0 12px; font-size: 14px; }
@@ -154,66 +146,15 @@ ul.form-error { padding-left: 32px; }
 
 .material-id { font: 600 44px/1.05 var(--serif); margin: 0 0 6px; }
 .material-name { margin: 0; color: var(--ink-2); font-size: 18px; }
-.aliases { margin: 4px 0 0; color: var(--muted); }
-
-.structure {
-  display: inline-block; max-width: 100%; margin: 18px 0 0; padding: 12px;
-  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
-}
-.structure img { display: block; max-width: 100%; height: auto; }
 
 .facts { margin: 18px 0; }
 .facts dt { font-size: 12.5px; color: var(--muted); }
 .facts dd { margin: 2px 0 12px; overflow-wrap: anywhere; }
 .facts code { word-break: break-all; color: var(--ink-2); }
 
-/* A mixture's components, one a line, without bullets. */
-.composition { margin: 0; padding: 0; list-style: none; }
-.composition__note { margin: 4px 0 0; color: var(--muted); }
-
-.phases h2, .values h2, .mixtures h2 { font: 600 22px/1.2 var(--serif); margin: 28px 0 8px; }
-.values h3 { font: 600 18px/1.3 var(--serif); margin: 22px 0 8px; }
-.values h4 { font-size: 15px; margin: 14px 0 6px; }
-/* A values table has six columns: on a phone it scrolls sideways instead of widening the page. */
-.table-scroll { max-width: 900px; overflow-x: auto; }
-/* A chart, drawn by charts.py on white, scales down to fit a phone. */
-.chart { max-width: 640px; margin: 0 0 12px; padding: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; }
-.chart svg { display: block; width: 100%; height: auto; }
-.chart figcaption { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
 /* The property page's Draw button, above the table whose ticked rows it charts. */
 .chart-choice button { margin: 0 0 8px; padding: 7px 16px; font: inherit; color: #fff; background: var(--link); border: 0; border-radius: 6px; cursor: pointer; }
 .chart-note { color: var(--muted); }
-/* The tables of sequences and references. */
-.data-table { width: 100%; max-width: 900px; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); }
-.data-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }
-.data-table th, .data-table td { padding: 8px 12px; border-top: 1px solid var(--hairline); vertical-align: top; }
-.reported, .cell-note { display: block; font-size: 13px; color: var(--muted); }
-/* Phase ribbons and their axis (ribbons.py), drawn at the size they show, so their text keeps
-   its size, and shrunk to fit a narrower screen. height: auto keeps their shape as they shrink. */
-svg.ribbon, svg.ribbon-axis { display: block; max-width: 100%; height: auto; }
-.ribbon-label { font: 600 11.5px var(--sans); pointer-events: none; }
-.ribbon-temp, .axis-text { font: 400 11px var(--sans); fill: var(--muted); }
-.axis-line { stroke: #c3c9cf; stroke-width: 1; }
-.not-examined { fill: none; stroke: #c3c9cf; stroke-width: 1; stroke-dasharray: 3 3; }
-/* A DOI has no spaces, so without this a long one would push the table wider than a phone. */
-.data-table__reference { overflow-wrap: anywhere; }
-/* A material's sequences, one row each: how it was observed on the left, its ribbon and text on the right. */
-.ribbon-rows { list-style: none; margin: 0; padding: 0; max-width: 912px; }
-.ribbon-row { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 22px; padding: 12px 0; border-top: 1px solid var(--hairline); }
-.ribbon-row--axis { max-width: 912px; align-items: end; padding: 0 0 2px; border-top: 0; }
-.ribbon-row__meta { display: flex; flex-direction: column; gap: 3px; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
-.ribbon-row__run { color: var(--muted); }
-.ribbon-row__text { margin: 4px 0 0; font-size: 14px; }
-/* The key to the ribbons (_phase_key.html). */
-.phase-key { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0; margin: 0 0 10px; font-size: 12.5px; color: var(--ink-2); }
-.phase-key li { display: inline-flex; align-items: center; gap: 5px; }
-.phase-key__swatch { width: 14px; height: 12px; border-radius: 3px; flex: none; }
-.phase-key__swatch--outlined { box-shadow: inset 0 0 0 1px #d3d9df; }
-.phase-key__stub { display: inline-flex; gap: 2px; flex: none; }
-.phase-key__stub i { width: 4px; height: 12px; border-radius: 1.5px; }
-.phase-key__stub i.phase-key__block { width: 12px; border-radius: 2px; }
-.phase-key__melting { width: 8px; height: 14px; flex: none; }
-.phase-key__not-examined { width: 14px; height: 12px; border: 1px dashed #c3c9cf; border-radius: 3px; flex: none; }
 
 /* The Properties list: a group's name heads its block, and its members are set in under it. */
 .property-group th[scope="rowgroup"] { font-size: 15px; color: var(--ink); }
@@ -236,11 +177,6 @@ svg.ribbon, svg.ribbon-axis { display: block; max-width: 100%; height: auto; }
 .reference-kind { margin: 0 0 4px; font-size: 13.5px; color: var(--muted); }
 .reference-label { overflow-wrap: anywhere; }
 
-/* Below this the ribbons would shrink beside the rows' text, so they go under it. */
-@media (max-width: 980px) {
-  .ribbon-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .ribbon-row__axis-label { text-align: left; }
-}
 @media (max-width: 720px) {
   .wrap { padding: 0 16px; }
   .material-id { font-size: 34px; }

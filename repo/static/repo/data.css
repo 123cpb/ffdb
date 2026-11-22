@@ -1,0 +1,92 @@
+/* FFDB's colours and fonts, and the look of the templates that show a material's data: its
+   aliases, structure and composition, its phase ribbons with their key, and its value tables and
+   charts. base.html links this before style.css. A waiting save's page in the admin links it too
+   (WaitingSaveAdmin.Media), because it shows a save with the same templates. */
+
+:root {
+  --paper: #f3f5f6;
+  --surface: #ffffff;
+  --ink: #17202a;
+  --ink-2: #4a5664;
+  --muted: #6c7782;
+  --hairline: #d9dfe4;
+  --link: #1c5d99;
+  --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif: Georgia, serif;
+  --mono: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.aliases { margin: 4px 0 0; color: var(--muted); }
+
+.structure {
+  display: inline-block; max-width: 100%; margin: 18px 0 0; padding: 12px;
+  background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px;
+}
+.structure img { display: block; max-width: 100%; height: auto; }
+
+/* A mixture's components, one a line, without bullets. */
+.composition { margin: 0; padding: 0; list-style: none; }
+.composition__note { margin: 4px 0 0; color: var(--muted); }
+
+.phases h2, .values h2, .mixtures h2 { font: 600 22px/1.2 var(--serif); margin: 28px 0 8px; }
+.values h3 { font: 600 18px/1.3 var(--serif); margin: 22px 0 8px; }
+.values h4 { font-size: 15px; margin: 14px 0 6px; }
+/* A values table has six columns: on a phone it scrolls sideways instead of widening the page. */
+.table-scroll { max-width: 900px; overflow-x: auto; }
+/* A chart, drawn by charts.py on white, scales down to fit a phone. */
+.chart { max-width: 640px; margin: 0 0 12px; padding: 8px; background: var(--surface); border: 1px solid var(--hairline); border-radius: 10px; }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart figcaption { margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+/* The tables of sequences and references. */
+.data-table { width: 100%; max-width: 900px; border-collapse: collapse; background: var(--surface); border: 1px solid var(--hairline); }
+.data-table th { text-align: left; font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.data-table th, .data-table td { padding: 8px 12px; border-top: 1px solid var(--hairline); vertical-align: top; }
+.reported, .cell-note { display: block; font-size: 13px; color: var(--muted); }
+/* Phase ribbons and their axis (ribbons.py), drawn at the size they show, so their text keeps
+   its size, and shrunk to fit a narrower screen. height: auto keeps their shape as they shrink. */
+svg.ribbon, svg.ribbon-axis { display: block; max-width: 100%; height: auto; }
+.ribbon-label { font: 600 11.5px var(--sans); pointer-events: none; }
+.ribbon-temp, .axis-text { font: 400 11px var(--sans); fill: var(--muted); }
+.axis-line { stroke: #c3c9cf; stroke-width: 1; }
+.not-examined { fill: none; stroke: #c3c9cf; stroke-width: 1; stroke-dasharray: 3 3; }
+/* A DOI has no spaces, so without this a long one would push the table wider than a phone. */
+.data-table__reference { overflow-wrap: anywhere; }
+/* A material's sequences, one row each: how it was observed on the left, its ribbon and text on the right. */
+.ribbon-rows { list-style: none; margin: 0; padding: 0; max-width: 912px; }
+.ribbon-row { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 22px; padding: 12px 0; border-top: 1px solid var(--hairline); }
+.ribbon-row--axis { max-width: 912px; align-items: end; padding: 0 0 2px; border-top: 0; }
+.ribbon-row__axis-label { font-size: 12.5px; color: var(--muted); text-align: right; }
+.ribbon-row__meta { display: flex; flex-direction: column; gap: 3px; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
+.ribbon-row__run { color: var(--muted); }
+.ribbon-row__text { margin: 4px 0 0; font-size: 14px; }
+/* The key to the ribbons (_phase_key.html). */
+.phase-key { list-style: none; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 0; margin: 0 0 10px; font-size: 12.5px; color: var(--ink-2); }
+.phase-key li { display: inline-flex; align-items: center; gap: 5px; }
+.phase-key__swatch { width: 14px; height: 12px; border-radius: 3px; flex: none; }
+.phase-key__swatch--outlined { box-shadow: inset 0 0 0 1px #d3d9df; }
+.phase-key__stub { display: inline-flex; gap: 2px; flex: none; }
+.phase-key__stub i { width: 4px; height: 12px; border-radius: 1.5px; }
+.phase-key__stub i.phase-key__block { width: 12px; border-radius: 2px; }
+.phase-key__melting { width: 8px; height: 14px; flex: none; }
+.phase-key__not-examined { width: 14px; height: 12px; border: 1px dashed #c3c9cf; border-radius: 3px; flex: none; }
+
+/* Below this the ribbons would shrink beside the rows' text, so they go under it. */
+@media (max-width: 980px) {
+  .ribbon-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .ribbon-row__axis-label { text-align: left; }
+}
+
+/* A waiting save in the admin, shown with the templates above (admin/repo/waitingsave/change_form.html).
+   The panel has the public pages' background, ink and font, so it reads the same in the admin's
+   light or dark theme. The admin also styles headings, links, list items and table cells for its
+   own theme, so inside the panel those go back to the public pages' look. */
+.public-preview { max-width: 960px; margin: 20px 0; padding: 4px 20px 20px; background: var(--paper); color: var(--ink); font: 400 15px/1.55 var(--sans); border: 1px solid var(--hairline); border-radius: 8px; }
+.public-preview h2, .public-preview h3, .public-preview h4 { color: var(--ink); }
+.public-preview a:link, .public-preview a:visited { color: var(--link); text-decoration: underline; }
+.public-preview p, .public-preview li, .public-preview td { font-size: inherit; line-height: inherit; }
+.public-preview ul > li { list-style-type: none; }
+.public-preview .data-table tr, .public-preview .data-table th { background: none; }
+.public-preview .data-table th { line-height: inherit; text-transform: none; }
+.preview-material { margin-top: 20px; border-top: 1px solid var(--hairline); }
+.preview-material > h2 { font: 600 26px/1.2 var(--serif); margin: 16px 0 4px; }
+.preview-warning { color: #7a5a00; font-weight: 600; }

@@ -597,7 +597,8 @@ class CardMaterialForm(forms.Form):
     Pass the user checking it. The card looks only among the materials they see (seen_by()): a
     curator's finds only public ones by LCR ID, name or structure. A structure that is a hidden
     material reads as new, with no ID or name, but is found all the same, with shown_as_new set,
-    because a structure has one ID: Save adds the card's data to it.
+    because a structure has one ID: Save adds the card's data to it, and holds the label for the
+    admin who checks the save.
 
     A new mixture is read by MixtureForm, in mixture, with its rules and messages. Its boxes have the card's prefix too, so its name box is the card's label box. When
     FFDB has mixtures of that name, it asks whether this is one of them, and "Yes" finds that one.
@@ -814,7 +815,8 @@ class CompoundCard:
 
         An admin's save passes no waiting_save: its rows are approved, and the label of a
         material in FFDB is kept as an alias if the reference is public. A curator's passes the
-        WaitingSave its rows wait in, unapproved, which holds the label instead, not yet saved.
+        WaitingSave its rows wait in, unapproved, which holds the label instead, not yet saved:
+        one alias_problem() would keep, or any label of a structure shown as new.
         Returns (the material, whether it was added, what became of the label): "kept" as an
         alias, "held" on the waiting save, "not public" when the reference isn't, or "" when
         there was no label to keep."""
@@ -838,8 +840,14 @@ class CompoundCard:
                 block.series.approved, block.series.waiting_save = approved, waiting_save
                 block.save(self.user)  # SeriesForm.save(): its transaction is part of this one
             label = ""
+            # A hidden material shown as new: the card called it a new compound named by the label,
+            # so a curator's save holds the label even if it won't be kept, for the admin to see on
+            # the save's page. Approving keeps it only where it can (WaitingSave.label_problem()).
+            if waiting_save is not None and form.shown_as_new:
+                waiting_save.labels[str(material.pk)] = name
+                label = "held"
             # A label for a material in FFDB that alias_problem() would keep. A mixture's never is.
-            if not added and not form.is_mixture and name and not form.alias_problem:
+            elif not added and not form.is_mixture and name and not form.alias_problem:
                 if waiting_save is not None:
                     waiting_save.labels[str(material.pk)] = name
                     label = "held"

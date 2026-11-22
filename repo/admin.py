@@ -18,6 +18,7 @@ from .models import (
     Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
     RetiredID, Series, Variable, WaitingSave, accession, is_admin,
 )
+from .views import sequence_ribbons, value_sections
 
 # The JSON fields hold a short list or a few key: value pairs, so a smaller box than the
 # usual 10 rows.
@@ -29,6 +30,19 @@ ENTERED = ["entered_by", "entered_at"]
 # only the users who have entered a row, not every account. Each filter also has a choice
 # for blank, which means imported: "-" for entered by, "No date" for entered at.
 ENTERED_FILTERS = [("entered_by", admin.RelatedOnlyFieldListFilter), "entered_at"]
+
+
+def structure_image(material):
+    """A compound's drawing, 360 by 220 pixels as on its public page, carried in the admin's page
+    itself as a data: address rather than linked to /material/<n>/structure.svg, which answers 404
+    for a material that isn't public, so admins see hidden structures too. Inside an <img>, an SVG
+    can't run anything. A material's page and a waiting save's page show it."""
+    svg = base64.b64encode(chem.structure_svg(material.canonical_smiles).encode()).decode()
+    return format_html(
+        '<img src="data:image/svg+xml;base64,{}" alt="Structure of {}" width="360" height="220">',
+        svg,
+        material.name,
+    )
 
 
 class EnteredAdmin(admin.ModelAdmin):
@@ -166,19 +180,11 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
 
     @admin.display(description="structure")
     def structure(self, obj):
-        """The drawing, carried in the page itself as a data: address rather than linked to
-        /material/<n>/structure.svg, which answers 404 for a material that isn't public, so
-        admins see hidden structures too. Inside an <img>, an SVG can't run anything."""
         if not obj.pk:
             return "Shown after saving."
         if obj.kind == Material.Kind.MIXTURE:
             return "None: a mixture has no structure."
-        svg = base64.b64encode(chem.structure_svg(obj.canonical_smiles).encode()).decode()
-        return format_html(
-            '<img src="data:image/svg+xml;base64,{}" alt="Structure of {}" width="360" height="220">',
-            svg,
-            obj.name,
-        )
+        return structure_image(obj)
 
     def save_model(self, request, obj, form, change):
         """Save, then warn if another material has the same connectivity."""
@@ -448,9 +454,14 @@ class WaitingSaveAdmin(admin.ModelAdmin):
     list_display = ["__str__", "saved_by", "saved_at", "reference", "material_count", "sequence_count", "series_count"]
     list_select_related = ["reference", "saved_by"]
     ordering = ["saved_at"]  # here, not in the model's Meta, which would need a migration
-    fields = ["reference", "saved_by", "saved_at", "material_list", "sequence_list", "series_list"]
+    fields = ["reference", "saved_by", "saved_at"]
     readonly_fields = fields
     actions = None  # each save is looked at on its own page first
+
+    class Media:
+        # The look of the public pages' data templates, which the save's page includes (preview()).
+        # The admin puts it in the page's <head>, after its own stylesheets.
+        css = {"all": ["repo/data.css"]}
 
     def has_view_permission(self, request, obj=None):
         return is_admin(request.user)
@@ -476,28 +487,45 @@ class WaitingSaveAdmin(admin.ModelAdmin):
     def series_count(self, obj):
         return obj.series.count()
 
-    # What the save adds, one to a line: the admin escapes a read-only field's text and turns its
-    # line breaks into <br>. Plain, for now: block A.12 shows it as the public pages would.
+    def render_change_form(self, request, context, add=False, change=False, form_url="", obj=None):
+        """Django's last step for a save's page, after it has checked who may see it: add what the
+        save adds, as the public pages would show it (preview()), for change_form.html."""
+        context.update(self.preview(obj))
+        return super().render_change_form(request, context, add, change, form_url, obj)
 
-    @admin.display(description="materials")
-    def material_list(self, obj):
-        """Each material, with the label held for it, if any."""
-        return "\n".join(
-            f"{m}, label to keep: {obj.labels[str(m.pk)]}" if str(m.pk) in obj.labels else str(m)
-            for m in obj.materials().order_by("pk")
-        ) or "None"
-
-    @admin.display(description="phase sequences")
-    def sequence_list(self, obj):
-        sequences = obj.phase_sequences.select_related("material")
-        return "\n".join(f"{s.material.accession}: {s.sequence} ({s.run_text()})" for s in sequences) or "None"
-
-    @admin.display(description="blocks of values")
-    def series_list(self, obj):
-        series = obj.series.select_related("material", "property", "variable", "reference").annotate(
-            n=models.Count("points")
+    def preview(self, saved):
+        """What saved adds, as {"published": ..., "entries": [...]}: whether its reference is
+        published, so approving makes its data public, and an entry for each of its materials, in
+        LCR ID order. Each has the material; its status (WaitingSave.material_status()); the label
+        held for it, if any, with why it won't be kept (label_problem()); a compound's drawing or a
+        mixture's components, all of them, as the admin sees hidden data; and the save's own
+        sequences and values for it, as the material's public page draws them, with the same
+        functions (views.sequence_ribbons(), views.value_sections()). The sequences and values are
+        fetched as that page fetches them, all in a few queries, and shared out by material."""
+        sequences = list(
+            saved.phase_sequences.select_related("reference").prefetch_related("transitions__upper", "transitions__lower")
         )
-        return "\n".join(f"{s} ({s.n} point{pluralize(s.n)})" for s in series) or "None"
+        series = list(
+            saved.series.select_related("reference", "property__group", "variable").prefetch_related("points")
+        )
+        entries = []
+        for material in saved.materials().order_by("pk"):
+            its_sequences = [one for one in sequences if one.material_id == material.pk]
+            sequence_rows, axis = sequence_ribbons(its_sequences) if its_sequences else ([], "")
+            label = saved.labels.get(str(material.pk), "")
+            compound = material.kind == Material.Kind.COMPOUND
+            entries.append({
+                "material": material,
+                "status": saved.material_status(material),
+                "label": label,
+                "label_problem": saved.label_problem(material, label) if label else "",
+                "drawing": structure_image(material) if compound else "",
+                "components": [] if compound else material.components.select_related("component"),
+                "sequence_rows": sequence_rows,
+                "axis": axis,
+                "value_sections": value_sections([one for one in series if one.material_id == material.pk], with_charts=True),
+            })
+        return {"published": saved.reference.published, "entries": entries}
 
     def get_urls(self):
         """Django's addresses for waiting saves, with a save's approve/ and reject/ in front, which
