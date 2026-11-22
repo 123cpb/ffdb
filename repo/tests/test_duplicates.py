@@ -9,7 +9,7 @@ from django.urls import reverse
 
 from repo.duplicates import BOTH, NEITHER, ONE_ONLY
 from repo.models import Material, NotDuplicate, PhaseSequence, Reference
-from repo.tests.test_import import ARTICLE, FIVE_CB
+from repo.tests.test_import import ARTICLE, ARXIV, FIVE_CB
 
 PAGE = reverse("admin:repo_material_duplicates")
 
@@ -45,11 +45,11 @@ class DuplicatesTests(TestCase):
         self.client.force_login(self.admin)
 
     def pairs(self):
-        """The page's pairs, as (heading, a, b)."""
+        """The page's pairs with the same connectivity, as (heading, a, b)."""
         response = self.client.get(PAGE)
         return [
             (pair["heading"], pair["compounds"][0]["material"], pair["compounds"][1]["material"])
-            for pair in response.context["pairs"]
+            for pair in response.context["connectivity_pairs"]
         ]
 
     def test_pairs_with_the_same_connectivity_are_found_the_likeliest_first(self):
@@ -76,7 +76,10 @@ class DuplicatesTests(TestCase):
         response = self.client.get(PAGE)
 
         hidden = {
-            compound["material"] for pair in response.context["pairs"] for compound in pair["compounds"] if compound["hidden"]
+            compound["material"]
+            for pair in response.context["connectivity_pairs"]
+            for compound in pair["compounds"]
+            if compound["hidden"]
         }
         self.assertEqual(hidden, {self.r})
         self.assertContains(response, "<strong>Hidden:</strong>", count=2)  # R is in two pairs
@@ -137,3 +140,107 @@ class DuplicatesTests(TestCase):
         self.client.post(not_duplicate_url(self.s, self.rac))
 
         self.assertFalse(NotDuplicate.objects.exists())
+
+
+class SequencePairsTests(TestCase):
+    """The second list: compounds with a sequence each from the same reference that match. Each
+    test makes its own compounds, alkanes of different lengths, so no two share a connectivity and
+    the first list stays empty. Their sequences aren't approved, so they are hidden: the list
+    includes them. An admin is logged in."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_superuser("admin")
+        cls.paper = Reference.objects.create(
+            kind=Reference.Kind.ARTICLE, identifier=ARTICLE, first_author="Mandle", year=2017, published=True
+        )
+        cls.preprint = Reference.objects.create(
+            kind=Reference.Kind.PREPRINT, identifier=ARXIV, first_author="Gibb", year=2025, published=True
+        )
+
+    def setUp(self):
+        self.client.force_login(self.admin)
+        self.carbons = 1
+
+    def compound(self, sequence, reference=None, direction=PhaseSequence.Direction.SUMMARY):
+        """A new compound, an alkane one carbon longer than the last, with this one sequence,
+        from the paper unless another reference is given."""
+        self.carbons += 1
+        material = Material.objects.create(name=f"C{self.carbons}", smiles="C" * self.carbons)
+        PhaseSequence.objects.create(
+            material=material, reference=reference or self.paper, direction=direction, sequence=sequence
+        )
+        return material
+
+    def sequence_pairs(self):
+        """The page's pairs with matching sequences, as (reference, a, b)."""
+        response = self.client.get(PAGE)
+        return [
+            (pair["heading"], pair["compounds"][0]["material"], pair["compounds"][1]["material"])
+            for pair in response.context["sequence_pairs"]
+        ]
+
+    def test_sequences_within_half_a_kelvin_are_found(self):
+        # 128.3 - 127.8 is exactly 0.5 K, which the computer stores as a little more.
+        a = self.compound("K 127.8 N 140 I")
+        b = self.compound("K 128.3 N 140.4 I")
+
+        self.assertEqual(self.sequence_pairs(), [(self.paper, a, b)])
+        response = self.client.get(PAGE)
+        self.assertContains(response, f'<a href="{reverse("admin:repo_reference_change", args=[self.paper.pk])}">Mandle 2017</a>')
+        self.assertContains(response, "Matching: K 127.8 N 140 I (Summary)", count=1)
+        self.assertContains(response, "Matching: K 128.3 N 140.4 I (Summary)", count=1)
+        self.assertContains(response, f"{reverse('admin:repo_material_merge', args=[a.pk])}?into={b.accession}")
+        self.assertContains(response, f"{reverse('admin:repo_material_merge', args=[b.pk])}?into={a.accession}")
+        self.assertContains(response, f'action="{not_duplicate_url(a, b)}"')
+
+    def test_sequences_0_6_K_apart_are_not_found(self):
+        self.compound("K 100 N 140 I")
+        self.compound("K 100 N 140.6 I")
+
+        self.assertEqual(self.sequence_pairs(), [])
+
+    def test_sequences_in_different_directions_are_not_found(self):
+        self.compound("K 100 N 140 I")  # a summary
+        self.compound("K 100 N 140 I", direction=PhaseSequence.Direction.HEATING)
+
+        self.assertEqual(self.sequence_pairs(), [])
+
+    def test_sequences_without_a_liquid_crystal_phase_are_not_found(self):
+        self.compound("K 60 I")
+        self.compound("K 60.2 I")
+
+        self.assertEqual(self.sequence_pairs(), [])
+
+    def test_sequences_from_different_references_are_not_found(self):
+        self.compound("K 100 N 140 I")
+        self.compound("K 100 N 140 I", reference=self.preprint)
+
+        self.assertEqual(self.sequence_pairs(), [])
+
+    def test_the_melting_point_must_match_too(self):
+        # The NF lies below the melting point, so the melting point isn't one of the saved transitions.
+        self.compound("K 77 NF 48 I")
+        self.compound("K 111 NF 48 I")
+        # A melting point not given matches only another not given.
+        unknown = self.compound("K ? N 140 I")
+        also_unknown = self.compound("K N 140.2 I")
+        self.compound("K 100 N 140 I")
+
+        self.assertEqual(self.sequence_pairs(), [(self.paper, unknown, also_unknown)])
+
+    def test_matches_are_pairs_and_do_not_chain(self):
+        # The first matches the second and the second the third, but the first and third are 0.8 K apart.
+        first = self.compound("K 100 N 140 I")
+        second = self.compound("K 100 N 140.4 I")
+        third = self.compound("K 100 N 140.8 I")
+
+        self.assertEqual(self.sequence_pairs(), [(self.paper, first, second), (self.paper, second, third)])
+
+    def test_a_pair_marked_not_a_duplicate_is_gone(self):
+        a = self.compound("K 100 N 140 I")
+        b = self.compound("K 100 N 140 I")
+
+        self.client.post(not_duplicate_url(a, b))
+
+        self.assertEqual(self.sequence_pairs(), [])

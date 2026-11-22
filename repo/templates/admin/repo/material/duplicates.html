@@ -1,9 +1,8 @@
 {% extends "admin/base_site.html" %}
 {% comment %}
-The possible-duplicates page (MaterialAdmin.duplicates_view), for admins only. Each pair has two
-Merge links, one each way, to the merge page with the other's ID filled in, which shows what will
-move before anything changes; and a Not a duplicate button, which posts to
-MaterialAdmin.not_duplicate_view. The headings come with the pairs, in duplicates.HEADINGS' order.
+The possible-duplicates page (MaterialAdmin.duplicates_view), for admins only, with two lists of
+pairs, each pair shown by _duplicate_pair.html. The headings come with the pairs: on the first list
+what differs, in duplicates.HEADINGS' order, and on the second the reference.
 {% endcomment %}
 {% block extrastyle %}{{ block.super }}
 <style>
@@ -24,40 +23,32 @@ MaterialAdmin.not_duplicate_view. The headings come with the pairs, in duplicate
 {% endblock %}
 
 {% block content %}
-<p>Pairs of compounds with the same connectivity, the first block of the InChIKey, but different
-structures, which may be one compound entered twice. Stereoisomers, racemates and isotopically
-labelled compounds are different materials. Hidden compounds are listed too, and marked.
-Merge one into the other, or mark the pair not a duplicate, and it won't be listed again.</p>
-<p>{{ pairs|length }} pair{{ pairs|length|pluralize }} to check.</p>
+<p>Pairs of compounds that may be one compound entered twice. Hidden compounds are listed too, and
+marked. Merge one into the other, or mark the pair not a duplicate, and it won't be listed again,
+on either list. A pair can be on both.</p>
 
-{% regroup pairs by heading as sections %}
+<h2>Same connectivity</h2>
+<p>Pairs with the same connectivity, the first block of the InChIKey, but different structures.
+Stereoisomers, racemates and isotopically labelled compounds are different materials.</p>
+<p>{{ connectivity_pairs|length }} pair{{ connectivity_pairs|length|pluralize }} to check.</p>
+{% regroup connectivity_pairs by heading as sections %}
 {% for section in sections %}
-<h2>{{ section.grouper }}</h2>
-{% for pair in section.list %}
-{% with a=pair.compounds.0.material b=pair.compounds.1.material %}
-<div class="duplicate-pair">
-  {% for compound in pair.compounds %}
-  {% with material=compound.material %}
-  <div>
-    <h3><a href="{% url 'admin:repo_material_change' material.pk %}">{{ material }}</a></h3>
-    {% if compound.hidden %}<p><strong>Hidden:</strong> it isn't public.</p>{% endif %}
-    {{ compound.drawing }}
-    {% if material.aliases %}<p>Also called {{ material.aliases }}</p>{% endif %}
-    <p>References: {% for reference in compound.references %}{{ reference }}{% if not forloop.last %}; {% endif %}{% empty %}none{% endfor %}</p>
-  </div>
-  {% endwith %}
-  {% endfor %}
-</div>
-<div class="duplicate-actions">
-  <a href="{% url 'admin:repo_material_merge' a.pk %}?into={{ b.accession }}">Merge {{ a.accession }} into {{ b.accession }}</a> ·
-  <a href="{% url 'admin:repo_material_merge' b.pk %}?into={{ a.accession }}">Merge {{ b.accession }} into {{ a.accession }}</a>
-  <form method="post" action="{% url 'admin:repo_material_not_duplicate' a.pk b.pk %}">
-    {% csrf_token %}
-    <input type="submit" value="Not a duplicate">
-  </form>
-</div>
-{% endwith %}
+<h3>{{ section.grouper }}</h3>
+{% for pair in section.list %}{% include "admin/repo/material/_duplicate_pair.html" %}{% endfor %}
+{% empty %}
+<p>No pairs to check.</p>
 {% endfor %}
+
+<h2>Matching sequences from one reference</h2>
+<p>Pairs with a sequence each from the same reference that match: the same direction, the same
+phases, the solid included, and every temperature, the melting point included, within
+{{ tolerance }} K. Only sequences with a liquid-crystal phase are compared. Where the reference
+reports one compound and FFDB has two, at most one of the structures is right.</p>
+<p>{{ sequence_pairs|length }} pair{{ sequence_pairs|length|pluralize }} to check.</p>
+{% regroup sequence_pairs by heading as sections %}
+{% for section in sections %}
+<h3><a href="{% url 'admin:repo_reference_change' section.grouper.pk %}">{{ section.grouper }}</a></h3>
+{% for pair in section.list %}{% include "admin/repo/material/_duplicate_pair.html" %}{% endfor %}
 {% empty %}
 <p>No pairs to check.</p>
 {% endfor %}

@@ -220,17 +220,21 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
         ]
 
     def duplicates_view(self, request):
-        """Possible duplicates: pairs of compounds with the same connectivity (duplicates.
-        connectivity_pairs()), for an admin to merge or mark not a duplicate. Only admins
-        (is_admin()), who see hidden compounds too, each marked. Each pair is {"heading": ...,
-        "compounds": [a, b]}, and each compound {"material", "hidden", "drawing", "references"}."""
+        """Possible duplicates, in two lists, for an admin to merge or mark not a duplicate: pairs
+        of compounds with the same connectivity (duplicates.connectivity_pairs()), under what
+        differs, and with matching sequences from one reference (duplicates.sequence_pairs()),
+        under the reference. Only admins (is_admin()), who see hidden compounds too, each marked.
+        Each pair is {"heading": ..., "compounds": [a, b]}, and each compound {"material",
+        "hidden", "drawing", "references", "sequences"}, sequences being its matching ones."""
         if not is_admin(request.user):
             raise PermissionDenied
-        found = duplicates.connectivity_pairs()
-        in_pairs = {material.pk for _, a, b in found for material in (a, b)}
+        connectivity = duplicates.connectivity_pairs()
+        sequences = duplicates.sequence_pairs()
+        # pair[1:3] is a pair's two compounds, in either list.
+        in_pairs = {material.pk for pair in connectivity + sequences for material in pair[1:3]}
         public = set(Material.objects.public().filter(pk__in=in_pairs).values_list("pk", flat=True))
 
-        def compound(material):
+        def compound(material, matching=()):
             # Its references: those of its sequences and values, hidden ones too. pk__in, as in
             # Material.objects.public(), gives each reference once.
             references = Reference.objects.filter(
@@ -241,13 +245,21 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
                 "hidden": material.pk not in public,
                 "drawing": structure_image(material),
                 "references": references,
+                "sequences": [sequence for sequence in matching if sequence.material_id == material.pk],
             }
 
         context = {
             **self.admin_site.each_context(request),
             "opts": self.model._meta,
             "title": "Possible duplicates",
-            "pairs": [{"heading": heading, "compounds": [compound(a), compound(b)]} for heading, a, b in found],
+            "tolerance": duplicates.SEQUENCE_TOLERANCE_K,
+            "connectivity_pairs": [
+                {"heading": heading, "compounds": [compound(a), compound(b)]} for heading, a, b in connectivity
+            ],
+            "sequence_pairs": [
+                {"heading": reference, "compounds": [compound(a, matching), compound(b, matching)]}
+                for reference, a, b, matching in sequences
+            ],
         }
         return TemplateResponse(request, "admin/repo/material/duplicates.html", context)
 
