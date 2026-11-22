@@ -245,7 +245,7 @@ def read_lines(rows, direction, among, sequences):
                 continue
             line.match = among.filter(inchikey=inchikey).first()
             if line.match is None:
-                line.problem = RetiredID.structure_problem(inchikey)
+                line.problem = RetiredID.structure_problem(inchikey, among)
                 if line.problem:
                     continue
         # A pk is a number and an InChIKey is text, so the two can never be mistaken for each other.
@@ -698,10 +698,11 @@ class CardMaterialForm(forms.Form):
 
     def read_structure(self, smiles, name):
         """Find the material the user sees with this structure, or build a new compound, not
-        saved, and check it by the model's rules, with their messages: a structure retired from
-        FFDB is refused, as in the admin. A structure that is a material the user doesn't see, a
-        hidden one for a curator, is found once there is a label, as a new compound would be, and
-        shown as new (shown_as_new): everything the curator sees is what a new compound gives."""
+        saved, and check it by the model's rules, with their messages. A structure retired from
+        FFDB is refused first, by a message that names only what the user sees. A structure that
+        is a material the user doesn't see, a hidden one for a curator, is found once there is a
+        label, as a new compound would be, and shown as new (shown_as_new): everything the curator
+        sees is what a new compound gives."""
         try:
             canonical, inchikey = chem.standardise(smiles)
         except chem.StructureError as exc:
@@ -723,6 +724,12 @@ class CardMaterialForm(forms.Form):
         hidden = Material.objects.filter(inchikey=inchikey).first()
         if hidden is not None:
             self.found, self.shown_as_new = hidden, True
+            return
+        # Before the model's rules, which refuse a retired structure too, but can't tell who is
+        # asking, so they would name what it was merged into even if the user can't see it.
+        problem = RetiredID.structure_problem(inchikey, self.materials)
+        if problem:
+            self.add_error("smiles", problem)
             return
         new = Material(name=name, smiles=smiles)
         check_rules(self, new)
@@ -1435,6 +1442,19 @@ ValueBlockFormSet = forms.formset_factory(ValueBlockForm, formset=CardFormSet, e
 # spaces, so "Mol %" is mol%.
 COMPONENT_UNITS = {unit.lower(): unit for unit in MixtureComponent.Unit.values}
 
+# What to do about a component FFDB doesn't find, at the end of its line's problem and of the
+# components box's help text. An admin's new compound is in FFDB as soon as it is saved. A
+# curator's isn't among the materials they see until it is public: their save waits for an
+# admin's check, and a compound from unpublished work stays hidden even once it is approved.
+ADD_COMPONENT_FIRST = (
+    "Add it first on a card of its own, with its data from this reference, or describe it under Other components."
+)
+ADD_COMPONENT_AFTER_APPROVAL = (
+    "Add it on a card of its own, with its data from this reference, and add the mixture once an admin has "
+    "approved that save, or describe it under Other components. A compound from unpublished work stays hidden "
+    "once approved: ask an admin to add the mixture."
+)
+
 
 @dataclass
 class ComponentLine:
@@ -1465,11 +1485,12 @@ def find_material(text, advice, among):
     return None, f"Nothing in FFDB is called {text}. {advice}"
 
 
-def read_components(text, among):
+def read_components(text, among, advice=ADD_COMPONENT_FIRST):
     """A mixture's component lines, each read as a ComponentLine: the compound, found among
-    those in among (a query set), its fraction and its unit. Blank lines are skipped but still
-    counted, so the numbers are the typed text's. Nothing is saved. A line gets one problem, the
-    first found, so each check can rely on those before it."""
+    those in among (a query set), its fraction and its unit. advice ends the problem of a line
+    whose compound isn't found. Blank lines are skipped but still counted, so the numbers are the
+    typed text's. Nothing is saved. A line gets one problem, the first found, so each check can
+    rely on those before it."""
     lines, first_seen = [], {}  # first_seen: a compound's pk -> the number of the line it was first on
     for number, text_line in enumerate(text.splitlines(), start=1):
         if not text_line.strip():
@@ -1493,10 +1514,7 @@ def read_components(text, among):
             line.problem = str(exc)
             continue
         # Whether it is a compound is left to MixtureComponent.clean(), below.
-        line.material, line.problem = find_material(
-            name, "Add it first on a card of its own, with its data from this reference, or describe it under Other "
-            "components.", among,
-        )
+        line.material, line.problem = find_material(name, advice, among)
         if line.problem:
             continue
         try:
@@ -1528,7 +1546,9 @@ class MixtureForm(forms.Form):
     Pass the user checking it. Its components and the mixtures of the same name are looked for
     among the materials they see (seen_by()): for a curator, only public ones. Each mixture of
     the same name has shown_components, its components the user sees, and hidden_components, how
-    many it has that they don't, which the question counts but never names."""
+    many it has that they don't, which the question counts but never names. advice says what to
+    do about a component that isn't found, which differs for a curator, whose new compound isn't
+    found until it is public."""
 
     DIFFERENT = "different"
 
@@ -1547,9 +1567,9 @@ class MixtureForm(forms.Form):
         required=False,  # Not disclosed has none, and Other components can describe them all
         widget=forms.Textarea(attrs={"rows": 4, "spellcheck": "false"}),
         strip=False,  # stripping blank lines from the start would change the line numbers
+        # __init__ adds what to do about a compound that isn't in FFDB yet, which depends on the user.
         help_text="One compound per line: its LCR ID or name, its fraction and the unit (mol% or wt%), separated by "
-        "commas or tabs, e.g. LCR-00128, 30, mol%. A compound that isn't in FFDB yet: add it first on a card of its "
-        "own, with its data from this reference, or describe it under Other components.",
+        "commas or tabs, e.g. LCR-00128, 30, mol%.",
     )
     other_components = forms.CharField(
         required=False,
@@ -1566,6 +1586,11 @@ class MixtureForm(forms.Form):
     def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
         self.materials = seen_by(user, Material.objects.all())
+        self.advice = ADD_COMPONENT_FIRST if is_admin(user) else ADD_COMPONENT_AFTER_APPROVAL
+        # Each form has its own copy of its fields, so this changes this form's help text only.
+        # The advice is a sentence of its own on a line's problem, but follows a colon here.
+        components = self.fields["components"]
+        components.help_text += f" A compound that isn't in FFDB yet: {self.advice[0].lower()}{self.advice[1:]}"
         # The question's choices depend on the name, so it is read as posted, before it is
         # cleaned. Cleaning only strips spaces, which name_key() ignores anyway. An unbound
         # form has no name, which fits no mixture.
@@ -1590,7 +1615,7 @@ class MixtureForm(forms.Form):
     def clean_components(self):
         """The component lines, read. One line with a problem refuses the box: each line's
         problem is shown with the lines."""
-        self.lines = read_components(self.cleaned_data["components"], self.materials)
+        self.lines = read_components(self.cleaned_data["components"], self.materials, self.advice)
         self.problem_lines = [line for line in self.lines if line.problem]
         if self.problem_lines:
             raise ValidationError("Nothing is saved until every line reads: fix or delete the lines marked below.")

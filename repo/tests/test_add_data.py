@@ -22,8 +22,8 @@ WAITING = "Your save is waiting for an admin's check: none of it is public until
 @override_settings(CROSSREF_MAILTO="ffdb-tests@example.org")
 class AddDataTestCase(TestCase):
     """A curator, logged in, an admin, whose saves don't wait, and one published reference of each
-    kind already in FFDB, as Add data would have added them: no materials or data yet. Crossref is
-    replaced for every test."""
+    kind already in FFDB, as Add data would have added them: entered by the curator, so they can
+    open their Add data pages, and no materials or data yet. Crossref is replaced for every test."""
 
     @classmethod
     def setUpTestData(cls):
@@ -33,11 +33,14 @@ class AddDataTestCase(TestCase):
         cls.article = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1002/chem.201702742",
             first_author="Mandle", year=2017, venue="Chem. Eur. J.", abstract="An abstract only the admin shows.",
-            published=True,
+            published=True, entered_by=cls.curator,
         )
-        cls.patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1", published=True)
+        cls.patent = Reference.objects.create(
+            kind=Reference.Kind.PATENT, identifier="EP3260450A1", published=True, entered_by=cls.curator
+        )
         cls.thesis = Reference.objects.create(
-            kind=Reference.Kind.THESIS, identifier="Mandle 2015, Two nematic phases", published=True
+            kind=Reference.Kind.THESIS, identifier="Mandle 2015, Two nematic phases", published=True,
+            entered_by=cls.curator,
         )
 
     def setUp(self):

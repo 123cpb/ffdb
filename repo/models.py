@@ -145,6 +145,22 @@ class ReferenceQuerySet(models.QuerySet):
             | Q(pk__in=Series.objects.public().values("reference"))
         )
 
+    def open_to(self, user, opened=()):
+        """The references whose Add data page user can open: every one for an admin. A curator
+        can open a public one, one they entered, one they have data in (their waiting saves'
+        rows, and approved ones, which keep who entered them), and those in opened, the numbers
+        of the references whose identifier they typed on Add data (views.add_data()). Not any
+        other, so a curator can't read hidden work's identifier by trying numbers."""
+        if is_admin(user):
+            return self
+        return self.filter(
+            Q(pk__in=Reference.objects.public().values("pk"))
+            | Q(entered_by=user)
+            | Q(pk__in=PhaseSequence.objects.filter(entered_by=user).values("reference"))
+            | Q(pk__in=Series.objects.filter(entered_by=user).values("reference"))
+            | Q(pk__in=opened)
+        )
+
 
 class RetiredIDQuerySet(models.QuerySet):
     def public(self):
@@ -1575,20 +1591,26 @@ class RetiredID(models.Model):
         return accession(self.number)
 
     @classmethod
-    def structure_problem(cls, inchikey):
+    def structure_problem(cls, inchikey, among=None):
         """Why a compound with this InChIKey can't be added to FFDB, or "" when it can: it was a
         retired ID's structure, and a structure has one ID. Restoring is the only way a retired
         ID comes back, and a merged one's data is with the material it went into. Should two
         records have it, the most recently retired is named (Meta's ordering). A material that
         was never public is ignored: naming it would leave a trace of it. Its structure can be
-        added again, and restore() then refuses to bring it back."""
+        added again, and restore() then refuses to bring it back.
+
+        Add data passes among, the materials its user sees (seen_by()): the material it was
+        merged into is named only if it is among them, so a curator isn't told a hidden one is
+        there. The admin and the import pass nothing, and it is named whatever it is now."""
         record = cls.objects.public().filter(inchikey=inchikey).first() if inchikey else None
         if record is None:
             return ""
         was = f"This structure was {record.accession} ({record.name})"
-        if record.merged_into is not None:
+        if record.merged_into is None:
+            return f"{was}, now retired: an admin can restore {record.accession}."
+        if among is None or among.filter(pk=record.merged_into).exists():
             return f"{was}, merged into {accession(record.merged_into)}: add the data there."
-        return f"{was}, now retired: an admin can restore {record.accession}."
+        return f"{was}, now retired: ask an admin where to add its data."
 
     def restore(self):
         """Put the material back from the snapshot, under its old number, with every row

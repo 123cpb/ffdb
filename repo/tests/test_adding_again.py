@@ -1,15 +1,17 @@
 """A compound whose structure was a retired ID's is refused, naming the old ID: in the admin,
 added or with its SMILES changed, and in the compound table on Add data. Otherwise one
 structure would have two IDs. The import skips it too (test_import.py). A material that was
-never public is the exception: it leaves no trace, so its structure can be added again."""
+never public is the exception: it leaves no trace, so its structure can be added again. A
+curator isn't told the ID of a hidden material a retired one was merged into."""
 
 from django.core.exceptions import ValidationError
 from django.urls import reverse
 
+from repo.forms import CardMaterialForm
 from repo.models import Material, RetiredID, accession
 from repo.tests.test_add_data import FIVE_CB
 from repo.tests.test_compound_table import CompoundTableTestCase
-from repo.tests.test_merge import WRONG_RM734
+from repo.tests.test_merge import EIGHT_CB, WRONG_RM734
 from repo.tests.test_values import DIO
 
 
@@ -99,3 +101,21 @@ class AddingAgainTests(CompoundTableTestCase):
         line = self.line(f"5CB\t{FIVE_CB}")
 
         self.assertEqual((line.status, line.match.accession), ("in_ffdb", self.retired))
+
+    def test_a_structure_merged_into_a_hidden_material_names_it_only_to_an_admin(self):
+        hidden = Material.objects.create(name="DIO", smiles=DIO)  # no data and not listed: hidden
+        duplicate = Material.objects.create(name="8CB", smiles=EIGHT_CB, listed=True)
+        merged = accession(duplicate.pk)
+        duplicate.merge_into(hidden, self.admin)
+        to_curator = f"This structure was {merged} (8CB), now retired: ask an admin where to add its data."
+        to_admin = f"This structure was {merged} (8CB), merged into {hidden.accession}: add the data there."
+
+        for user, message in [(self.curator, to_curator), (self.admin, to_admin)]:
+            with self.subTest(user=user.username):
+                self.client.force_login(user)
+                self.assertEqual(self.line(f"8CB\t{EIGHT_CB}").problem, message)
+                card = CardMaterialForm({"smiles": EIGHT_CB, "name": "8CB"}, user=user)
+                self.assertFalse(card.is_valid())
+                self.assertEqual(card.errors["smiles"], [message])
+        # The admin site names it too: Material.clean() asks without among.
+        self.assertContains(self.admin_form(None, "Again", EIGHT_CB), to_admin)

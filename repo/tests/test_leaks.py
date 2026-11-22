@@ -28,6 +28,7 @@ from repo.tests.test_switches import UNPUBLISHED_WORK
 # In every hidden piece: a name, a method or a reference's identifier, each shown on a page if it leaks.
 MARKER = "LEAKMARKER"
 EIGHT_OCB = "CCCCCCCCOc1ccc(-c2ccc(C#N)cc2)cc1"
+SIX_CB = "CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
 # 2-Octanol with its stereochemistry given: S is hidden, and R has the same connectivity.
 S_OCTANOL, R_OCTANOL = "C[C@H](O)CCCCCC", "C[C@@H](O)CCCCCC"
 # The Materials page, then its three downloads. Each takes the page's search.
@@ -55,9 +56,10 @@ class HiddenData(TestCase):
     public mixture, one of whose components is hidden. RM734's waiting series is a Ps value,
     a property no public series has. It and RM734's waiting sequence from the paper are a curator's
     waiting save, which holds a label for RM734. Two hidden references: the unpublished work, and a
-    published article whose only data, a sequence of RM734's, waits. Then three retired IDs: a hidden
-    compound deleted, a hidden compound merged into RM734, and a listed mixture merged into
-    the hidden mixture, whose address must not lead there."""
+    published article whose only data, a sequence of RM734's, waits. Then four retired IDs: a hidden
+    compound deleted, a hidden compound merged into RM734, a listed mixture merged into the hidden
+    mixture, whose address must not lead there, and 6CB, listed, merged into the waiting compound,
+    whose structure a curator's checks must not lead there either."""
 
     @classmethod
     def setUpTestData(cls):
@@ -115,12 +117,14 @@ class HiddenData(TestCase):
         merged = Material.objects.create(name=f"{MARKER} merged compound", aliases=f"{MARKER}-2", smiles=WRONG_RM734)
         cls.sequence(merged, cls.paper, DUPLICATE_SUMMARY, approved=False)
         into_hidden = Material.objects.create(kind=Material.Kind.MIXTURE, name="F8", listed=True)
+        into_waiting = Material.objects.create(name="6CB", smiles=SIX_CB, listed=True)
         # Each by its number, read first: retiring sets the pk to None, and keeps the rest.
         cls.hidden_retired = {deleted.pk: deleted, merged.pk: merged}
-        cls.retired = [deleted.pk, merged.pk, into_hidden.pk]
+        cls.retired = [deleted.pk, merged.pk, into_hidden.pk, into_waiting.pk]
         deleted.retire(cls.admin)
         merged.merge_into(cls.rm734, cls.admin)
         into_hidden.merge_into(cls.hidden_mixture, cls.admin)
+        into_waiting.merge_into(cls.waiting, cls.admin)
 
     @staticmethod
     def sequence(material, reference, text, approved=True, **fields):
@@ -370,8 +374,10 @@ class CuratorChecksTests(HiddenData):
     """A curator's Add data checks look only among public data (models.seen_by()), so what they
     type of hidden data finds nothing hidden: each hidden material's SMILES, LCR ID, name and
     alias, retired or not, the held label, and the mixtures' names. A hidden structure reads as
-    new, and saving it adds the card's data to it. A reference's Add data page lists only its
-    public data. An admin's checks still find hidden materials, because their saves go straight in."""
+    new, and saving it adds the card's data to it. A structure merged into a hidden material
+    doesn't name it. A hidden reference's Add data page isn't found until the curator types its
+    identifier, and then lists only its public data. An admin's checks still find hidden
+    materials, because their saves go straight in."""
 
     @classmethod
     def setUpTestData(cls):
@@ -446,13 +452,19 @@ class CuratorChecksTests(HiddenData):
         """A table of one line per identifier, a SMILES or an LCR ID, each labelled by its line."""
         return "\n".join(f"line{number}\t{identifier}" for number, identifier in enumerate(identifiers, start=1))
 
+    def type_identifier(self, reference):
+        """Give reference's identifier on the Add data page, as a curator does to reach it."""
+        kind = "doi" if reference.has_doi() else reference.kind  # the form's kinds, as FindReferenceForm has them
+        return self.client.post(reverse("repo:add"), {"kind": kind, "identifier": reference.identifier})
+
     def mixture(self, name, components):
         """A card's boxes for a new mixture called name, with these component lines."""
         lines = "\n".join(f"{component}, 10, mol%" for component in components)
         return {"name": name, "composition_status": Material.CompositionStatus.LISTED, "components": lines}
 
     def test_no_add_data_check_shows_a_curator_hidden_data(self):
-        ids, smiles, names = self.typed_ids(), self.typed_smiles(), self.typed_names()
+        ids, names = self.typed_ids(), self.typed_names()
+        smiles = self.typed_smiles() + [SIX_CB]  # 6CB's: its retired ID was merged into a hidden compound
         mixtures = [self.hidden_mixture.name, self.public_mixture.name]  # F7, public, has a hidden component
         make_cards = f"{reverse('repo:make_cards', args=[self.paper.pk])}?start=0"
         answers = [
@@ -468,12 +480,41 @@ class CuratorChecksTests(HiddenData):
             *[self.mixture(name, ids + names) for name in mixtures],
         ]
         answers.append((self.check_cards(*cards), ids + names + smiles + mixtures))
-        # A reference's own identifier is on its page: the curator typed it on Add data to get there.
-        for reference in [self.paper, *self.hidden_references]:
+        # Every reference's Add data page, its identifier not typed: a hidden one isn't found.
+        for reference in Reference.objects.all():
             page = self.client.get(reverse("repo:add_from_reference", args=[reference.pk]))
-            answers.append((page, [reference.identifier]))
+            if reference in self.hidden_references:
+                self.assertEqual(page.status_code, 404)
+            else:
+                answers.append((page, []))
         for response, typed in answers:
             self.assert_no_secrets(response, typed)
+
+    def test_a_hidden_references_add_data_addresses_are_not_found_until_its_identifier_is_typed(self):
+        # Each address for curators only that takes a reference's number, posted to, as the checks
+        # take only POST. Each looks the reference up before it reads anything sent.
+        names = [p.name for p in urlpatterns if p.name in CURATORS_ONLY and "<int:pk>" in str(p.pattern)]
+        for reference in self.hidden_references:
+            for name in names:
+                with self.subTest(reference=reference.identifier, address=name):
+                    self.assertEqual(self.client.post(reverse(f"repo:{name}", args=[reference.pk])).status_code, 404)
+            # assertRedirects also opens the page it is sent to, and checks it answers 200.
+            self.assertRedirects(self.type_identifier(reference), reverse("repo:add_from_reference", args=[reference.pk]))
+        # Logging out empties the session, so the curator types each identifier again.
+        self.client.logout()
+        self.client.force_login(self.curator)
+        for reference in self.hidden_references:
+            with self.subTest(reference=reference.identifier):
+                self.assertEqual(self.client.get(reverse("repo:add_from_reference", args=[reference.pk])).status_code, 404)
+
+    def test_a_reference_the_curator_entered_or_has_data_in_opens(self):
+        entered = Reference.objects.create(
+            kind=Reference.Kind.UNPUBLISHED, identifier="Their own work", entered_by=self.curator
+        )
+        self.sequence(self.waiting, self.unpublished, "K 30 N 40 I", approved=False, entered_by=self.curator)
+        for reference in (entered, self.unpublished):
+            with self.subTest(reference=reference.identifier):
+                self.assertEqual(self.client.get(reverse("repo:add_from_reference", args=[reference.pk])).status_code, 200)
 
     def test_a_hidden_materials_lcr_id_name_or_alias_finds_nothing_in_any_box(self):
         for text in self.typed_ids() + self.typed_names():
@@ -557,7 +598,9 @@ class CuratorChecksTests(HiddenData):
         series = [one for group, members in page["value_sections"] for prop, rows, charts in members for one in rows]
         self.assertEqual(series, [self.public_series])
 
-        # RM734 is public, but its only data from the waiting paper waits.
+        # RM734 is public, but its only data from the waiting paper waits. The paper isn't public,
+        # so the curator opens it by typing its DOI.
+        self.type_identifier(self.waiting_paper)
         response = self.client.get(reverse("repo:add_from_reference", args=[self.waiting_paper.pk]))
         self.assertEqual((list(response.context["materials"]), list(response.context["sequences"])), ([], []))
         self.assertContains(response, "No materials from this reference yet.")
@@ -577,3 +620,6 @@ class CuratorChecksTests(HiddenData):
         self.assertTrue(warning.startswith(f"This structure has the same connectivity as {self.stereo.accession}"))
         page = self.client.get(reverse("repo:add_from_reference", args=[self.waiting_paper.pk]))
         self.assertEqual(list(page.context["materials"]), [self.rm734])
+        # An admin opens every reference's page, without typing its identifier.
+        page = self.client.get(reverse("repo:add_from_reference", args=[self.unpublished.pk]))
+        self.assertEqual(page.status_code, 200)

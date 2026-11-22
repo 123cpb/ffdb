@@ -6,8 +6,9 @@ runs and values go on the card as a compound's do, and one Save adds every card.
 from django.contrib.staticfiles import finders
 from django.test import TestCase
 from django.urls import reverse
+from django.utils.html import escape
 
-from repo.forms import CardMaterialForm, MixtureForm, read_components
+from repo.forms import ADD_COMPONENT_AFTER_APPROVAL, ADD_COMPONENT_FIRST, CardMaterialForm, MixtureForm, read_components
 from repo.models import Material, PhaseSequence, Series
 from repo.tests.test_add_data import FIVE_CB, WAITING
 from repo.tests.test_compound_card import FIVE_CB_HEATING, visible
@@ -186,6 +187,26 @@ class CheckTests(MixtureCardTestCase):
         response = self.send_cards({"run": DIO_HEATING, **F7, "components": "Aya_5B, 70, mol%\nRM-734X, 30, mol%"})
 
         self.assertContains(response, "Not read: Nothing in FFDB is called RM-734X.")
+
+    def test_a_compound_a_curator_has_just_added_isnt_a_component_until_it_is_public(self):
+        # Their save waits for an admin's check, so 5CB is hidden until then.
+        self.send_cards({"run": FIVE_CB_HEATING, "smiles": FIVE_CB, "name": "5CB"}, button="save")
+
+        response = self.send_cards({"run": DIO_HEATING, **F7, "components": "5CB, 30, mol%"})
+
+        [line] = self.material_form(response).mixture.lines
+        self.assertEqual(line.problem, f"Nothing in FFDB is called 5CB. {ADD_COMPONENT_AFTER_APPROVAL}")
+        # The box's help text gives the same advice.
+        self.assertContains(response, escape("A compound that isn't in FFDB yet: add it on a card of its own"))
+
+    def test_an_admins_line_says_to_add_the_compound_first(self):
+        self.client.force_login(self.admin)  # whose new compound is in FFDB as soon as it is saved
+
+        response = self.send_cards({"run": DIO_HEATING, **F7, "components": "RM2914, 30, mol%"})
+
+        [line] = self.material_form(response).mixture.lines
+        self.assertEqual(line.problem, f"Nothing in FFDB is called RM2914. {ADD_COMPONENT_FIRST}")
+        self.assertContains(response, escape("A compound that isn't in FFDB yet: add it first on a card of its own"))
 
     def test_the_check_as_the_curator_types_lists_the_mixtures_problems_and_lines(self):
         answer = self.check_material(**{**F7, "composition_status": ""})

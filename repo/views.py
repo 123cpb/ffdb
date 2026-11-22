@@ -633,6 +633,18 @@ def structure(request, pk):
 # have every permission, so admins count as curators. base.html shows the Add data link on
 # the same permission.
 
+# The session key holding the numbers of the references whose identifier the user typed on Add
+# data. Django keeps sessions in the database, and logging out empties the session.
+OPENED = "opened_references"
+
+
+def reference_for(request, pk):
+    """The reference with this number, if the user can open its Add data page
+    (ReferenceQuerySet.open_to()). Otherwise a 404, the same as for a number never given out,
+    so the two can't be told apart."""
+    references = Reference.objects.open_to(request.user, request.session.get(OPENED, []))
+    return get_object_or_404(references, pk=pk)
+
 
 @login_required
 @permission_required("repo.add_reference", raise_exception=True)
@@ -650,6 +662,12 @@ def add_data(request):
         reference = Reference.objects.filter(identifier__iexact=identifier).first()
         # The label comes last in each message, because it can end in a full stop (Chem. Eur. J.).
         if reference:
+            # Typing its identifier opens its Add data page (reference_for()): identifiers are
+            # unique, so this is how a curator reaches hidden work someone else added. A new
+            # list, not one changed in place, so Django sees the session has changed and saves it.
+            opened = request.session.get(OPENED, [])
+            if reference.pk not in opened:
+                request.session[OPENED] = [*opened, reference.pk]
             messages.info(request, f"Already in FFDB: {reference.label}")
         else:
             # Published unless it is unpublished work, which the database refuses to mark published.
@@ -695,16 +713,17 @@ def add_from_reference(request, pk):
     """A reference's Add data page: its compound cards, a box for a table of its compounds that
     makes cards, and what FFDB already has from it, as the user sees it (seen_by()): a curator
     sees only its public sequences and values, an admin all of them. Its materials are those the
-    sequences and values shown are for. A number with no reference gives a 404. The cards are the
-    one way to add data here; the table only fills them.
+    sequences and values shown are for. A number with no reference, or one the user can't open
+    (reference_for()), gives a 404. The cards are the one way to add data here; the table only
+    fills them.
 
     Check reads the table and shows each line, saving nothing. Make cards (a POST with cards in
     it) is the page without JavaScript's: with cards.js, make_cards() answers it. Once every line
     reads, the page comes back with a card for each line in place of its cards, nothing saved,
     and the table emptied, as the cards hold its lines now. Otherwise it comes back with no cards
     made, and why, above the table's lines."""
-    # Any reference, public or not: curators add data under references that aren't public yet.
-    reference = get_object_or_404(Reference, pk=pk)
+    # Public or not: curators add data under references that aren't public yet.
+    reference = reference_for(request, pk)
     user = request.user
     form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference, user=user)
     # A page of one empty compound card, sent to add_compound, unless the table makes cards.
@@ -803,7 +822,7 @@ def number_param(request, key, limit):
 def card_sent(request, pk):
     """Card ?card= (its index from 0, as in its prefix, card-0) of the compound cards sent, built
     as views.add_compound builds it: only that card is read."""
-    reference = get_object_or_404(Reference, pk=pk)
+    reference = reference_for(request, pk)
     return CompoundCard(request.POST, reference, request.user, number_param(request, "card", MAX_CARDS))
 
 
@@ -848,7 +867,7 @@ def check_card_runs(request, pk):
 def check_table(request, pk):
     """What the server makes of a compound table, as its Check shows it. With the table empty
     the answer is empty, rather than a message asking for a line."""
-    form = CompoundTableForm(request.POST, reference=get_object_or_404(Reference, pk=pk), user=request.user)
+    form = CompoundTableForm(request.POST, reference=reference_for(request, pk), user=request.user)
     if not request.POST.get("table", "").strip():
         return HttpResponse()
     return check_answer(request, [("", form)], "repo/_table_lines.html", {"form": form, **table_reading(form)})
@@ -864,7 +883,7 @@ def make_cards(request, pk):
     make them gets the table's answer as Check shows it, with why no card was made, and status
     422 (Unprocessable Content: the request is understood, but can't be done), so the script can
     tell the two apart."""
-    reference = get_object_or_404(Reference, pk=pk)
+    reference = reference_for(request, pk)
     form = CompoundTableForm(request.POST, reference=reference, user=request.user)
     start = number_param(request, "start", MAX_CARDS + 1)  # a page already full gets cards_data()'s message
     try:
@@ -961,8 +980,8 @@ def add_compound(request, pk):
     nothing while any card has a problem, and sends the curator back to the Add data page with a
     redirect, so reloading can't save twice. A curator's save waits for an admin's check, and the
     last message says so; an admin's is approved at once (CompoundCards.save()). A number with no
-    reference gives a 404."""
-    reference = get_object_or_404(Reference, pk=pk)
+    reference, or one the user can't open, gives a 404."""
+    reference = reference_for(request, pk)
     cards = CompoundCards(request.POST if request.method == "POST" else None, reference, request.user)
     if cards.is_valid() and "save" in request.POST:
         for saved in cards.save():
