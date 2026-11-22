@@ -394,22 +394,26 @@ def material_detail(request, pk):
 
 
 def references_with_counts():
-    """Every reference, each with n_materials: how many materials it gives sequences for.
-    The database counts them. distinct=True counts a material once, however many of its
-    sequences come from the reference."""
-    return Reference.objects.annotate(n_materials=Count("phase_sequences__material", distinct=True))
+    """Every public reference, each with n_materials: how many materials it gives public
+    sequences for. The database counts them. distinct=True counts a material once, however
+    many of its sequences come from the reference. filter= counts only the sequences in
+    PhaseSequence.objects.public(), so the rule for a public sequence stays said once."""
+    return Reference.objects.public().annotate(
+        n_materials=Count(
+            "phase_sequences__material", filter=Q(phase_sequences__in=PhaseSequence.objects.public()), distinct=True
+        )
+    )
 
 
 def find_references(text, kind=""):
-    """The references a search finds, in no set order: the page orders them
+    """The public references a search finds, in no set order: the page orders them
     (REFERENCE_SORTS). A blank search finds them all.
 
     The label is worked out in Python, so the database can't search it. Instead, each word
     of the text must be part of the identifier (a DOI or patent number), first author,
     venue or title, ignoring case, or be the year. So "Mandle 2017" finds the reference
-    labelled "Mandle 2017, Chem. Eur. J.". The word unpublished also finds the unpublished
-    group results, whose labels end "(unpublished)". A pasted https://doi.org/ or doi: is
-    removed first. kind, if given, is one of Reference.Kind and keeps only that kind.
+    labelled "Mandle 2017, Chem. Eur. J.". A pasted https://doi.org/ or doi: is removed
+    first. kind, if given, is one of PUBLIC_KINDS and keeps only that kind.
     """
     references = references_with_counts()
     # Commas and brackets count as spaces, so a whole copied label works.
@@ -423,8 +427,6 @@ def find_references(text, kind=""):
         )
         if word.isdigit():
             found |= Q(year=int(word))
-        if word.lower() == "unpublished":
-            found |= Q(kind=Reference.Kind.UNPUBLISHED)
         # Each filter() narrows the last, so every word has to match.
         references = references.filter(found)
     if kind:
@@ -432,13 +434,18 @@ def find_references(text, kind=""):
     return references
 
 
+# The kinds the References page offers: every kind a public reference can be. Unpublished
+# work can't be marked published (Reference's constraint), so it is never public.
+PUBLIC_KINDS = [(value, label) for value, label in Reference.Kind.choices if value != Reference.Kind.UNPUBLISHED]
+
+
 def references(request):
-    """The References page: every reference, or those that ?q= and ?kind= find, 25 to a
-    page, in the order ?sort= chooses (REFERENCE_SORTS). A ?kind= that isn't one of the
-    kinds is ignored."""
+    """The References page: every public reference, or those that ?q= and ?kind= find, 25
+    to a page, in the order ?sort= chooses (REFERENCE_SORTS). A ?kind= that isn't one of
+    PUBLIC_KINDS is ignored."""
     query = request.GET.get("q", "").strip()
     kind = request.GET.get("kind", "")
-    if kind not in Reference.Kind.values:
+    if kind not in dict(PUBLIC_KINDS):
         kind = ""
     sort = sort_param(request, REFERENCE_SORTS)
     found = find_references(query, kind).order_by(*REFERENCE_SORTS[sort])
@@ -449,7 +456,7 @@ def references(request):
         "query": query,
         "kind": kind,
         "kind_label": Reference.Kind(kind).label if kind else "",
-        "kinds": Reference.Kind.choices,
+        "kinds": PUBLIC_KINDS,
         "page": page,
         "search": urlencode(kept),
         "sort": sort,
@@ -458,40 +465,48 @@ def references(request):
     return render(request, "repo/references.html", context)
 
 
-def reference_tables(reference):
-    """What a reference's public page and its Add data page both show: its sequences and its
-    property values, as {"sequences": ..., "value_sections": ...} for the template."""
+def reference_tables(sequences, series):
+    """What a reference's public page and its Add data page both show: its sequences, how
+    many materials they are for, and its property values, as {"sequences": ...,
+    "n_materials": ..., "value_sections": ...} for the template. Each page passes the
+    reference's sequences and series it shows: the public page only the public ones."""
+    # In LCR ID order, as on the Materials page. select_related() fetches each row's
+    # material in the same query.
+    sequences = sequences.select_related("material").order_by("material_id", "id")
     # As on the material page, with each row's material in place of its reference.
     series = (
-        reference.series.select_related("material", "property__group", "variable")
+        series.select_related("material", "property__group", "variable")
         .prefetch_related("points")
         .order_by("material_id", "id")
     )
     return {
-        # In LCR ID order, as on the Materials page. select_related() fetches each row's
-        # material in the same query.
-        "sequences": reference.phase_sequences.select_related("material").order_by("material_id", "id"),
+        "sequences": sequences,
+        # Each material once, however many of its sequences are here. Going through the
+        # sequences runs their query, and the template uses the rows it kept.
+        "n_materials": len({sequence.material_id for sequence in sequences}),
         "value_sections": value_sections(series),
     }
 
 
 def reference_detail(request, pk):
-    """One reference's public page: its details and link, the materials it gives
-    sequences for, with those sequences, and the property values it gives. A number with
-    no reference gives a 404."""
-    reference = get_object_or_404(references_with_counts(), pk=pk)
-    context = {"nav": "references", "reference": reference, **reference_tables(reference)}
+    """One reference's public page: its details and link, the materials it gives public
+    sequences for, with those sequences, and the public property values it gives. A number
+    with no reference gives a 404, and so does a reference that isn't public."""
+    reference = get_object_or_404(Reference.objects.public(), pk=pk)
+    tables = reference_tables(reference.phase_sequences.public(), reference.series.public())
+    context = {"nav": "references", "reference": reference, **tables}
     return render(request, "repo/reference_detail.html", context)
 
 
 def properties_with_counts():
     """Every property, each with n_materials and n_references: how many materials and how
-    many references give values for it. As in references_with_counts(), distinct=True
-    counts each once, however many series it has. select_related() fetches each group in
-    the same query, for group_properties()."""
+    many references give public values for it. As in references_with_counts(), distinct=True
+    counts each once, however many series it has, and filter= counts only public series.
+    select_related() fetches each group in the same query, for group_properties()."""
+    public = Q(series__in=Series.objects.public())
     return Property.objects.select_related("group").annotate(
-        n_materials=Count("series__material", distinct=True),
-        n_references=Count("series__reference", distinct=True),
+        n_materials=Count("series__material", filter=public, distinct=True),
+        n_references=Count("series__reference", filter=public, distinct=True),
     )
 
 
@@ -513,11 +528,12 @@ PROPERTY_SORTS = {
 
 
 def property_detail(request, code):
-    """One property's public page: what its values must state, and every value of it across
-    materials, by material or, with ?sort=value, by value. Any other ?sort= is ignored. The
-    charts draw only the table's rows ticked, each one ?series=<its pk>, and nothing until one
-    is: a number that isn't one of this property's series is ignored. A code with no
-    property gives a 404."""
+    """One property's public page: what its values must state, and every public value of it
+    across materials, by material or, with ?sort=value, by value. Any other ?sort= is ignored.
+    The charts draw only the table's rows ticked, each one ?series=<its pk>, and nothing until
+    one is: a number that isn't one of this property's public series is ignored. A code with
+    no property gives a 404. A property with no public values still has its page: the
+    vocabulary is public."""
     prop = get_object_or_404(properties_with_counts(), code=code)
     sort = request.GET.get("sort", "")
     if sort not in PROPERTY_SORTS:
@@ -525,7 +541,8 @@ def property_detail(request, code):
     # Min() has the database find each series' lowest point, so it can sort by it. The
     # rest is as on the material page: one query for the series and one for their points.
     series = (
-        prop.series.select_related("material", "reference", "property", "variable")
+        prop.series.public()
+        .select_related("material", "reference", "property", "variable")
         .prefetch_related("points")
         .annotate(lowest_value=Min("points__value"))
         .order_by(*PROPERTY_SORTS[sort])
@@ -535,7 +552,8 @@ def property_detail(request, code):
     # the queryset keeps the rows, and the template's table uses them again.
     in_material_order = sorted(series, key=lambda one: (one.material_id, one.reference.identifier, one.pk))
     # The rows ticked: the series whose pk is one of the ?series= texts. Only this property's
-    # series are looked through, so "abc", or another property's series, matches nothing.
+    # public series are looked through, so "abc", another property's series or a hidden one
+    # matches nothing.
     asked = request.GET.getlist("series")
     drawn = [one for one in in_material_order if str(one.pk) in asked]
     chosen = [one.pk for one in drawn]
@@ -584,9 +602,9 @@ def values_csv(request):
 
 
 def property_values_csv(request, code):
-    """Every value of one property. A code with no property gives a 404."""
+    """Every public value of one property. A code with no property gives a 404."""
     prop = get_object_or_404(Property, code=code)
-    points = Measurement.objects.filter(series__property=prop)
+    points = Measurement.objects.public().filter(series__property=prop)
     return exports.csv_response(f"ffdb-{prop.code}-values.csv", exports.VALUE_COLUMNS, exports.value_rows(points))
 
 
@@ -682,7 +700,8 @@ def add_from_reference(request, pk):
     reads, the page comes back with a card for each line in place of its cards, nothing saved,
     and the table emptied, as the cards hold its lines now. Otherwise it comes back with no cards
     made, and why, above the table's lines."""
-    reference = get_object_or_404(references_with_counts(), pk=pk)
+    # Any reference, public or not: curators add data under references that aren't public yet.
+    reference = get_object_or_404(Reference, pk=pk)
     form = CompoundTableForm(request.POST if request.method == "POST" else None, reference=reference)
     # A page of one empty compound card, sent to add_compound, unless the table makes cards.
     cards, cards_problems = CompoundCards(None, reference), []
@@ -705,7 +724,7 @@ def add_from_reference(request, pk):
         "cards_problems": cards_problems,
         "materials": reference.materials(),
         "cards": cards,
-        **reference_tables(reference),
+        **reference_tables(reference.phase_sequences.all(), reference.series.all()),
     }
     return render(request, "repo/add_from_reference.html", context)
 

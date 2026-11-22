@@ -9,11 +9,12 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from django.contrib.auth.models import User
 from django.test import TestCase
-from django.urls import reverse
+from django.urls import resolve, reverse
 
 from repo.models import (
     Material, MixtureComponent, PhaseSequence, Property, Reference, RetiredID, Series, Variable, accession,
 )
+from repo.urls import urlpatterns
 from repo.tests.test_import import ARTICLE, FIVE_CB
 from repo.tests.test_merge import DUPLICATE_SUMMARY, EIGHT_CB, WRONG_RM734
 from repo.tests.test_sequences import RM734, RM734_SUMMARY
@@ -24,6 +25,15 @@ MARKER = "LEAKMARKER"
 EIGHT_OCB = "CCCCCCCCOc1ccc(-c2ccc(C#N)cc2)cc1"
 # The Materials page, then its three downloads. Each takes the page's search.
 MATERIALS_PAGES = ["repo:materials", "repo:materials_csv", "repo:sequences_csv", "repo:values_csv"]
+# The References page searches aimed at the hidden references: the marker, in both their
+# identifiers; the unpublished work's words; and the word unpublished, which once found it.
+REFERENCE_SEARCHES = [{"q": MARKER}, {"q": UNPUBLISHED_WORK}, {"q": "unpublished"}]
+# The addresses in repo/urls.py that only curators can open, by name. The leak test doesn't
+# request them, so LeakTests checks that each sends a visitor to log in.
+CURATORS_ONLY = {
+    "add", "add_from_reference", "add_compound", "check_card_material", "check_card_runs", "check_table",
+    "make_cards", "check_block", "check_block_boxes",
+}
 
 
 def csv_rows(response):
@@ -35,7 +45,8 @@ class HiddenData(TestCase):
     """RM734, public, with hidden data too; a compound with only waiting data; one whose only
     data is under unpublished work; a hidden mixture whose component, RM734, is public; and a
     public mixture, one of whose components is hidden. RM734's waiting series is a Ps value,
-    a property no public series has. Then three retired IDs: a hidden
+    a property no public series has. Two hidden references: the unpublished work, and a
+    published article whose only data, a sequence of RM734's, waits. Then three retired IDs: a hidden
     compound deleted, a hidden compound merged into RM734, and a listed mixture merged into
     the hidden mixture, whose address must not lead there."""
 
@@ -47,14 +58,22 @@ class HiddenData(TestCase):
         cls.unpublished = Reference.objects.create(
             kind=Reference.Kind.UNPUBLISHED, identifier=f"{UNPUBLISHED_WORK}, {MARKER}"
         )
+        # Published, but not public: nothing it gives is approved yet.
+        cls.waiting_paper = Reference.objects.create(
+            kind=Reference.Kind.ARTICLE, identifier=f"10.9999/{MARKER}", published=True
+        )
+        cls.hidden_references = [cls.unpublished, cls.waiting_paper]
 
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
         cls.public_sequence = cls.sequence(cls.rm734, cls.paper, RM734_SUMMARY)
         cls.public_series = cls.series(cls.rm734, cls.paper, method="current reversal")
-        # SmA: a phase that only the waiting sequence has.
+        # SmA: a phase that only the waiting sequences have.
         cls.sequence(cls.rm734, cls.paper, "K 80 SmA 120 I", approved=False, method=f"{MARKER} waiting sequence")
-        cls.series(cls.rm734, cls.paper, approved=False, code="ps", method=f"{MARKER} waiting series")
-        cls.series(cls.rm734, cls.unpublished, method=f"{MARKER} unpublished series")
+        cls.sequence(cls.rm734, cls.waiting_paper, "K 80 SmA 120 I", approved=False)
+        cls.waiting_series = cls.series(
+            cls.rm734, cls.paper, approved=False, code="ps", method=f"{MARKER} waiting series"
+        )
+        cls.unpublished_series = cls.series(cls.rm734, cls.unpublished, method=f"{MARKER} unpublished series")
 
         cls.waiting = Material.objects.create(name=f"{MARKER} waiting compound", smiles=FIVE_CB)
         cls.sequence(cls.waiting, cls.paper, "K 22.5 N 35 I", approved=False)
@@ -64,12 +83,12 @@ class HiddenData(TestCase):
 
         cls.hidden_mixture = Material.objects.create(kind=Material.Kind.MIXTURE, name=f"{MARKER} hidden mixture")
         MixtureComponent.objects.create(mixture=cls.hidden_mixture, component=cls.rm734, fraction=50, unit="mol%")
-        cls.series(cls.hidden_mixture, cls.paper, approved=False)
+        cls.hidden_mixture_series = cls.series(cls.hidden_mixture, cls.paper, approved=False)
 
         cls.public_mixture = Material.objects.create(kind=Material.Kind.MIXTURE, name="F7")
         MixtureComponent.objects.create(mixture=cls.public_mixture, component=cls.rm734, fraction=70, unit="mol%")
         MixtureComponent.objects.create(mixture=cls.public_mixture, component=cls.waiting, fraction=30, unit="mol%")
-        cls.sequence(cls.public_mixture, cls.paper, "K 30 NF 90 N 120 I")
+        cls.public_mixture_sequence = cls.sequence(cls.public_mixture, cls.paper, "K 30 NF 90 N 120 I")
 
         cls.hidden = [cls.waiting, cls.unpublished_compound, cls.hidden_mixture]
         cls.admin = User.objects.create_superuser("admin", password="a-test-password")
@@ -117,8 +136,11 @@ class LeakTests(HiddenData):
 
     def addresses(self):
         """Every public address the test requests: the home page; the Materials page and each
-        download, blank and with each search; and each material's page and structure image,
-        hidden or not, and each retired ID's, so a hidden piece a later block adds is requested too."""
+        download, blank and with each search; each material's page and structure image,
+        hidden or not, and each retired ID's; the References page, blank, with each search and
+        with the unpublished kind, and each reference's page; and the Properties page, and each
+        property's page, blank and with every series ticked, and its download. Every row is
+        requested, so a hidden piece a later block adds is requested too."""
         numbers = [*Material.objects.values_list("pk", flat=True), *RetiredID.objects.values_list("number", flat=True)]
         searched = [
             f"{reverse(name)}?{urlencode(search)}" if search else reverse(name)
@@ -127,16 +149,34 @@ class LeakTests(HiddenData):
         pages = [
             reverse(name, args=[number]) for number in sorted(numbers) for name in ("repo:material", "repo:structure")
         ]
-        return [reverse("repo:home"), *searched, *pages]
+        references = reverse("repo:references")
+        reference_searches = [
+            f"{references}?{urlencode(search)}" for search in [*REFERENCE_SEARCHES, {"kind": "unpublished"}]
+        ]
+        reference_pages = [
+            reverse("repo:reference", args=[pk]) for pk in Reference.objects.values_list("pk", flat=True)
+        ]
+        every_series = urlencode([("series", pk) for pk in Series.objects.values_list("pk", flat=True)])
+        property_pages = []
+        for code in Property.objects.values_list("code", flat=True):
+            page = reverse("repo:property", args=[code])
+            property_pages += [page, f"{page}?{every_series}", reverse("repo:property_values_csv", args=[code])]
+        return [
+            reverse("repo:home"), *searched, *pages,
+            references, *reference_searches, *reference_pages,
+            reverse("repo:properties"), *property_pages,
+        ]
 
     def secrets(self):
-        """What must never appear: the marker, and each hidden material's LCR ID, SMILES,
-        InChIKey and address (a mixture has no SMILES or InChIKey), retired or not."""
+        """What must never appear: the marker, each hidden material's LCR ID, SMILES,
+        InChIKey and address (a mixture has no SMILES or InChIKey), retired or not, and each
+        hidden reference's address."""
         found = [MARKER]
         hidden = {material.pk: material for material in self.hidden} | self.hidden_retired
         for number, material in hidden.items():
             found += [accession(number), reverse("repo:material", args=[number])]
             found += [text for text in (material.smiles, material.canonical_smiles, material.inchikey) if text]
+        found += [reverse("repo:reference", args=[reference.pk]) for reference in self.hidden_references]
         return found
 
     def test_no_public_address_shows_hidden_data_to_a_visitor_or_an_admin(self):
@@ -178,6 +218,35 @@ class LeakTests(HiddenData):
     def test_a_merged_hidden_materials_names_are_not_added(self):
         self.rm734.refresh_from_db()
         self.assertEqual(self.rm734.aliases, "")
+
+    def test_a_reference_search_aimed_at_hidden_references_finds_nothing(self):
+        for search in REFERENCE_SEARCHES:
+            with self.subTest(search=search):
+                page = self.client.get(reverse("repo:references"), search)
+                self.assertEqual(page.context["page"].paginator.count, 0)
+
+    def test_a_hidden_references_page_is_not_found(self):
+        for reference in self.hidden_references:
+            with self.subTest(reference=reference.identifier):
+                self.assertEqual(self.client.get(reverse("repo:reference", args=[reference.pk])).status_code, 404)
+
+    def test_every_address_is_in_the_leak_test_or_for_curators_only(self):
+        # The name of each address the leak test requests, read back from the address itself.
+        requested = {resolve(urlsplit(address).path).url_name for address in self.addresses()}
+        for pattern in urlpatterns:
+            with self.subTest(address=str(pattern.pattern)):
+                self.assertTrue(pattern.name in requested or pattern.name in CURATORS_ONLY)
+
+    def test_an_address_for_curators_only_sends_a_visitor_to_log_in(self):
+        login = reverse("login")
+        for pattern in urlpatterns:
+            if pattern.name not in CURATORS_ONLY:
+                continue
+            with self.subTest(address=str(pattern.pattern)):
+                args = [self.paper.pk] if "<int:pk>" in str(pattern.pattern) else []
+                response = self.client.get(reverse(f"repo:{pattern.name}", args=args))
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(response["Location"].startswith(f"{login}?"))
 
 
 class MaterialsPageTests(HiddenData):
@@ -229,3 +298,52 @@ class PublicDataTests(HiddenData):
         response = self.client.get(reverse("repo:structure", args=[self.rm734.pk]))
 
         self.assertEqual((response.status_code, response["Content-Type"]), (200, "image/svg+xml"))
+
+
+class ReferenceAndPropertyTests(HiddenData):
+    """What no marker would show: hidden data counted, listed or drawn for the paper, which
+    is public, and for Δn, which has public values."""
+
+    def property_page(self, code, *series):
+        return self.client.get(reverse("repo:property", args=[code]), {"series": [one.pk for one in series]})
+
+    def test_the_references_page_lists_only_the_paper_and_counts_its_public_materials(self):
+        page = self.client.get(reverse("repo:references")).context["page"]
+
+        # RM734 and F7, not the waiting compound.
+        self.assertEqual([(reference, reference.n_materials) for reference in page], [(self.paper, 2)])
+
+    def test_the_papers_page_lists_only_its_public_sequences_and_values(self):
+        response = self.client.get(reverse("repo:reference", args=[self.paper.pk]))
+
+        self.assertEqual(list(response.context["sequences"]), [self.public_sequence, self.public_mixture_sequence])
+        sections = response.context["value_sections"]
+        series = [one for group, members in sections for prop, rows, charts in members for one in rows]
+        self.assertEqual(series, [self.public_series])
+        self.assertContains(response, "2 materials, 2 sequences.")
+
+    def test_the_properties_page_counts_only_public_materials_and_references(self):
+        entries = self.client.get(reverse("repo:properties")).context["entries"]
+        counts = {prop.code: (prop.n_materials, prop.n_references) for group, members in entries for prop in members}
+
+        # Not the hidden mixture, or the unpublished work, which give Δn values too.
+        self.assertEqual(counts["birefringence"], (1, 1))
+        self.assertEqual(counts["ps"], (0, 0))
+
+    def test_a_property_page_lists_and_draws_only_public_series(self):
+        hidden = [self.unpublished_series, self.hidden_mixture_series]
+        birefringence = self.property_page("birefringence", self.public_series, *hidden)
+        ps = self.property_page("ps", self.waiting_series)
+
+        self.assertEqual(list(birefringence.context["series_list"]), [self.public_series])
+        self.assertEqual(birefringence.context["chosen"], [self.public_series.pk])
+        self.assertEqual((list(ps.context["series_list"]), ps.context["chosen"]), ([], []))
+        self.assertContains(ps, "No Ps values yet.")
+
+    def test_a_property_download_holds_only_public_values(self):
+        def series_ids(code):
+            response = self.client.get(reverse("repo:property_values_csv", args=[code]))
+            return [row["series_id"] for row in csv_rows(response)]
+
+        self.assertEqual(series_ids("birefringence"), [str(self.public_series.pk)])
+        self.assertEqual(series_ids("ps"), [])

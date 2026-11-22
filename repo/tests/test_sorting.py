@@ -1,11 +1,18 @@
 from django.test import TestCase
 from django.urls import reverse
 
-from repo.models import Material, Reference
+from repo.models import Material, PhaseSequence, Reference
 
 MATERIALS = reverse("repo:materials")
 REFERENCES = reverse("repo:references")
 HIDDEN_SORT = '<input type="hidden" name="sort" value="{}">'
+
+
+def give_public_data(references):
+    """A sequence of one compound from each reference, approved, so each published reference is public."""
+    material = Material.objects.create(name="5CB", smiles="CCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
+    for reference in references:
+        PhaseSequence.objects.create(material=material, reference=reference, sequence="K 22.5 N 35 I", approved=True)
 
 
 class MaterialOrderTests(TestCase):
@@ -62,10 +69,19 @@ class ReferenceOrderTests(TestCase):
     def setUpTestData(cls):
         # Added in this order, which is neither year order nor its reverse.
         article = Reference.Kind.ARTICLE
-        cls.r2017 = Reference.objects.create(kind=article, identifier="10.1000/a", first_author="Mandle", year=2017)
-        cls.r2020 = Reference.objects.create(kind=article, identifier="10.1000/b", first_author="Chen", year=2020)
-        cls.thesis = Reference.objects.create(kind=Reference.Kind.THESIS, identifier="Parton-Barr, 2027, a thesis")
-        cls.r2015 = Reference.objects.create(kind=article, identifier="10.1000/c", first_author="Nishikawa", year=2015)
+        cls.r2017 = Reference.objects.create(
+            kind=article, identifier="10.1000/a", first_author="Mandle", year=2017, published=True
+        )
+        cls.r2020 = Reference.objects.create(
+            kind=article, identifier="10.1000/b", first_author="Chen", year=2020, published=True
+        )
+        cls.thesis = Reference.objects.create(
+            kind=Reference.Kind.THESIS, identifier="Parton-Barr, 2027, a thesis", published=True
+        )
+        cls.r2015 = Reference.objects.create(
+            kind=article, identifier="10.1000/c", first_author="Nishikawa", year=2015, published=True
+        )
+        give_public_data([cls.r2017, cls.r2020, cls.thesis, cls.r2015])
 
     def listed(self, **params):
         return list(self.client.get(REFERENCES, params).context["page"].object_list)
@@ -94,8 +110,10 @@ class ReferencePagingOrderTests(TestCase):
         # 26 patents with no year, added EP0000000A1 first. By year, all tie, so they go by
         # identifier: the same order as added, the other way round from newest first.
         cls.patents = [
-            Reference.objects.create(kind=Reference.Kind.PATENT, identifier=f"EP{n:07d}A1") for n in range(26)
+            Reference.objects.create(kind=Reference.Kind.PATENT, identifier=f"EP{n:07d}A1", published=True)
+            for n in range(26)
         ]
+        give_public_data(cls.patents)
 
     def test_page_2_keeps_the_order_and_the_search(self):
         search = {"q": "EP", "kind": "patent"}

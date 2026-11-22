@@ -13,8 +13,9 @@ FIVE_CB = "CCCCCc1ccc(-c2ccc(C#N)cc2)cc1"
 
 
 class ReferenceTestCase(TestCase):
-    """One reference of each kind. The article gives sequences for two materials, two of
-    them for RM734; the patent gives one; the preprint and thesis give none."""
+    """One published reference of each kind. The article gives sequences for two materials,
+    two of them for RM734; the patent gives one; the preprint and thesis give a value each,
+    so they are public too, but no sequences. The thesis links to its deposited data."""
 
     @classmethod
     def setUpTestData(cls):
@@ -31,10 +32,11 @@ class ReferenceTestCase(TestCase):
             kind=Reference.Kind.PATENT, identifier="EP3260450A1", year=2016, published=True
         )
         cls.preprint = Reference.objects.create(
-            kind=Reference.Kind.PREPRINT, identifier="10.48550/arxiv.2401.00001", year=2024
+            kind=Reference.Kind.PREPRINT, identifier="10.48550/arxiv.2401.00001", year=2024, published=True
         )
         cls.thesis = Reference.objects.create(
-            kind=Reference.Kind.THESIS, identifier="Parton-Barr, 2027, Fluid ferroelectrics"
+            kind=Reference.Kind.THESIS, identifier="Parton-Barr, 2027, Fluid ferroelectrics", published=True,
+            dataset_url="https://doi.org/10.5518/1234",
         )
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
         cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
@@ -45,6 +47,8 @@ class ReferenceTestCase(TestCase):
         ]:
             PhaseSequence.objects.create(material=material, reference=cls.article, sequence=sequence, approved=True)
         PhaseSequence.objects.create(material=cls.rm734, reference=cls.patent, sequence="K 140 N 188 I", approved=True)
+        for reference in (cls.preprint, cls.thesis):
+            add(cls.five_cb, reference, "birefringence").points.create(value=0.2, temperature_c=25)
 
     def search(self, **params):
         return self.client.get(reverse("repo:references"), params)
@@ -122,8 +126,11 @@ class ReferenceListTests(ReferenceTestCase):
 class ReferencePagingTests(TestCase):
     @classmethod
     def setUpTestData(cls):
+        # Each with a sequence of 5CB's, so each is public.
+        five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
         for n in range(26):
-            Reference.objects.create(kind=Reference.Kind.PATENT, identifier=f"EP{n:07d}A1")
+            patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier=f"EP{n:07d}A1", published=True)
+            PhaseSequence.objects.create(material=five_cb, reference=patent, sequence="K 22.5 N 35 I", approved=True)
 
     def test_25_to_a_page_and_the_page_links_keep_the_search(self):
         url = reverse("repo:references")
@@ -161,6 +168,11 @@ class ReferencePageTests(ReferenceTestCase):
     def test_a_reference_without_sequences_says_so(self):
         self.assertContains(self.page(self.thesis), "No phase sequences from this reference.")
 
+    def test_links_to_the_deposited_data(self):
+        link = '<a href="https://doi.org/10.5518/1234">https://doi.org/10.5518/1234</a>'
+
+        self.assertContains(self.page(self.thesis), link, html=True)
+
     def test_unknown_number_is_not_found(self):
         response = self.client.get(reverse("repo:reference", args=[9999]))
 
@@ -176,8 +188,8 @@ class ReferencePageTests(ReferenceTestCase):
 
 
 class UnpublishedResultTests(ReferenceTestCase):
-    """An unpublished group result, with a link to its deposited data, gives RM734 a computed
-    dipole moment. Its label says it is unpublished wherever it appears."""
+    """An unpublished group result gives RM734 a computed dipole moment. Unpublished work
+    can't be published, so it is never public: no page, search or download shows it."""
 
     LABEL = "Mandle group 2026, Computed dipole moments (unpublished)"
 
@@ -185,8 +197,7 @@ class UnpublishedResultTests(ReferenceTestCase):
     def setUpTestData(cls):
         super().setUpTestData()
         cls.result = Reference.objects.create(
-            kind=Reference.Kind.UNPUBLISHED, identifier="Mandle group 2026, Computed dipole moments",
-            dataset_url="https://doi.org/10.5518/1234",
+            kind=Reference.Kind.UNPUBLISHED, identifier="Mandle group 2026, Computed dipole moments"
         )
         dipole = add(
             cls.rm734, cls.result, "dipole-moment", "none", Series.Kind.COMPUTED,
@@ -194,13 +205,8 @@ class UnpublishedResultTests(ReferenceTestCase):
         )
         dipole.points.create(value=11.4)
 
-    def test_its_page_says_it_is_unpublished_and_links_to_the_deposited_data(self):
-        response = self.client.get(reverse("repo:reference", args=[self.result.pk]))
-
-        self.assertContains(response, '<p class="reference-kind">Unpublished group result</p>', html=True)
-        self.assertContains(response, f'<h1 class="page-title reference-label">{self.LABEL}</h1>', html=True)
-        self.assertContains(response, "not yet published or peer reviewed")
-        self.assertContains(response, '<a href="https://doi.org/10.5518/1234">https://doi.org/10.5518/1234</a>', html=True)
+    def test_its_page_is_not_found(self):
+        self.assertEqual(self.client.get(reverse("repo:reference", args=[self.result.pk])).status_code, 404)
 
     def test_a_reference_without_deposited_data_has_no_line_for_it(self):
         self.assertNotContains(self.client.get(reverse("repo:reference", args=[self.article.pk])), "Deposited data")
@@ -215,14 +221,17 @@ class UnpublishedResultTests(ReferenceTestCase):
 
     def test_the_values_download_leaves_its_value_out(self):
         # As on the material page: it is RM734's only value, so the file has its header and no rows.
-        text = self.client.get(reverse("repo:values_csv")).content.decode("utf-8-sig")
+        text = self.client.get(reverse("repo:values_csv"), {"q": "RM734"}).content.decode("utf-8-sig")
 
         self.assertEqual(list(csv.DictReader(io.StringIO(text))), [])
         self.assertNotIn(self.LABEL, text)
 
-    def test_a_whole_copied_label_or_the_word_unpublished_finds_it(self):
-        self.assertEqual(self.found(q=self.LABEL), [self.result])
-        self.assertEqual(self.found(q="Unpublished"), [self.result])
+    def test_neither_its_whole_label_nor_the_word_unpublished_finds_it(self):
+        self.assertEqual(self.found(q=self.LABEL), [])
+        self.assertEqual(self.found(q="Unpublished"), [])
 
-    def test_the_kind_choice_shows_only_unpublished_results(self):
-        self.assertEqual(self.found(kind="unpublished"), [self.result])
+    def test_the_kind_choice_offers_no_unpublished_results(self):
+        self.assertNotContains(self.search(), 'value="unpublished"')
+        # Typed into the address, the kind is ignored, as an unknown one is.
+        self.assertNotIn(self.result, self.found(kind="unpublished"))
+        self.assertEqual(len(self.found(kind="unpublished")), 4)

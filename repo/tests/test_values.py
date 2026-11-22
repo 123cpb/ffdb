@@ -3,7 +3,7 @@ from django.test import SimpleTestCase, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
-from repo.models import Material, Measurement, Property, Reference, Series, Variable
+from repo.models import Material, Measurement, PhaseSequence, Property, Reference, Series, Variable
 from repo.templatetags.repo_tags import conditions_text, num, with_unit
 
 DIO = "c1c(c(c(cc1C1OCC(CO1)CCC)F)C(=O)Oc1cc(c(cc1)c1cc(c(c(c1)F)F)F)F)F"
@@ -174,7 +174,9 @@ class ReferencePageTests(ValuesTestCase):
         self.assertNotContains(response, "Birefringence")  # Yadav 2023's, not Chen 2022's
 
     def test_a_reference_with_no_values_says_so(self):
-        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1")
+        # A sequence only, so the patent is public with no values.
+        patent = Reference.objects.create(kind=Reference.Kind.PATENT, identifier="EP3260450A1", published=True)
+        PhaseSequence.objects.create(material=self.dio, reference=patent, sequence="K 69 NF 84 N 174 I", approved=True)
 
         self.assertContains(self.page(patent), "No property values from this reference.")
 
