@@ -67,7 +67,7 @@ class RetiredIDTests(RetiredTestCase):
             (record.number, record.kind, record.name, record.inchikey),
             (self.rm734.pk, Material.Kind.COMPOUND, "RM734", self.rm734.inchikey),
         )
-        self.assertEqual((record.retired_by, record.reason), (self.admin, ""))
+        self.assertEqual((record.retired_by, record.reason, record.was_public), (self.admin, "", True))
         # Every row that went is in the snapshot, and nothing else is.
         self.assertEqual(snapshot_rows(record), gone)
         self.assertEqual(
@@ -121,7 +121,7 @@ class RetiredPageTests(TestCase):
         return self.client.get(reverse("repo:material", args=[number]))
 
     def test_a_retired_compound_gives_410_with_what_it_was(self):
-        material = Material.objects.create(name="RM734", smiles=RM734)
+        material = Material.objects.create(name="RM734", smiles=RM734, listed=True)
         accession = material.accession  # before retiring, which sets its pk to None
         response = self.retire(material, "Entered twice")
 
@@ -131,11 +131,20 @@ class RetiredPageTests(TestCase):
         self.assertNotContains(response, '"fields"', status_code=410)  # nothing from the snapshot
 
     def test_a_retired_mixture_has_no_inchikey_and_no_reason_until_given_one(self):
-        response = self.retire(Material.objects.create(kind=Material.Kind.MIXTURE, name="F7"))
+        response = self.retire(Material.objects.create(kind=Material.Kind.MIXTURE, name="F7", listed=True))
 
         self.assertContains(response, "the mixture is no longer in FFDB", status_code=410)
         self.assertNotContains(response, "InChIKey", status_code=410)
         self.assertNotContains(response, "Reason", status_code=410)
+
+    def test_a_material_that_was_never_public_is_not_found(self):
+        material = Material.objects.create(name="RM734", smiles=RM734)  # no data and not listed: hidden
+        number = material.pk
+
+        response = self.retire(material, "Entered twice")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(RetiredID.objects.get(number=number).was_public)
 
 
 class RestoreTests(RetiredTestCase):

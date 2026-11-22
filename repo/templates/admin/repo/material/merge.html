@@ -18,7 +18,8 @@ Merge button posts the ID back to the same address.
 {% block content %}
 <p>Merging moves {{ duplicate.accession }}'s sequences, values and mixture memberships to the
 material it goes into, and adds its names to that material's aliases. {{ duplicate.accession }}
-is then retired, and its address leads to that material.</p>
+is then retired, and its address leads to that material whenever that material is public.
+A material that isn't public gives no names, and its address answers not found.</p>
 <form method="get">
   {{ form.as_p }}
   <input type="submit" value="Show what will move">

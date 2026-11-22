@@ -100,7 +100,7 @@ class ImportTests(TestCase):
         self.assertIn("LCPROP line 8 (NoSmiles): skipped, no SMILES", output)
 
     def test_a_retired_ids_structure_is_skipped_naming_the_old_id(self):
-        cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB)
+        cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True)
         number = cb5.pk
         cb5.retire(None)
         self.write([SAMPLE[0], ["NF", "3", "5CB", FIVE_CB, "K 22.5 N 35 I", ARXIV, "doi"]])

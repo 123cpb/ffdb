@@ -169,7 +169,7 @@ class CheckTests(CardTestCase):
         self.assertContains(response, f"This structure has the same connectivity as {s_octanol.accession}")
 
     def test_a_retired_structure_is_refused_with_the_models_message(self):
-        Material.objects.create(name="5CB", smiles=FIVE_CB).retire(self.curator)
+        Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True).retire(self.curator)
         _, inchikey = chem.standardise(FIVE_CB)
 
         response = self.send(FIVE_CB_HEATING, smiles=FIVE_CB, name="5CB")

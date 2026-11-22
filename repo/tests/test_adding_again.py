@@ -1,8 +1,10 @@
 """A compound whose structure was a retired ID's is refused, naming the old ID: in the admin,
 added or with its SMILES changed, and in the compound table on Add data. Otherwise one
-structure would have two IDs. The import skips it too (test_import.py)."""
+structure would have two IDs. The import skips it too (test_import.py). A material that was
+never public is the exception: it leaves no trace, so its structure can be added again."""
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.urls import reverse
 
 from repo.models import Material, RetiredID, accession
@@ -21,11 +23,11 @@ class AddingAgainTests(CompoundTableTestCase):
     def setUpTestData(cls):
         super().setUpTestData()
         cls.admin = User.objects.create_superuser("admin", password="pw")
-        cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB)
+        cb5 = Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True)
         cls.retired_number = cb5.pk  # before retiring, which takes its pk
         cls.retired = accession(cls.retired_number)
         cb5.retire(cls.admin)
-        duplicate = Material.objects.create(name="RM-734", smiles=WRONG_RM734)
+        duplicate = Material.objects.create(name="RM-734", smiles=WRONG_RM734, listed=True)
         cls.merged = accession(duplicate.pk)
         duplicate.merge_into(cls.rm734, cls.admin)
         cls.retired_message = f"This structure was {cls.retired} (5CB), now retired: an admin can restore {cls.retired}."
@@ -80,6 +82,18 @@ class AddingAgainTests(CompoundTableTestCase):
 
         self.assertEqual([line.status for line in lines], ["problem", "problem", "new"])
         self.assertEqual([lines[0].problem, lines[1].problem], [self.retired_message, self.merged_message])
+
+    def test_a_structure_retired_while_hidden_can_be_added_again_and_then_not_restored(self):
+        hidden = Material.objects.create(name="DIO", smiles=DIO)  # no data and not listed: hidden
+        number = hidden.pk
+        hidden.retire(self.admin)
+
+        self.assertEqual(self.line(f"DIO\t{DIO}").status, "new")  # nothing names the old ID
+        self.admin_form(None, "DIO again", DIO)
+
+        again = Material.objects.get(name="DIO again")
+        with self.assertRaisesMessage(ValidationError, f"its structure is now in FFDB as {again.accession}"):
+            RetiredID.objects.get(number=number).restore()
 
     def test_once_restored_the_structure_is_found_in_ffdb_under_its_old_id(self):
         RetiredID.objects.get(number=self.retired_number).restore()

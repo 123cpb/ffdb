@@ -329,16 +329,23 @@ def sequence_ribbons(sequences, data=None):
 def material_detail(request, pk):
     """One material's public page, with only its public data. A compound's page shows its
     structure and the mixtures it is in; a mixture's, its composition. A merged ID leads to
-    the material it went into, a retired ID gives a page saying what it was, and a number
-    never given out gives a 404, as does a material that isn't public: it has no retired
-    record either, so the two can't be told apart."""
+    the material it went into, while that answers publicly, and a retired ID gives a page
+    saying what it was. A number never given out gives a 404, as do a material that isn't
+    public and the retired ID of one that wasn't, so none of them can be told apart."""
     material = Material.objects.public().filter(pk=pk).first()
     if material is None:
-        record = get_object_or_404(RetiredID, number=pk)
+        record = get_object_or_404(RetiredID.objects.public(), number=pk)
         if record.merged_into is not None:
+            into = record.merged_into
+            # Only to an address a visitor can see: a redirect to a hidden material would name it.
+            if not (
+                Material.objects.public().filter(pk=into).exists()
+                or RetiredID.objects.public().filter(number=into).exists()
+            ):
+                raise Http404("No material with this number.")
             # A 302, which browsers ask again each time, not a 301, which they keep for good:
             # an undone merge would leave them going to the wrong material.
-            return redirect("repo:material", record.merged_into)
+            return redirect("repo:material", into)
         # 410 Gone, not 404 Not Found: the address did name a material, and never will again,
         # so search engines can drop it. The snapshot isn't shown: what was deleted may be wrong.
         return render(request, "repo/retired_material.html", {"nav": "materials", "record": record}, status=410)

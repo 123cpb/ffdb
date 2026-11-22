@@ -62,7 +62,8 @@ class MergeTests(RetiredTestCase):
         self.membership.refresh_from_db()
         self.assertEqual(self.membership.component, self.rm734)
         record = RetiredID.objects.get(number=number)
-        self.assertEqual((record.merged_into, record.retired_by), (self.rm734.pk, self.admin))
+        # Public, though by the time it was retired its data had moved: it was asked first.
+        self.assertEqual((record.merged_into, record.retired_by, record.was_public), (self.rm734.pk, self.admin, True))
         self.assertEqual(record.moved, {
             "sequences": [self.sequence.pk], "series": [self.series.pk], "memberships": [self.membership.pk],
             "merges": [], "aliases": ["RM734-II"],
@@ -102,8 +103,36 @@ class MergeTests(RetiredTestCase):
         self.assertRedirects(response, target_url)  # a 302
         self.assertContains(self.client.get(target_url), "Cr 120.5 NF 130 N 175 Iso")  # its sequence, as pages show it
 
+    def test_a_hidden_material_gives_no_names_and_its_id_is_not_found(self):
+        hidden = Material.objects.create(name="RM734 waiting", aliases="RM734-III", smiles=EIGHT_CB)  # no data: hidden
+        number, why = hidden.pk, f"{hidden.accession} isn't public"
+
+        preview = self.preview(hidden, self.rm734.accession)
+        response = self.merge(hidden, self.rm734.accession)
+
+        self.assertEqual(preview.context["aliases_added"], [])
+        self.assertEqual(preview.context["aliases_refused"], [("RM734 waiting", why), ("RM734-III", why)])
+        self.assertIn(f"RM734-III wasn't added to {self.rm734.accession}'s aliases: {why}.", messages_text(response))
+        self.rm734.refresh_from_db()
+        self.assertEqual(self.rm734.aliases, "")
+        record = RetiredID.objects.get(number=number)
+        self.assertEqual((record.was_public, record.moved["aliases"]), (False, []))
+        self.assertEqual(self.client.get(reverse("repo:material", args=[number])).status_code, 404)
+
+    def test_a_merged_id_leads_to_a_hidden_material_only_once_it_is_public(self):
+        # Listed, so public, with no data to move: F7, which has none either, stays hidden.
+        again = Material.objects.create(kind=Material.Kind.MIXTURE, name="Mixture 7", listed=True)
+        address = reverse("repo:material", args=[again.pk])
+        again.merge_into(self.f7, self.admin)
+
+        response = self.client.get(address)
+
+        self.assertEqual(response.status_code, 404)  # not a redirect, which would name F7
+        Material.objects.filter(pk=self.f7.pk).update(listed=True)
+        self.assertRedirects(self.client.get(address), reverse("repo:material", args=[self.f7.pk]))
+
     def test_earlier_merges_are_pointed_at_the_new_material(self):
-        earlier = Material.objects.create(name="RM734 again", smiles=EIGHT_CB)
+        earlier = Material.objects.create(name="RM734 again", smiles=EIGHT_CB, listed=True)
         earlier_number, number = earlier.pk, self.duplicate.pk
         earlier.merge_into(self.duplicate, self.admin)
 
@@ -134,7 +163,7 @@ class MergeTests(RetiredTestCase):
                 self.assertEqual(all_rows(), before)
 
     def test_a_mixture_merged_into_a_mixture_leaves_its_composition_in_the_snapshot(self):
-        again = Material.objects.create(kind=Material.Kind.MIXTURE, name="Mixture 7")
+        again = Material.objects.create(kind=Material.Kind.MIXTURE, name="Mixture 7", listed=True)
         row = MixtureComponent.objects.create(mixture=again, component=self.cb5, fraction=30, unit=MixtureComponent.Unit.MOL)
         number = again.pk
 

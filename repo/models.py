@@ -130,6 +130,13 @@ class ReferenceQuerySet(models.QuerySet):
         )
 
 
+class RetiredIDQuerySet(models.QuerySet):
+    def public(self):
+        """The IDs of materials that were public when they were retired. Only these answer at
+        their address: a material that was never public leaves no public trace."""
+        return self.filter(was_public=True)
+
+
 class Material(models.Model):
     """A compound, identified by its structure, or a mixture, which has no structure and is
     described by its composition: its components in FFDB (MixtureComponent rows) and the
@@ -224,6 +231,10 @@ class Material(models.Model):
     def thumbnail_url(self):
         """The address of the small drawing that lists use, 200 by 128 pixels."""
         return f"{reverse('repo:structure', args=[self.pk])}?size=thumb&v={self.inchikey}"
+
+    def is_public(self):
+        """Whether this material is public now, by the rule (MaterialQuerySet.public())."""
+        return Material.objects.public().filter(pk=self.pk).exists()
 
     def alias_list(self):
         """The aliases as a list: "RM-734, DIO-1" -> ["RM-734", "DIO-1"]."""
@@ -375,15 +386,18 @@ class Material(models.Model):
             rows += [series, *series.points.all()]
         return serializers.serialize("json", rows, indent=2)
 
-    def retire(self, user, merged_into=None, moved=None):
+    def retire(self, user, merged_into=None, moved=None, was_public=None):
         """Delete this material, first saving a RetiredID record of its ID, retired by user,
-        with a snapshot of everything deleted. Both happen or neither: if the delete fails,
-        the record is undone too. A merge (merge_into()) also gives the number it went into
-        and what it moved."""
+        with a snapshot of everything deleted and whether it was public. Both happen or
+        neither: if the delete fails, the record is undone too. A merge (merge_into()) also
+        gives the number it went into, what it moved, and whether it was public, which it
+        works out before moving the data: by now the material has none."""
+        if was_public is None:
+            was_public = self.is_public()
         with transaction.atomic():
             RetiredID.objects.create(
                 number=self.pk, kind=self.kind, name=self.name, inchikey=self.inchikey, retired_by=user,
-                snapshot=self.snapshot(), merged_into=merged_into, moved=moved or {},
+                snapshot=self.snapshot(), merged_into=merged_into, moved=moved or {}, was_public=was_public,
             )
             self.delete()
 
@@ -425,16 +439,26 @@ class Material(models.Model):
                 added.append(name)
         return added, refused
 
+    def merge_names(self, target, public):
+        """Add this material's names to target's aliases, as merging it does, without saving.
+        Returns (added, refused), as add_aliases() does. A material that isn't public (public
+        is False) gives none, each refused: its names would appear on target's public page."""
+        if not public:
+            return [], [(name, f"{self.accession} isn't public") for name in self.names()]
+        return target.add_aliases(self.names())
+
     def merge_into(self, target, user):
         """Merge this material, a duplicate, into target: move its sequences, values and
-        mixture memberships to target, add its names to target's aliases, point earlier
-        merges into it at target, and retire it, merged by user, with what moved recorded,
-        so a merge can be undone. All of it or none. Raises ValidationError with the reason
-        when merge_problems() finds one. Returns the names target couldn't take, as
-        add_aliases() does."""
+        mixture memberships to target, add its names to target's aliases if it is public,
+        point earlier merges into it at target, and retire it, merged by user, with what
+        moved recorded, so a merge can be undone. All of it or none. Raises ValidationError
+        with the reason when merge_problems() finds one. Returns the names target didn't
+        take, as merge_names() does."""
         problems = self.merge_problems(target)
         if problems:
             raise ValidationError(problems)
+        # Before its data moves: once it has, a material that isn't listed has nothing public.
+        public = self.is_public()
         earlier = RetiredID.objects.filter(merged_into=self.pk)
         with transaction.atomic():
             moved = {
@@ -449,9 +473,9 @@ class Material(models.Model):
             self.series.update(material=target)
             self.in_mixtures.update(component=target)
             earlier.update(merged_into=target.pk)
-            moved["aliases"], refused = target.add_aliases(self.names())
+            moved["aliases"], refused = self.merge_names(target, public)
             target.save(update_fields=["aliases"])
-            self.retire(user, merged_into=target.pk, moved=moved)
+            self.retire(user, merged_into=target.pk, moved=moved, was_public=public)
         return refused
 
 
@@ -1375,6 +1399,14 @@ class RetiredID(models.Model):
     moved = models.JSONField(default=dict, blank=True, editable=False)
     # The JSON text from Material.snapshot(), as serializers.deserialize("json", ...) reads it back.
     snapshot = models.TextField(editable=False)
+    # Off unless retire() turns it on, so a record nobody said was public leaves no trace.
+    # Whether the address answers is RetiredIDQuerySet.public().
+    was_public = models.BooleanField(
+        default=False, editable=False,
+        help_text="Whether the material was public when it was retired. If not, its address answers not found.",
+    )
+
+    objects = RetiredIDQuerySet.as_manager()
 
     class Meta:
         ordering = ["-retired_at"]
@@ -1392,8 +1424,10 @@ class RetiredID(models.Model):
         """Why a compound with this InChIKey can't be added to FFDB, or "" when it can: it was a
         retired ID's structure, and a structure has one ID. Restoring is the only way a retired
         ID comes back, and a merged one's data is with the material it went into. Should two
-        records have it, the most recently retired is named (Meta's ordering)."""
-        record = cls.objects.filter(inchikey=inchikey).first() if inchikey else None
+        records have it, the most recently retired is named (Meta's ordering). A material that
+        was never public is ignored: naming it would leave a trace of it. Its structure can be
+        added again, and restore() then refuses to bring it back."""
+        record = cls.objects.public().filter(inchikey=inchikey).first() if inchikey else None
         if record is None:
             return ""
         was = f"This structure was {record.accession} ({record.name})"

@@ -161,7 +161,7 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
     def is_public(self, obj):
         """The rule's answer (MaterialQuerySet.public()), worked out the same way as on the public
         pages: one query a row, as SeriesAdmin's point count is."""
-        return Material.objects.public().filter(pk=obj.pk).exists()
+        return obj.is_public()
 
     @admin.display(description="structure")
     def structure(self, obj):
@@ -228,8 +228,8 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
                 for alias, why in refused:
                     self.message_user(request, f"{alias} wasn't added to {target.accession}'s aliases: {why}.", messages.WARNING)
                 return redirect("admin:repo_material_change", target.pk)
-            # What the merge would do. add_aliases() changes target only here: it isn't saved.
-            context["aliases_added"], context["aliases_refused"] = target.add_aliases(duplicate.names())
+            # What the merge would do. merge_names() changes target only here: it isn't saved.
+            context["aliases_added"], context["aliases_refused"] = duplicate.merge_names(target, duplicate.is_public())
             context.update({
                 "target": target,
                 "sequences": duplicate.phase_sequences.select_related("reference"),
@@ -246,11 +246,15 @@ class RetiredIDAdmin(admin.ModelAdmin):
     """Records are made only by deleting a material, and go only when it is restored: only
     the reason can be changed. The Restore button is in this model's own change_form.html."""
 
-    list_display = ["accession", "name", "kind", "retired_by", "retired_at", "merged"]
+    list_display = ["accession", "name", "kind", "retired_by", "retired_at", "merged", "was_public"]
     fields = [
-        "accession", "kind", "name", "inchikey", "retired_by", "retired_at", "merged", "moved", "reason", "deleted_rows",
+        "accession", "kind", "name", "inchikey", "retired_by", "retired_at", "merged", "moved", "was_public",
+        "reason", "deleted_rows",
     ]
-    readonly_fields = ["accession", "kind", "name", "inchikey", "retired_by", "retired_at", "merged", "moved", "deleted_rows"]
+    readonly_fields = [
+        "accession", "kind", "name", "inchikey", "retired_by", "retired_at", "merged", "moved", "was_public",
+        "deleted_rows",
+    ]
 
     @admin.display(description="ID", ordering="number")
     def accession(self, obj):
