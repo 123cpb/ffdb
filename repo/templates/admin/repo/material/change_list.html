@@ -1,0 +1,13 @@
+{% extends "admin/change_list.html" %}
+{% load repo_tags %}
+{% comment %}
+The Materials list in the admin, which Django finds by this file's path: its own page with a link
+to the possible-duplicates page (MaterialAdmin.duplicates_view) among the buttons at the top, for
+admins (models.is_admin()).
+{% endcomment %}
+{% block object-tools-items %}
+{% if user|is_admin %}
+<li><a href="{% url 'admin:repo_material_duplicates' %}">Possible duplicates</a></li>
+{% endif %}
+{{ block.super }}
+{% endblock %}

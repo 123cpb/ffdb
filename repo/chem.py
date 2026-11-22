@@ -34,6 +34,15 @@ def skeleton_key(inchikey):
     return inchikey.split("-")[0]
 
 
+def gives_stereo(smiles):
+    """Whether a canonical SMILES (standardise()) gives any stereochemistry: a stereocentre's
+    hand (@) or a double bond's geometry (/ or \\). RDKit drops a mark that isn't a real
+    stereocentre or stereo double bond when it reads a SMILES, so C[C@H](C)O comes back as
+    CC(C)O, and only real ones are left to find.
+    """
+    return any(mark in smiles for mark in "@/\\")
+
+
 def structure_svg(smiles, width=360, height=220):
     """Draw a structure as an SVG image, 360 by 220 pixels unless another size is given.
 

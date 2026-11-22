@@ -3,8 +3,10 @@ import base64
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import models, transaction
+from django.db.models import Q
 from django.forms import Textarea
 from django.forms.models import BaseInlineFormSet
+from django.http import Http404
 from django.shortcuts import get_object_or_404, redirect
 from django.template.defaultfilters import pluralize
 from django.template.response import TemplateResponse
@@ -12,11 +14,11 @@ from django.urls import path
 from django.utils.html import format_html
 from django.views.decorators.http import require_POST
 
-from . import chem
+from . import chem, duplicates
 from .forms import MergeForm
 from .models import (
-    Entered, Material, Measurement, MixtureComponent, Phase, PhaseSequence, Property, PropertyGroup, Reference,
-    RetiredID, Series, Variable, WaitingSave, accession, is_admin,
+    Entered, Material, Measurement, MixtureComponent, NotDuplicate, Phase, PhaseSequence, Property, PropertyGroup,
+    Reference, RetiredID, Series, Variable, WaitingSave, accession, is_admin,
 )
 from .views import sequence_ribbons, value_sections
 
@@ -204,10 +206,62 @@ class MaterialAdmin(EnteredAdmin):  # for its sequence rows: materials don't rec
                 material.retire(request.user)
 
     def get_urls(self):
-        """Django's addresses for materials, with a material's merge/ in front, as for
-        RetiredIDAdmin's restore/. The link to it is in this model's own change_form.html."""
+        """Django's addresses for materials, with three in front, as for RetiredIDAdmin's restore/:
+        a material's merge/, linked from this model's own change_form.html; duplicates/, linked
+        from its change_list.html; and the address a pair's Not a duplicate button posts to."""
         merge = self.admin_site.admin_view(self.merge_view)
-        return [path("<int:pk>/merge/", merge, name="repo_material_merge"), *super().get_urls()]
+        possible_duplicates = self.admin_site.admin_view(self.duplicates_view)
+        not_duplicate = self.admin_site.admin_view(require_POST(self.not_duplicate_view))
+        return [
+            path("<int:pk>/merge/", merge, name="repo_material_merge"),
+            path("duplicates/", possible_duplicates, name="repo_material_duplicates"),
+            path("duplicates/<int:first>/<int:second>/not-a-duplicate/", not_duplicate, name="repo_material_not_duplicate"),
+            *super().get_urls(),
+        ]
+
+    def duplicates_view(self, request):
+        """Possible duplicates: pairs of compounds with the same connectivity (duplicates.
+        connectivity_pairs()), for an admin to merge or mark not a duplicate. Only admins
+        (is_admin()), who see hidden compounds too, each marked. Each pair is {"heading": ...,
+        "compounds": [a, b]}, and each compound {"material", "hidden", "drawing", "references"}."""
+        if not is_admin(request.user):
+            raise PermissionDenied
+        found = duplicates.connectivity_pairs()
+        in_pairs = {material.pk for _, a, b in found for material in (a, b)}
+        public = set(Material.objects.public().filter(pk__in=in_pairs).values_list("pk", flat=True))
+
+        def compound(material):
+            # Its references: those of its sequences and values, hidden ones too. pk__in, as in
+            # Material.objects.public(), gives each reference once.
+            references = Reference.objects.filter(
+                Q(pk__in=material.phase_sequences.values("reference")) | Q(pk__in=material.series.values("reference"))
+            )
+            return {
+                "material": material,
+                "hidden": material.pk not in public,
+                "drawing": structure_image(material),
+                "references": references,
+            }
+
+        context = {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "title": "Possible duplicates",
+            "pairs": [{"heading": heading, "compounds": [compound(a), compound(b)]} for heading, a, b in found],
+        }
+        return TemplateResponse(request, "admin/repo/material/duplicates.html", context)
+
+    def not_duplicate_view(self, request, first, second):
+        """Mark the materials numbered first and second not a duplicate (NotDuplicate.mark()), so
+        the pair isn't listed again, and go back to the page. Only admins (is_admin())."""
+        if not is_admin(request.user):
+            raise PermissionDenied
+        if first == second:
+            raise Http404("A material can't be a duplicate of itself.")
+        a, b = get_object_or_404(Material, pk=first), get_object_or_404(Material, pk=second)
+        NotDuplicate.mark(a, b, request.user)
+        self.message_user(request, f"{a} and {b} are marked not a duplicate: the pair won't be listed again.", messages.SUCCESS)
+        return redirect("admin:repo_material_duplicates")
 
     def merge_view(self, request, pk):
         """Merge a duplicate into another material (Material.merge_into()). The ID box is sent
@@ -580,3 +634,28 @@ class WaitingSaveAdmin(admin.ModelAdmin):
             )
         self.log_change(request, reference, f"Rejected save {pk}." + (f" Retired {', '.join(retired)}." if retired else ""))
         return redirect("admin:repo_waitingsave_changelist")
+
+
+@admin.register(NotDuplicate)
+class NotDuplicateAdmin(admin.ModelAdmin):
+    """The pairs marked not a duplicate on the possible-duplicates page, with who decided and when,
+    for admins only (is_admin()). Decisions are made only by the page's button, so here they can
+    only be read, or deleted, which is the undo: the pair is listed on the page again."""
+
+    list_display = ["first", "second", "decided_by", "decided_at"]
+    list_select_related = ["first", "second", "decided_by"]
+    ordering = ["-decided_at"]  # the newest first, here rather than in the model's Meta
+    fields = ["first", "second", "decided_by", "decided_at"]
+    readonly_fields = fields
+
+    def has_view_permission(self, request, obj=None):
+        return is_admin(request.user)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return is_admin(request.user)

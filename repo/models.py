@@ -8,7 +8,7 @@ from django.core import serializers
 from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.core.serializers.base import DeserializationError
 from django.db import models, transaction
-from django.db.models import Q
+from django.db.models import F, Q
 from django.urls import reverse
 from django.utils import timezone
 
@@ -396,7 +396,9 @@ class Material(models.Model):
         """This material and every row that deleting it deletes too, as JSON written by Django's
         serializers: its components (a mixture's), its sequences and their transitions, and its
         series and their points, each parent before its children. A sequence's phases are listed
-        in its own row. Rows elsewhere, such as its references, are named by primary key."""
+        in its own row. Rows elsewhere, such as its references, are named by primary key. Its
+        not-a-duplicate decisions (NotDuplicate) are deleted with it but left out, so restoring
+        it doesn't bring them back: each pair is listed again, for an admin to decide."""
         rows = [self, *self.components.all()]
         for sequence in self.phase_sequences.all():
             rows += [sequence, *sequence.transitions.all()]
@@ -1632,3 +1634,45 @@ class RetiredID(models.Model):
                 row.save(force_insert=True)
             self.delete()
         return rows[0].object
+
+
+class NotDuplicate(models.Model):
+    """Two materials an admin has said are not one compound entered twice, on the possible-
+    duplicates page (MaterialAdmin.duplicates_view), so the pair isn't listed there again. Kept by
+    material, not by structure: CASCADE deletes the decision with either material, when it is
+    retired or merged into another (Material.retire()), and a structure corrected since keeps it."""
+
+    # The lower LCR number first (see Meta), so a pair has one way to be stored. related_name="+":
+    # nothing needs to go from a material to its decisions. CASCADE still deletes them with it.
+    first = models.ForeignKey(Material, on_delete=models.CASCADE, related_name="+")
+    second = models.ForeignKey(Material, on_delete=models.CASCADE, related_name="+")
+    # SET_NULL, as for WaitingSave.saved_by: deleting the account keeps the decision.
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    decided_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "not-a-duplicate decision"
+        constraints = [
+            # Each pair once. On its own it would still allow (12, 40) and (40, 12), so the next
+            # constraint says which way round a pair is stored.
+            models.UniqueConstraint(fields=["first", "second"], name="each_pair_once"),
+            # F("second") is the same row's second column: the database compares the two numbers.
+            models.CheckConstraint(
+                condition=Q(first__lt=F("second")),
+                name="lower_number_first",
+                violation_error_message="A pair is two different materials, the lower LCR number first.",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.first.accession} and {self.second.accession}"
+
+    @classmethod
+    def mark(cls, a, b, user):
+        """Record that materials a and b are not duplicates, decided by user, in either order.
+        Marking a pair already marked keeps the first decision. Returns the decision."""
+        first, second = sorted([a, b], key=lambda material: material.pk)
+        decision, _ = cls.objects.get_or_create(first=first, second=second, defaults={"decided_by": user})
+        return decision
