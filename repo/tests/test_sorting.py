@@ -12,8 +12,8 @@ class MaterialOrderTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         # 26 straight-chain alkanes, methane (C1) to hexacosane (C26), added in that order:
-        # one more than a page.
-        cls.materials = [Material.objects.create(name=f"C{n}", smiles="C" * n) for n in range(1, 27)]
+        # one more than a page. Listed, so they are public with no data.
+        cls.materials = [Material.objects.create(name=f"C{n}", smiles="C" * n, listed=True) for n in range(1, 27)]
 
     def listed(self, **params):
         return list(self.client.get(MATERIALS, params).context["page"].object_list)

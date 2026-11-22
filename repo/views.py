@@ -8,7 +8,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required, permission_required
 from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db.models import Count, F, Min, Q
+from django.db.models import Count, F, Min, Prefetch, Q
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template.defaultfilters import pluralize
@@ -33,9 +33,9 @@ from .models import (
 
 
 def matching_sequences(phase="", t_min=None, t_max=None):
-    """The phase sequences the search's phase and temperature boxes find, or None when all
-    three are blank. find_materials() lists the materials that have one, and the Materials list
-    draws one of them in each row (ribbon_sequence()), so the two can't disagree.
+    """The public phase sequences the search's phase and temperature boxes find, or None when
+    all three are blank. find_materials() lists the materials that have one, and the Materials
+    list draws one of them in each row (ribbon_sequence()), so the two can't disagree.
 
     A sequence is found when it has the phase (a code, e.g. NF). With t_min or t_max (°C;
     either can be None), the phase must form on cooling in that range, ends included: the
@@ -44,7 +44,7 @@ def matching_sequences(phase="", t_min=None, t_max=None):
     run's counts too: NF giving way to N on heating at 132.7 °C counts as NF forming at 132.7 °C.
     """
     if t_min is None and t_max is None:
-        return PhaseSequence.objects.filter(phases__code=phase) if phase else None
+        return PhaseSequence.objects.public().filter(phases__code=phase) if phase else None
     # Find the transitions first. Every condition is on the one table, so each filter() narrows
     # the same rows, and a transition has to meet them all: NF forming at 120 °C, not NF
     # somewhere and some other phase forming at 120 °C.
@@ -55,11 +55,12 @@ def matching_sequences(phase="", t_min=None, t_max=None):
         transitions = transitions.filter(temperature_c__gte=t_min)
     if t_max is not None:
         transitions = transitions.filter(temperature_c__lte=t_max)
-    return PhaseSequence.objects.filter(transitions__in=transitions)
+    return PhaseSequence.objects.public().filter(transitions__in=transitions)
 
 
 def find_materials(text, substructure="", phase="", t_min=None, t_max=None, prop=""):
-    """The materials a search finds, in LCR ID order. A blank search finds them all.
+    """The public materials a search finds, in LCR ID order. A blank search finds them all.
+    Only public data finds a material: a hidden sequence or series never does.
 
     A material is found when the text is part of its name or an alias (ignoring case),
     is its InChIKey (ignoring case), or is its LCR ID; when at least one of its sequences
@@ -68,7 +69,7 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None, prop
     (SMILES or SMARTS). A substructure finds compounds only, because a mixture has no
     structure. Raises chem.StructureError when RDKit can't read the substructure.
     """
-    materials = Material.objects.order_by("pk")
+    materials = Material.objects.public().order_by("pk")
     text = text.strip()
     if text:
         found = Q(name__icontains=text) | Q(aliases__icontains=text) | Q(inchikey__iexact=text)
@@ -77,14 +78,12 @@ def find_materials(text, substructure="", phase="", t_min=None, t_max=None, prop
             found |= Q(pk=pk)
         materials = materials.filter(found)
     sequences = matching_sequences(phase, t_min, t_max)
+    # pk__in, as in Material.objects.public(), so a material with two matching sequences or
+    # series comes back once. These come before the substructure, so RDKit checks fewer structures.
     if sequences is not None:
-        # The database follows Material -> its sequences. That gives one row per matching
-        # sequence, so a material with two would come back twice: distinct() keeps one. This
-        # comes before the substructure, so RDKit checks fewer structures.
-        materials = materials.filter(phase_sequences__in=sequences).distinct()
+        materials = materials.filter(pk__in=sequences.values("material"))
     if prop:
-        # As for the sequences: one row per series of the property, so distinct() keeps one.
-        materials = materials.filter(series__property__code=prop).distinct()
+        materials = materials.filter(pk__in=Series.objects.public().filter(property__code=prop).values("material"))
     if substructure.strip():
         pattern = chem.substructure_pattern(substructure)
         # The database can't compare structures, so RDKit checks each compound found so far.
@@ -218,9 +217,9 @@ def ribbon_sequence(sequences, preferred=frozenset()):
 def list_ribbons(materials, preferred=frozenset()):
     """Each material with its ribbon (ribbon_sequence()), or None when it has no sequence, all
     on one temperature axis: ([(material, ribbon), ...], axis). The axis is "" when no material
-    has a ribbon. Pass materials with their sequences prefetched, with each sequence's reference
-    and transitions and the phases either side, or each row costs queries."""
-    chosen = [(material, ribbon_sequence(material.phase_sequences.all(), preferred)) for material in materials]
+    has a ribbon. Pass materials with their public sequences prefetched as public_sequences, with
+    each sequence's reference and transitions and the phases either side (materials())."""
+    chosen = [(material, ribbon_sequence(material.public_sequences, preferred)) for material in materials]
     data = {sequence.pk: ribbons.ribbon_data(sequence) for _, sequence in chosen if sequence}
     lo, hi = ribbons.temperature_range(data.values())
     rows = [
@@ -245,11 +244,15 @@ def materials(request):
     sort = sort_param(request, MATERIAL_SORTS)
     # order_by() replaces the LCR ID order that find_materials() gives. The downloads keep that
     # order, because they use search_results() themselves, so a file is the same whichever
-    # order the page shows. prefetch_related() fetches the sequences of the page's 25 materials
-    # in one query, and their references, transitions and phases in one query each, for the
-    # ribbons, instead of queries for every row.
+    # order the page shows. Prefetch() fetches the public sequences of the page's 25 materials,
+    # with their references, in one query, and their transitions and phases in one query each,
+    # for the ribbons, instead of queries for every row. Each material gets them as a list,
+    # public_sequences, so the hidden ones are never there to draw.
+    public_sequences = PhaseSequence.objects.public().select_related("reference").prefetch_related(
+        "transitions__upper", "transitions__lower"
+    )
     found = found.order_by(*MATERIAL_SORTS[sort]).prefetch_related(
-        "phase_sequences__reference", "phase_sequences__transitions__upper", "phase_sequences__transitions__lower"
+        Prefetch("phase_sequences", queryset=public_sequences, to_attr="public_sequences")
     )
     page = Paginator(found, 25).get_page(request.GET.get("page"))
     preferred = set()
@@ -556,10 +559,10 @@ def property_detail(request, code):
     return render(request, "repo/property_detail.html", context)
 
 
-# The downloads (exports.py). The Materials page's three are for the materials its search
-# finds: a search that finds nothing, or a substructure RDKit can't read, gives a file with
-# its header and no rows. With a property chosen, its values file holds only that property's
-# values, as the prototype's did.
+# The downloads (exports.py). The Materials page's three are for the public materials its
+# search finds, and hold only their public sequences and values: a search that finds nothing,
+# or a substructure RDKit can't read, gives a file with its header and no rows. With a
+# property chosen, its values file holds only that property's values, as the prototype's did.
 
 
 def materials_csv(request):
@@ -574,7 +577,7 @@ def sequences_csv(request):
 
 def values_csv(request):
     terms, found = search_results(request)[:2]
-    points = Measurement.objects.filter(series__material__in=found)
+    points = Measurement.objects.public().filter(series__material__in=found)
     if terms["prop"]:
         points = points.filter(series__property__code=terms["prop"])
     return exports.csv_response("ffdb-values.csv", exports.VALUE_COLUMNS, exports.value_rows(points))

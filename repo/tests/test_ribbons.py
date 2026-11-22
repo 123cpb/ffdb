@@ -288,11 +288,14 @@ class MaterialsListTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.reference = Reference.objects.create(
-            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017
+            kind=Reference.Kind.ARTICLE, identifier="10.1039/c7cp00456g", first_author="Mandle", year=2017,
+            published=True,
         )
         cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
-        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
-        PhaseSequence.objects.create(material=cls.rm734, reference=cls.reference, sequence="K 139.8 NF 132.7 N 187.9 I")
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True)  # public with no sequence
+        PhaseSequence.objects.create(
+            material=cls.rm734, reference=cls.reference, sequence="K 139.8 NF 132.7 N 187.9 I", approved=True
+        )
 
     def page(self, **search):
         return self.client.get(reverse("repo:materials"), search)
@@ -320,7 +323,8 @@ class MaterialsListTests(TestCase):
 
     def test_a_search_draws_the_run_that_matched(self):
         PhaseSequence.objects.create(
-            material=self.rm734, reference=self.reference, sequence="Iso 188 N 105 NF", direction="cooling"
+            material=self.rm734, reference=self.reference, sequence="Iso 188 N 105 NF", direction="cooling",
+            approved=True,
         )
         summary_label = 'aria-label="Cr 139.8 NF 132.7 N 187.9 Iso (°C), Summary'
         cooling_label = 'aria-label="Iso 188 N 105 NF (°C), Cooling'
@@ -344,9 +348,12 @@ class MaterialsListTests(TestCase):
             self.page(phase="NF")
         for name, smiles in (("6CB", SIX_CB), ("7CB", SEVEN_CB)):
             material = Material.objects.create(name=name, smiles=smiles)
-            PhaseSequence.objects.create(material=material, reference=self.reference, sequence="K 50 NF 60 N 90 I")
             PhaseSequence.objects.create(
-                material=material, reference=self.reference, sequence="Iso 90 N 60 NF", direction="cooling"
+                material=material, reference=self.reference, sequence="K 50 NF 60 N 90 I", approved=True
+            )
+            PhaseSequence.objects.create(
+                material=material, reference=self.reference, sequence="Iso 90 N 60 NF", direction="cooling",
+                approved=True,
             )
         with CaptureQueriesContext(connection) as three:
             response = self.page(phase="NF")

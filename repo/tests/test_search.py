@@ -23,8 +23,9 @@ class PublicIdReadingTests(SimpleTestCase):
 class SearchTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)
-        cls.five_cb = Material.objects.create(name="5CB", aliases="K15", smiles=FIVE_CB)
+        # Listed: with no data, only a listed material is public, so only it is found.
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734, listed=True)
+        cls.five_cb = Material.objects.create(name="5CB", aliases="K15", smiles=FIVE_CB, listed=True)
 
     def found(self, query):
         """The materials a search finds. Read from the page's context, not its text,
@@ -78,9 +79,9 @@ class SearchTests(TestCase):
 class SubstructureSearchTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734)  # nitro, no cyano
-        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)  # cyano
-        cls.six_cb = Material.objects.create(name="6CB", smiles=SIX_CB)  # cyano
+        cls.rm734 = Material.objects.create(name="RM734", smiles=RM734, listed=True)  # nitro, no cyano
+        cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB, listed=True)  # cyano
+        cls.six_cb = Material.objects.create(name="6CB", smiles=SIX_CB, listed=True)  # cyano
 
     def search(self, **params):
         return self.client.get(reverse("repo:materials"), params)
@@ -113,7 +114,8 @@ class SubstructureSearchTests(TestCase):
 
 
 def add_reference(identifier):
-    return Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier=identifier)
+    """A published article, so its approved sequences and series are public."""
+    return Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier=identifier, published=True)
 
 
 class PhaseSearchTests(TestCase):
@@ -131,7 +133,7 @@ class PhaseSearchTests(TestCase):
             (cls.five_cb, first, "K 24 N 35 I"),  # no NF
             (cls.six_cb, first, "K 14 NF 20 N 29 I"),  # made up for the test: 6CB has no NF
         ]:
-            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence)
+            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence, approved=True)
 
     def search(self, **params):
         return self.client.get(reverse("repo:materials"), params)
@@ -175,7 +177,7 @@ class TemperatureSearchTests(TestCase):
             (cls.five_cb, "K 50 NF 90 N 140 I"),  # made up: NF forms at 90, N at 140
             (cls.six_cb, "K 14 N 29 I"),
         ]:
-            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence)
+            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence, approved=True)
 
     def search(self, **params):
         return self.client.get(reverse("repo:materials"), params)
@@ -235,8 +237,8 @@ class PropertySearchTests(TestCase):
             (cls.five_cb, first, "birefringence"),
         ]:
             add(material, reference, code)
-        PhaseSequence.objects.create(material=cls.rm734, reference=first, sequence="K 139.8 NF 132.7 N 187.9 I")
-        PhaseSequence.objects.create(material=cls.six_cb, reference=first, sequence="K 14 NF 20 N 29 I")
+        for material, sequence in [(cls.rm734, "K 139.8 NF 132.7 N 187.9 I"), (cls.six_cb, "K 14 NF 20 N 29 I")]:
+            PhaseSequence.objects.create(material=material, reference=first, sequence=sequence, approved=True)
 
     def search(self, **params):
         return self.client.get(reverse("repo:materials"), params)
@@ -280,8 +282,8 @@ class PropertySearchTests(TestCase):
 class PagingTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        # 26 straight-chain alkanes, methane to hexacosane: 26 different structures.
-        cls.materials = [Material.objects.create(name=f"C{n}", smiles="C" * n) for n in range(1, 27)]
+        # 26 straight-chain alkanes, methane to hexacosane: 26 different structures, listed.
+        cls.materials = [Material.objects.create(name=f"C{n}", smiles="C" * n, listed=True) for n in range(1, 27)]
 
     def test_25_to_a_page_newest_first(self):
         first = self.client.get(reverse("repo:materials"))
@@ -304,7 +306,7 @@ class PagingTests(TestCase):
     def test_page_links_keep_the_phase(self):
         reference = add_reference("10.1000/test")
         for material in self.materials:  # made up for the test: no alkane has NF
-            PhaseSequence.objects.create(material=material, reference=reference, sequence="K 10 NF 20 I")
+            PhaseSequence.objects.create(material=material, reference=reference, sequence="K 10 NF 20 I", approved=True)
 
         response = self.client.get(reverse("repo:materials"), {"phase": "NF"})
 

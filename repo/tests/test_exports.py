@@ -34,7 +34,7 @@ class ExportTestCase(PropertyPagesTestCase):
             (cls.rm734, cls.chen, "K 139.8 NF 132.7 N 187.9 I"),
             (cls.five_cb, cls.other, "K 24 N 35.3 I"),
         ]:
-            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence)
+            PhaseSequence.objects.create(material=material, reference=reference, sequence=sequence, approved=True)
 
     def download(self, url, **params):
         """A download's header and its rows, each a dict keyed by the header."""
@@ -106,7 +106,7 @@ class MaterialsFileTests(ExportTestCase):
         with CaptureQueriesContext(connection) as before:
             self.download(self.url)
         extra = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
-        PhaseSequence.objects.create(material=extra, reference=self.other, sequence="K 14.5 N 29 I")
+        PhaseSequence.objects.create(material=extra, reference=self.other, sequence="K 14.5 N 29 I", approved=True)
         with CaptureQueriesContext(connection) as after:
             self.download(self.url)
 
@@ -247,7 +247,7 @@ class ValuesFileTests(ExportTestCase):
     def test_a_run_says_how_it_was_observed(self):
         PhaseSequence.objects.create(
             material=self.five_cb, reference=self.chen, direction=PhaseSequence.Direction.COOLING,
-            sequence="I 35 N 20 K", rate_k_per_min=5, method="DSC",
+            sequence="I 35 N 20 K", rate_k_per_min=5, method="DSC", approved=True,
         )
 
         rows = self.download(self.ps_url)[1]
@@ -271,7 +271,7 @@ class ValuesFileTests(ExportTestCase):
         six_cb = Material.objects.create(name="6CB", smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
         add(six_cb, self.other, "ps", **PS_CONDITIONS).points.create(value=1.0, temperature_c=30)
         for reference in (self.chen, self.other):
-            PhaseSequence.objects.create(material=six_cb, reference=reference, sequence="K 14 N 29 I")
+            PhaseSequence.objects.create(material=six_cb, reference=reference, sequence="K 14 N 29 I", approved=True)
         with CaptureQueriesContext(connection) as after:
             self.download(self.ps_url)
 
@@ -298,11 +298,12 @@ class MixtureFileTests(ExportTestCase):
         MixtureComponent.objects.create(mixture=cls.f7, component=cls.dio, fraction=70, unit=MOL)
         PhaseSequence.objects.create(
             material=cls.f7, reference=cls.chen, direction=PhaseSequence.Direction.COOLING,
-            sequence="Iso 120 N 95 NF 40 Cr",
+            sequence="Iso 120 N 95 NF 40 Cr", approved=True,
         )
         add(cls.f7, cls.chen, "ps", **PS_CONDITIONS).points.create(value=4.0, temperature_c=50)
+        # Listed, as each material the tests add with no data is, so it is public.
         cls.m5 = Material.objects.create(
-            kind=MIXTURE, name="M5", composition_status=Material.CompositionStatus.NOT_DISCLOSED
+            kind=MIXTURE, name="M5", composition_status=Material.CompositionStatus.NOT_DISCLOSED, listed=True
         )
 
     def material_row(self, material):
@@ -333,7 +334,7 @@ class MixtureFileTests(ExportTestCase):
     def test_partly_known_gives_the_other_components_too(self):
         f8 = Material.objects.create(
             kind=MIXTURE, name="F8", composition_status=Material.CompositionStatus.PARTLY_KNOWN,
-            other_components="A nematic host, 90 wt%",
+            other_components="A nematic host, 90 wt%", listed=True,
         )
         MixtureComponent.objects.create(mixture=f8, component=self.rm734, fraction=10, unit=WT)
 
@@ -345,8 +346,8 @@ class MixtureFileTests(ExportTestCase):
         )
 
     def test_a_component_with_no_name_is_its_lcr_id(self):
-        unnamed = Material.objects.create(smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1")
-        f8 = Material.objects.create(kind=MIXTURE, name="F8")
+        unnamed = Material.objects.create(smiles="CCCCCCc1ccc(-c2ccc(C#N)cc2)cc1", listed=True)
+        f8 = Material.objects.create(kind=MIXTURE, name="F8", listed=True)
         MixtureComponent.objects.create(mixture=f8, component=unnamed, fraction=12.5, unit=WT)
 
         self.assertEqual(self.material_row(f8)["components"], f"{unnamed.accession}, 12.5 wt%")
@@ -364,7 +365,7 @@ class MixtureFileTests(ExportTestCase):
     def test_more_mixtures_take_no_more_queries(self):
         with CaptureQueriesContext(connection) as before:
             self.download(self.url)
-        f8 = Material.objects.create(kind=MIXTURE, name="F8")
+        f8 = Material.objects.create(kind=MIXTURE, name="F8", listed=True)
         MixtureComponent.objects.create(mixture=f8, component=self.five_cb, fraction=50, unit=MOL)
         MixtureComponent.objects.create(mixture=f8, component=self.rm734, fraction=50, unit=MOL)
         with CaptureQueriesContext(connection) as after:

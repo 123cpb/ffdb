@@ -213,11 +213,12 @@ class UnpublishedResultTests(ReferenceTestCase):
         self.assertNotContains(response, self.LABEL)
         self.assertNotContains(response, "Dipole moment")
 
-    def test_the_values_download_says_it_is_unpublished(self):
+    def test_the_values_download_leaves_its_value_out(self):
+        # As on the material page: it is RM734's only value, so the file has its header and no rows.
         text = self.client.get(reverse("repo:values_csv")).content.decode("utf-8-sig")
-        [row] = csv.DictReader(io.StringIO(text))
 
-        self.assertEqual((row["reference"], row["reference_kind"], row["reference_link"]), (self.LABEL, "unpublished", ""))
+        self.assertEqual(list(csv.DictReader(io.StringIO(text))), [])
+        self.assertNotIn(self.LABEL, text)
 
     def test_a_whole_copied_label_or_the_word_unpublished_finds_it(self):
         self.assertEqual(self.found(q=self.LABEL), [self.result])

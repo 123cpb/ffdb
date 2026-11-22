@@ -22,9 +22,11 @@ class PropertyPagesTestCase(TestCase):
         cls.five_cb = Material.objects.create(name="5CB", smiles=FIVE_CB)
         cls.chen = Reference.objects.create(
             kind=Reference.Kind.ARTICLE, identifier="10.1080/02678292.2022.2058101",
-            first_author="Chen", year=2022, venue="Liq. Cryst.",
+            first_author="Chen", year=2022, venue="Liq. Cryst.", published=True,
         )
-        cls.other = Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier="10.1039/d2sm01298g")
+        cls.other = Reference.objects.create(
+            kind=Reference.Kind.ARTICLE, identifier="10.1039/d2sm01298g", published=True
+        )
         cls.curves = {}
         for material, reference, points in [
             (cls.dio, cls.chen, [(60, 6.08), (75, 4.5), (89.86, 0.198)]),

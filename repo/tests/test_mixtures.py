@@ -321,10 +321,10 @@ class MixtureListAndSearchTests(MixtureTestCase):
         self.assertEqual(self.found(q="fmix"), [self.f7])
 
     def test_phase_and_temperature_searches_find_a_mixture_with_a_sequence(self):
-        reference = Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier="10.1000/f7")
+        reference = Reference.objects.create(kind=Reference.Kind.ARTICLE, identifier="10.1000/f7", published=True)
         PhaseSequence.objects.create(
             material=self.f7, reference=reference, direction=PhaseSequence.Direction.COOLING,
-            sequence="Iso 120 N 95 NF 40 Cr",
+            sequence="Iso 120 N 95 NF 40 Cr", approved=True,
         )
 
         self.assertEqual(self.found(phase="NF"), [self.f7])

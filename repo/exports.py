@@ -1,7 +1,9 @@
 """The CSV downloads: what the Materials page and a property page show, as files for a
-spreadsheet or for code. There is one row per material, per sequence or per point, and
-nothing is averaged or chosen, so whoever uses the data combines it and knows how. One
-thing is repeated: a values file gives each row's material's phase sequences, all of them,
+spreadsheet or for code. Every file holds public data only: its callers pass public
+materials or points, and each sequence, phase, reference and component found here is
+public too. There is one row per material, per sequence or per point, and nothing is
+averaged or chosen, so whoever uses the data combines it and knows how. One thing is
+repeated: a values file gives each row's material's public phase sequences, all of them,
 in one cell, so a property's values come with their structures and phases in one file, a
 dataset of their own (decided 20 November 2026). Lists inside a cell, such as aliases, are
 separated by "; ", so a cell never looks like two to anyone who splits a line at its commas.
@@ -58,20 +60,21 @@ def component_text(row):
 
 
 def material_rows(materials):
-    """One row per material, in the order given. lc_phases are the liquid-crystal phases in
-    any of its sequences, in the vocabulary's order; n_references counts each reference that
-    gives it a sequence or a value once. A mixture's components are its components in FFDB,
-    largest first (component_text()), and its composition status is the stored code. These
-    three are found for all the materials at once, in four queries, rather than four for
-    each material.
+    """One row per material, in the order given: pass public materials. lc_phases are the
+    liquid-crystal phases in any of its public sequences, in the vocabulary's order;
+    n_references counts each reference that gives it a public sequence or value once. A
+    mixture's components are its public components in FFDB, largest first (component_text()),
+    and its composition status is the stored code. These three are found for all the
+    materials at once, in four queries, rather than four for each material.
 
     A mixture has no structure, so no SMILES, InChIKey, formula or molar mass. A compound
     has no composition: every compound stores the default status, listed, so it is left out."""
     phases = defaultdict(list)
-    # One row per material and phase. Phase's own ordering, by sort order, keeps each
-    # material's phases in the vocabulary's order.
+    # One row per material and phase, as Material.liquid_crystal_phases() finds them for one
+    # material. Phase's own ordering, by sort order, keeps each material's phases in the
+    # vocabulary's order.
     in_sequences = (
-        Phase.objects.filter(phase_sequences__material__in=materials)
+        Phase.objects.filter(phase_sequences__in=PhaseSequence.objects.public().filter(material__in=materials))
         .exclude(code__in=NOT_LIQUID_CRYSTAL)
         .values_list("phase_sequences__material", "code")
         .distinct()
@@ -81,12 +84,16 @@ def material_rows(materials):
     references = defaultdict(set)  # a set keeps a reference once, however often it is added
     for model in (PhaseSequence, Series):
         # order_by() with nothing in it drops the model's ordering, which needs joins.
-        pairs = model.objects.filter(material__in=materials).order_by().values_list("material_id", "reference_id")
+        pairs = (
+            model.objects.public().filter(material__in=materials).order_by().values_list("material_id", "reference_id")
+        )
         for material_id, reference_id in pairs:
             references[material_id].add(reference_id)
     components = defaultdict(list)
     # MixtureComponent's own ordering puts each mixture's largest component first.
-    rows = MixtureComponent.objects.filter(mixture__in=materials).select_related("component")
+    rows = MixtureComponent.objects.filter(
+        mixture__in=materials, component__in=Material.objects.public()
+    ).select_related("component")
     for row in rows:
         components[row.mixture_id].append(component_text(row))
     for material in materials:
@@ -124,13 +131,13 @@ SEQUENCE_COLUMNS = [
 
 
 def sequence_rows(materials):
-    """One row per phase sequence of the materials, by LCR ID, then as the material page
-    lists them. Every sequence is given, as reported and under the vocabulary's codes. The
-    direction is its stored code: summary, cooling, heating or unspecified; so is the
-    material's kind: compound or mixture. A summary is written from the solid up and a run
+    """One row per public phase sequence of the materials, by LCR ID, then as the material
+    page lists them. Every public sequence is given, as reported and under the vocabulary's
+    codes. The direction is its stored code: summary, cooling, heating or unspecified; so is
+    the material's kind: compound or mixture. A summary is written from the solid up and a run
     in the order observed, so a cooling run reads from the hottest phase down."""
     sequences = (
-        PhaseSequence.objects.filter(material__in=materials)
+        PhaseSequence.objects.public().filter(material__in=materials)
         .select_related("material", "reference")
         .order_by("material_id", "reference__identifier", "id")
     )
@@ -169,13 +176,13 @@ def value_rows(points):
     twice, in words and as JSON for code. Choices are given as their stored codes:
     measured, cooling, figure, and the material's kind, compound or mixture. kind is the
     value's kind (measured, extrapolated or computed), not the material's. A mixture has
-    no SMILES. phase_sequences lists every sequence of the material, as the sequences file
-    orders them (sequence_text()), and is blank for a material with none."""
+    no SMILES. phase_sequences lists every public sequence of the material, as the sequences
+    file orders them (sequence_text()), and is blank for a material with none."""
     sequences = defaultdict(list)
-    # Every sequence of the points' materials, in one query, rather than one for each
+    # Every public sequence of the points' materials, in one query, rather than one for each
     # material. The points' materials go in as a subquery: the database finds them itself.
     rows = (
-        PhaseSequence.objects.filter(material__in=points.values("series__material"))
+        PhaseSequence.objects.public().filter(material__in=points.values("series__material"))
         .select_related("reference")
         .order_by("material_id", "reference__identifier", "id")
     )
