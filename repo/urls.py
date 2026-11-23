@@ -20,6 +20,9 @@ urlpatterns = [
     # A property's code, e.g. ps: <slug:...> takes only letters, digits, - and _.
     path("property/<slug:code>/", views.property_detail, name="property"),
     path("property/<slug:code>/values.csv", views.property_values_csv, name="property_values_csv"),
+    # config/urls.py includes these addresses at the site's root, so this is /robots.txt, the one
+    # address crawlers ask for.
+    path("robots.txt", views.robots_txt, name="robots"),
     # Curators only.
     path("add/", views.add_data, name="add"),
     path("add/reference/<int:pk>/", views.add_from_reference, name="add_from_reference"),

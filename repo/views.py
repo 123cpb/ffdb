@@ -626,6 +626,13 @@ def structure(request, pk):
     return response
 
 
+def robots_txt(request):
+    """Asks every crawler to stay off the whole site: FFDB is unlisted, not locked. This stops
+    crawling, not listing: a search engine that finds the address linked somewhere public can
+    still list it, without a description. Crawlers ask for it, so it doesn't touch the database."""
+    return HttpResponse("User-agent: *\nDisallow: /\n", content_type="text/plain")
+
+
 # Curators' pages. login_required sends someone who isn't logged in to the login page.
 # permission_required refuses (403) anyone logged in without the permission; without
 # raise_exception it would send them back to the login page instead. Adding a reference is

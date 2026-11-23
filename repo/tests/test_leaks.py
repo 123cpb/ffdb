@@ -160,7 +160,8 @@ class LeakTests(HiddenData):
         download, blank and with each search; each material's page and structure image,
         hidden or not, and each retired ID's; the References page, blank, with each search and
         with the unpublished kind, and each reference's page; and the Properties page, and each
-        property's page, blank and with every series ticked, and its download. Every row is
+        property's page, blank and with every series ticked, and its download; and robots.txt,
+        which holds no data but is a public address like the rest. Every row is
         requested, so a hidden piece a later block adds is requested too."""
         numbers = [*Material.objects.values_list("pk", flat=True), *RetiredID.objects.values_list("number", flat=True)]
         searched = [
@@ -185,7 +186,7 @@ class LeakTests(HiddenData):
         return [
             reverse("repo:home"), *searched, *pages,
             references, *reference_searches, *reference_pages,
-            reverse("repo:properties"), *property_pages,
+            reverse("repo:properties"), *property_pages, reverse("repo:robots"),
         ]
 
     def secrets(self):
