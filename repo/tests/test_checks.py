@@ -90,7 +90,9 @@ class WhoMayUseThemTests(ChecksTestCase):
         token = str(page.context["csrf_token"])  # what {% csrf_token %} put in the page's forms
         for name, address in self.addresses.items():
             with self.subTest(name):
-                self.assertEqual(client.post(address, self.everything()).status_code, 403)
+                # A refusal is logged, as on Render, where it would show in the log.
+                with self.assertLogs("django.security.csrf", "WARNING"):
+                    self.assertEqual(client.post(address, self.everything()).status_code, 403)
                 self.assertEqual(client.post(address, {**self.everything(), "csrfmiddlewaretoken": token}).status_code, 200)
 
     def test_a_number_with_no_reference_gives_a_404(self):

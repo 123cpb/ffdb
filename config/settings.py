@@ -201,3 +201,34 @@ if sys.argv[1:2] == ['test']:
 
 # No MAILERS: FFDB sends no email. check --deploy refuses the console backend startproject put
 # here (mail.E001), and a real one isn't needed yet.
+
+
+# Logging
+# https://docs.djangoproject.com/en/6.1/topics/logging/
+#
+# Django's own setup stays in place: with DEBUG on it prints its records to the console itself,
+# runserver's request lines included. With DEBUG off it prints nothing, so this adds a console
+# that prints only then, on Render, which keeps what gunicorn's processes print as the log. The
+# two never both print a record. Error emails stay off: Django's sends none while ADMINS is empty.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "filters": {"require_debug_false": {"()": "django.utils.log.RequireDebugFalse"}},
+    "formatters": {"level_and_name": {"format": "{levelname} {name}: {message}", "style": "{"}},
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "level": "WARNING",
+            "filters": ["require_debug_false"],
+            "formatter": "level_and_name",
+        },
+    },
+    # The root logger is every logger's last stop, so warnings and errors from Django, FFDB and
+    # the libraries all reach this console.
+    "root": {"handlers": ["console"]},
+    "loggers": {
+        # Errors only, so a server error is logged but a 404, 403, 405, 410 or 422 answer isn't:
+        # bots' probes and the checks as you type. CSRF refusals log on django.security.csrf.
+        "django.request": {"level": "ERROR"},
+    },
+}
