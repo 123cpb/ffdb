@@ -32,6 +32,26 @@ DEBUG = os.environ.get("DEBUG", "False") == "True"
 
 ALLOWED_HOSTS = [h for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h]
 
+# True on Render, where the site is served only over https. Off in the tests and on the laptop,
+# where runserver and gunicorn speak plain http.
+HTTPS = os.environ.get("HTTPS", "False") == "True"
+
+if HTTPS:
+    # Render's proxy ends the https connection and passes the request on to gunicorn over plain
+    # http, with an X-Forwarded-Proto header saying what the browser used. Gunicorn trusts that
+    # header only from its own machine, so without this Django would take every request for
+    # http, and the redirect below would send the browser round in a loop.
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # Answer a request made over http with a redirect to the same address over https.
+    SECURE_SSL_REDIRECT = True
+    # The browser sends the login and CSRF cookies only over https.
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    # HSTS: each https answer tells the browser to use only https for this host for the next
+    # hour. Kept short, so a mistake wears off quickly. Subdomains and the browsers' preload list
+    # are left out, which leaves check --deploy's two expected warnings, W005 and W021.
+    SECURE_HSTS_SECONDS = 60 * 60
+
 # The contact address sent to Crossref, which asks for one, by fetch_reference_details and by
 # the Add data page when a DOI is added. Optional: without it, the page adds a DOI without
 # its details and says why.
@@ -179,12 +199,5 @@ STORAGES = {
 if sys.argv[1:2] == ['test']:
     WHITENOISE_AUTOREFRESH = True
 
-
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
-
-MAILERS = {
-    'default': {
-        'BACKEND': 'django.core.mail.backends.console.EmailBackend',
-    },
-}
+# No MAILERS: FFDB sends no email. check --deploy refuses the console backend startproject put
+# here (mail.E001), and a real one isn't needed yet.
