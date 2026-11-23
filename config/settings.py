@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
 import os
+import sys
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -67,6 +68,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    # Answers requests for static files from STATIC_ROOT, so they skip everything below it.
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -153,6 +156,28 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# With DEBUG off Django serves no static files: WhiteNoise serves them from here. collectstatic
+# copies every app's static files into it, Ketcher's and the admin's included. git ignores it,
+# and Render's build fills it at each deploy.
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+STORAGES = {
+    # Django's own. Naming STORAGES replaces all of it, so this has to be here, though FFDB keeps
+    # no uploaded files: the database holds everything.
+    'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
+    # collectstatic also writes a gzipped copy of each file that shrinks, which WhiteNoise sends
+    # to browsers that accept gzip. Not the manifest version, which renames each file after its
+    # contents: its {% static %} fails without collectstatic, which the tests and CI don't run.
+    'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedStaticFilesStorage'},
+}
+
+# The test client starts WhiteNoise afresh for every test. Each start looks through all of
+# STATIC_ROOT, which is slow on the laptop's /mnt/c, or warns that it isn't there, as in CI. In
+# autorefresh mode WhiteNoise looks for a file only when one is asked for, so the tests don't
+# wait or warn. test_static_files turns it off again, to test what Render does.
+if sys.argv[1:2] == ['test']:
+    WHITENOISE_AUTOREFRESH = True
 
 
 # Email

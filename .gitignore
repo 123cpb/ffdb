@@ -9,3 +9,5 @@ docs/
 CLAUDE.md
 # Ketcher, downloaded and checked by manage.py fetch_ketcher
 repo/static/repo/ketcher/
+# Filled by manage.py collectstatic, on Render at each deploy
+staticfiles/
