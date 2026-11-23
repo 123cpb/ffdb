@@ -13,7 +13,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 import os
 import sys
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from dotenv import load_dotenv
 
@@ -120,21 +120,27 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
-# DATABASE_URL looks like postgres://user:password@host:port/name.
-# urlsplit leaves the user and password percent-encoded, so unquote them.
 
-db_url = urlsplit(os.environ["DATABASE_URL"])
-
-DATABASES = {
-    'default': {
+def database_settings(url):
+    """Django's settings for the database at url: postgres://user:password@host:port/name,
+    with any scheme (Neon writes postgresql://) and an optional ?key=value&... query string.
+    The query's keys, such as Neon's sslmode and channel_binding, go into OPTIONS, which
+    Django passes on to psycopg with the rest."""
+    parts = urlsplit(url)
+    return {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': db_url.path.removeprefix('/'),
-        'USER': unquote(db_url.username or ''),
-        'PASSWORD': unquote(db_url.password or ''),
-        'HOST': db_url.hostname or '',
-        'PORT': db_url.port or '',
+        'NAME': parts.path.removeprefix('/'),
+        # urlsplit leaves the user and password percent-encoded, so unquote them.
+        'USER': unquote(parts.username or ''),
+        'PASSWORD': unquote(parts.password or ''),
+        'HOST': parts.hostname or '',
+        'PORT': parts.port or '',
+        # parse_qsl unquotes the values itself.
+        'OPTIONS': dict(parse_qsl(parts.query)),
     }
-}
+
+
+DATABASES = {'default': database_settings(os.environ["DATABASE_URL"])}
 
 
 # Password validation
